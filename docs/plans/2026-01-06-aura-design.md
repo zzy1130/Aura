@@ -56,7 +56,7 @@ Aura is a **macOS desktop application** for academic writing. It combines an Ove
 | Editor | Monaco Editor |
 | Backend | Python + FastAPI |
 | Agent framework | Pydantic AI |
-| LLM | Claude Sonnet 4.5 via Colorist gateway |
+| LLM | Claude Sonnet 4.5 (`claude-sonnet-4-5-20250514`) via Colorist gateway |
 | Tool system | Pluggy (auto-discovery) |
 | LaTeX compilation | Docker + texlive |
 | Git sync | GitPython |
