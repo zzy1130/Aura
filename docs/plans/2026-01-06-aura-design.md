@@ -442,19 +442,26 @@ python-multipart>=0.0.6
 
 ## Build Order
 
-### Phase 1: Foundation
+### Phase 1: Foundation ✅ COMPLETED (2026-01-06)
 
-1. **Project scaffolding**
+1. **Project scaffolding** ✅
    - Create directory structure
    - Initialize package.json, requirements.txt
 
-2. **Docker LaTeX sandbox**
+2. **Docker LaTeX sandbox** ✅
    - Build Dockerfile with texlive
    - Test pdflatex compilation
 
-3. **Backend skeleton**
+3. **Backend skeleton** ✅
    - FastAPI app with /api/compile endpoint
    - DockerLatex service
+   - ProjectService for file management
+
+**Commits:**
+- `8aaa85b` Add project directory structure
+- `1aa4c0f` Simplify Docker LaTeX sandbox
+- `09018b3` Add backend services for Phase 1
+- `9b73c33` Add FastAPI endpoints for compilation and projects
 
 ### Phase 2: Agent Core
 
