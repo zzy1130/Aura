@@ -4,16 +4,18 @@ Aura Backend API
 FastAPI server providing:
 - LaTeX compilation via Docker
 - Project management
-- Agent chat streaming (Phase 2)
+- Agent chat streaming
 """
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 from pathlib import Path
 from typing import Optional
 import logging
+import json
 
 from backend.services.docker import DockerLatex, CompileResult
 from backend.services.project import ProjectService, ProjectInfo
@@ -71,6 +73,12 @@ class FileWriteRequest(BaseModel):
     project_path: str
     filename: str
     content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    project_path: str
+    history: Optional[list] = None
 
 
 # ============ Health Check ============
@@ -218,6 +226,78 @@ async def write_file(request: FileWriteRequest) -> dict:
         request.content,
     )
     return {"success": True}
+
+
+# ============ Agent Chat Endpoints ============
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    Stream agent responses via Server-Sent Events.
+
+    The agent will process the message and may use tools to help
+    with LaTeX editing, compilation, and research.
+    """
+    from backend.agent.core import run_agent_stream
+
+    async def event_generator():
+        try:
+            async for event in run_agent_stream(
+                message=request.message,
+                project_path=request.project_path,
+                history=request.history,
+            ):
+                yield {
+                    "event": event.type,
+                    "data": json.dumps(event.content) if event.content else "",
+                }
+        except Exception as e:
+            logger.error(f"Chat stream error: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+@app.post("/api/chat/simple")
+async def chat_simple(request: ChatRequest) -> dict:
+    """
+    Simple non-streaming chat endpoint.
+
+    Returns the complete response after agent finishes.
+    """
+    from backend.agent.core import get_agent
+    from backend.agent.context import AgentContext
+
+    context = AgentContext(
+        project_path=request.project_path,
+        history=request.history or [],
+    )
+
+    agent = get_agent()
+    response = await agent.run_simple(request.message, context)
+
+    return {
+        "response": response,
+        "history": context.history,
+    }
+
+
+@app.get("/api/tools")
+async def list_tools() -> list[dict]:
+    """List all available agent tools."""
+    from backend.tools.manager import get_tool_manager
+
+    manager = get_tool_manager()
+    return [
+        {
+            "name": tool.name,
+            "description": tool.description,
+        }
+        for tool in manager.get_all_tools()
+    ]
 
 
 # ============ Run Server ============
