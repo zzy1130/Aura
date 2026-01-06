@@ -30,10 +30,18 @@ Electron (.app) → Next.js UI → FastAPI Backend → Pydantic AI Agent
 
 ```python
 from anthropic import AsyncAnthropic
+import httpx
 
+# Key points from paintress implementation:
+# 1. Use auth_token (not api_key)
+# 2. No /v1 suffix on base_url
+# 3. Shared httpx.AsyncClient for connection pooling
+
+http_client = httpx.AsyncClient()
 client = AsyncAnthropic(
-    api_key="vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308ec8336",
-    base_url="https://colorist-gateway-staging.arco.ai/v1",
+    auth_token="vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308ec8336",
+    base_url="https://colorist-gateway-staging.arco.ai",
+    http_client=http_client,
 )
 ```
 
@@ -43,7 +51,7 @@ Environment variables:
 
 ## Default Model
 
-Use `claude-sonnet-4-5-20250514` as the default model for the agent.
+Use `claude-4-5-sonnet-by-all` as the default model (Colorist gateway format).
 
 ## Project Structure
 

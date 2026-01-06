@@ -56,7 +56,7 @@ Aura is a **macOS desktop application** for academic writing. It combines an Ove
 | Editor | Monaco Editor |
 | Backend | Python + FastAPI |
 | Agent framework | Pydantic AI |
-| LLM | Claude Sonnet 4.5 (`claude-sonnet-4-5-20250514`) via Colorist gateway |
+| LLM | Claude Sonnet 4.5 (`claude-4-5-sonnet-by-all`) via Colorist gateway |
 | Tool system | Pluggy (auto-discovery) |
 | LaTeX compilation | Docker + texlive |
 | Git sync | GitPython |
@@ -463,19 +463,31 @@ python-multipart>=0.0.6
 - `09018b3` Add backend services for Phase 1
 - `9b73c33` Add FastAPI endpoints for compilation and projects
 
-### Phase 2: Agent Core
+### Phase 2: Agent Core (COMPLETE)
 
-4. **Colorist client**
-   - Anthropic SDK with gateway URL
+4. **Colorist client** ✓
+   - Anthropic SDK with gateway URL (auth_token, no /v1 suffix)
+   - Model: `claude-4-5-sonnet-by-all` (Colorist gateway format)
    - Test basic message creation
 
-5. **Tool manager (pluggy)**
+5. **Tool manager (pluggy)** ✓
    - Auto-discovery from tools/
-   - Basic tools: read_file, edit_file
+   - File tools: read_file, edit_file, write_file, find_files, list_directory
+   - LaTeX tools: compile_latex, check_latex_syntax, get_compilation_log
 
-6. **Pydantic AI agent**
-   - Agent loop with tools
-   - SSE streaming endpoint
+6. **Pydantic AI agent** ✓
+   - Agent loop with tools (backend/agent/core.py)
+   - SSE streaming endpoint (/api/chat/stream)
+   - AgentContext for state management
+
+**Files created:**
+- `backend/agent/colorist.py` - Colorist gateway client
+- `backend/agent/core.py` - Agentic loop with tool execution
+- `backend/agent/context.py` - AgentContext dataclass
+- `backend/agent/prompts.py` - System prompts
+- `backend/tools/manager.py` - Pluggy-based tool manager
+- `backend/tools/files/operations.py` - File tools
+- `backend/tools/latex/compile.py` - LaTeX tools
 
 ### Phase 3: Research Tools
 
