@@ -11,6 +11,8 @@ from agent.streaming import (
     DoneEvent,
     ErrorEvent,
     CompressionEvent,
+    ApprovalRequiredEvent,
+    ApprovalResolvedEvent,
 )
 from agent.compression import (
     MessageCompressor,
@@ -18,6 +20,13 @@ from agent.compression import (
     TokenCounter,
     compress_if_needed,
     get_compressor,
+)
+from agent.hitl import (
+    HITLManager,
+    HITLConfig,
+    ApprovalRequest,
+    ApprovalStatus,
+    get_hitl_manager,
 )
 
 __all__ = [
@@ -35,10 +44,18 @@ __all__ = [
     "DoneEvent",
     "ErrorEvent",
     "CompressionEvent",
+    "ApprovalRequiredEvent",
+    "ApprovalResolvedEvent",
     # Compression
     "MessageCompressor",
     "CompressionConfig",
     "TokenCounter",
     "compress_if_needed",
     "get_compressor",
+    # HITL
+    "HITLManager",
+    "HITLConfig",
+    "ApprovalRequest",
+    "ApprovalStatus",
+    "get_hitl_manager",
 ]
