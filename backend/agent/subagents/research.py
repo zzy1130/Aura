@@ -205,7 +205,8 @@ RESEARCH_SYSTEM_PROMPT = """You are a specialized academic research assistant.
 Your capabilities:
 - Search arXiv for relevant papers
 - Search Semantic Scholar for papers and citations
-- Summarize paper abstracts
+- Read and extract text from academic PDFs
+- Summarize paper abstracts and full text
 - Extract key findings and contributions
 - Find related work for a topic
 
@@ -215,6 +216,10 @@ CRITICAL RULES:
 3. Focus on relevance to the user's research topic
 4. If no papers are found, say so honestly
 5. Provide concise summaries of key points
+
+Tools for reading papers:
+- Use `read_arxiv_paper` to read full text of arXiv papers by ID
+- Use `read_pdf_url` to read PDFs from other URLs (preprints, etc.)
 
 When reporting papers, format them as:
 - **Title** by Authors (Year)
@@ -403,5 +408,76 @@ class ResearchAgent(Subagent[ResearchDeps]):
                 Acknowledgment to continue
             """
             return "Thinking recorded. Continue with your research."
+
+        @agent.tool
+        async def read_arxiv_paper(
+            ctx: RunContext[ResearchDeps],
+            arxiv_id: str,
+            max_pages: int = 10,
+        ) -> str:
+            """
+            Download and read the full text of an arXiv paper.
+
+            Use this after searching to read the complete paper content.
+
+            Args:
+                arxiv_id: arXiv paper ID (e.g., "2301.07041" or "cs/0604007")
+                max_pages: Maximum number of pages to extract (default: 10)
+
+            Returns:
+                Extracted text from the paper with page structure
+            """
+            from agent.tools.pdf_reader import read_arxiv_paper as _read_arxiv
+
+            try:
+                doc = await _read_arxiv(
+                    arxiv_id=arxiv_id,
+                    http_client=ctx.deps.http_client,
+                    max_pages=max_pages,
+                    max_chars=50000,
+                )
+
+                # Format output
+                text = doc.get_text(max_pages=max_pages, max_chars=50000)
+                return f"Paper: {doc.title}\nPages: {doc.num_pages}\narXiv: {arxiv_id}\n\n{text}"
+
+            except FileNotFoundError:
+                return f"Error: arXiv paper not found: {arxiv_id}"
+            except Exception as e:
+                return f"Error reading arXiv paper: {str(e)}"
+
+        @agent.tool
+        async def read_pdf_url(
+            ctx: RunContext[ResearchDeps],
+            url: str,
+            max_pages: int = 10,
+        ) -> str:
+            """
+            Download and read a PDF from any URL.
+
+            Use this for non-arXiv papers (conference proceedings, preprints, etc.).
+
+            Args:
+                url: Direct URL to a PDF file
+                max_pages: Maximum number of pages to extract (default: 10)
+
+            Returns:
+                Extracted text from the PDF with page structure
+            """
+            from agent.tools.pdf_reader import read_pdf_from_url as _read_pdf
+
+            try:
+                doc = await _read_pdf(
+                    url=url,
+                    http_client=ctx.deps.http_client,
+                    max_pages=max_pages,
+                )
+
+                # Format output
+                text = doc.get_text(max_pages=max_pages, max_chars=50000)
+                return f"Paper: {doc.title}\nPages: {doc.num_pages}\nURL: {url}\n\n{text}"
+
+            except Exception as e:
+                return f"Error reading PDF from URL: {str(e)}"
 
         return agent
