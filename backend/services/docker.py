@@ -86,10 +86,12 @@ class DockerLatex:
             )
 
         # Build compilation command (run multiple times for references)
+        # Use ; instead of && because pdflatex returns non-zero on warnings
+        # but still generates the PDF
         base_name = filename.rsplit(".", 1)[0]
         commands = []
         for i in range(runs):
-            commands.append(f"pdflatex -interaction=nonstopmode -halt-on-error {filename}")
+            commands.append(f"pdflatex -interaction=nonstopmode {filename}")
 
         # Check for bibliography
         bib_files = list(project_path.glob("*.bib"))
@@ -97,13 +99,16 @@ class DockerLatex:
             # Insert biber/bibtex after first pdflatex
             commands.insert(1, f"biber {base_name} || bibtex {base_name} || true")
 
-        full_command = " && ".join(commands)
+        # Use ; to continue even if pdflatex has warnings
+        full_command = " ; ".join(commands)
 
         def _run_container():
             try:
+                # Capture both stdout and stderr, and don't fail on non-zero exit
+                # LaTeX often exits with code 1 even when PDF is generated (due to warnings)
                 output = self.client.containers.run(
                     IMAGE_NAME,
-                    command=f"/bin/bash -c '{full_command}'",
+                    command=f"/bin/bash -c '{full_command} 2>&1; echo \"\\nEXIT_CODE=$?\"'",
                     volumes={str(project_path): {"bind": "/workspace", "mode": "rw"}},
                     working_dir="/workspace",
                     remove=True,
@@ -115,8 +120,21 @@ class DockerLatex:
                 )
                 return output.decode("utf-8")
             except docker.errors.ContainerError as e:
-                return e.stderr.decode("utf-8") if e.stderr else str(e)
+                # Even on ContainerError, the output might have useful info
+                # and the PDF might have been generated
+                error_output = ""
+                if e.stderr:
+                    error_output = e.stderr.decode("utf-8") if isinstance(e.stderr, bytes) else str(e.stderr)
+                if not error_output:
+                    # Try to get any output from the exception
+                    error_output = str(e)
+                logger.warning(f"Container exited with error but may have produced output: {e.exit_status}")
+                return error_output
+            except docker.errors.APIError as e:
+                logger.error(f"Docker API error: {e}")
+                return f"Docker API error: {e}"
             except Exception as e:
+                logger.error(f"Unexpected error during compilation: {e}")
                 return str(e)
 
         try:
@@ -136,11 +154,13 @@ class DockerLatex:
         pdf_path = project_path / f"{base_name}.pdf"
 
         if pdf_path.exists():
+            # PDF generated - check for warnings in the log
+            warnings = self._extract_warnings(log_output)
             return CompileResult(
                 success=True,
                 pdf_path=str(pdf_path),
                 log_output=log_output,
-                error_summary=""
+                error_summary=warnings  # Include warnings even on success
             )
         else:
             return CompileResult(
@@ -176,6 +196,29 @@ class DockerLatex:
 
         # If no specific errors found, return last 500 chars of log
         return f"Compilation failed. Log tail:\n{log[-500:]}"
+
+    def _extract_warnings(self, log: str) -> str:
+        """Extract warning messages from LaTeX log output (when PDF was generated)."""
+        warnings = []
+        lines = log.split("\n")
+
+        for line in lines:
+            # LaTeX warnings
+            if "LaTeX Warning:" in line:
+                warnings.append(line.strip())
+            # Package warnings
+            elif "Package" in line and "Warning" in line:
+                warnings.append(line.strip())
+            # Undefined references/citations
+            elif "undefined" in line.lower() and ("reference" in line.lower() or "citation" in line.lower()):
+                warnings.append(line.strip())
+
+        if warnings:
+            # Deduplicate and limit
+            unique_warnings = list(dict.fromkeys(warnings))[:5]
+            return "\n".join(unique_warnings)
+
+        return ""
 
     async def check_syntax(self, project_path: str, filename: str = "main.tex") -> CompileResult:
         """
