@@ -9,6 +9,7 @@
 | 3C | ✅ Complete | HITL (Human-in-the-loop) |
 | 3D | ✅ Complete | Steering messages |
 | 3E | ✅ Complete | Multi-agent (subagents) |
+| 3F | ✅ Complete | Planning system |
 
 ---
 
@@ -1253,6 +1254,85 @@ backend/agent/
 
 ---
 
+## Phase 3F: Planning System ✅
+
+**Status: Complete**
+
+Implemented structured planning system for complex multi-step tasks.
+
+### Implementation Summary
+
+**Files Created:**
+
+- `backend/agent/planning.py` - Core planning infrastructure
+- `backend/agent/subagents/planner.py` - PlannerAgent subagent
+
+**Components in `planning.py`:**
+
+- `PlanningConfig` - Configuration (auto_plan_threshold, trigger_keywords)
+- `PlanStatus` - Enum (DRAFT, APPROVED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED)
+- `StepStatus` - Enum (PENDING, IN_PROGRESS, COMPLETED, FAILED, SKIPPED)
+- `StepType` - Enum (ANALYSIS, EDIT, CREATE, DELETE, COMPILE, TEST, RESEARCH, VERIFY, OTHER)
+- `PlanStep` - Data class for plan steps with dependencies and status
+- `Plan` - Data class with steps, progress tracking, and markdown export
+- `PlanManager` - Async manager for plan lifecycle with history
+
+**Components in `planner.py`:**
+
+- `PlannerDeps` - Dependencies for planner agent
+- `PlannerAgent` - Specialized agent for task analysis and plan generation
+- Tools: `read_file`, `list_files`, `analyze_task_complexity`, `create_structured_plan`, `think`
+- `create_plan_for_task()` - Convenience function
+
+**Main Agent Integration:**
+
+Added 7 planning tools to `pydantic_agent.py`:
+- `plan_task` - Create a structured plan using PlannerAgent
+- `get_current_plan` - View current plan and progress
+- `start_plan_execution` - Begin executing plan
+- `complete_plan_step` - Mark step as done
+- `fail_plan_step` - Mark step as failed
+- `skip_plan_step` - Skip current step
+- `abandon_plan` - Cancel plan
+
+**System Prompt Updates:**
+
+Added CRITICAL planning requirements to `prompts.py`:
+- Plan REQUIRED for: 2+ file changes, new features, refactoring, multi-step tasks
+- Planning workflow steps documented
+- "DO NOT skip planning for complex tasks" enforcement
+
+**Streaming Events:**
+
+- `PlanCreatedEvent` - Plan was created
+- `PlanStepEvent` - Step status changed
+- `PlanCompletedEvent` - Plan finished
+
+**API Endpoints:**
+
+- `POST /api/planning/create` - Create plan for task
+- `GET /api/planning/current` - Get active plan
+- `POST /api/planning/start` - Start plan execution
+- `POST /api/planning/step/complete` - Complete current step
+- `POST /api/planning/step/fail` - Fail current step
+- `POST /api/planning/step/skip` - Skip current step
+- `POST /api/planning/cancel` - Cancel/abandon plan
+- `GET /api/planning/history` - Get plan history
+
+### Test Results
+
+```
+✅ PlanStep creation and serialization
+✅ Plan progress tracking (0/3 → 3/3 steps)
+✅ Plan markdown export
+✅ PlanManager singleton
+✅ Step completion and auto-advancement
+✅ Plan archiving to history
+✅ Planning events (PlanCreatedEvent)
+```
+
+---
+
 ## Success Criteria
 
 | Phase | Feature | Success Metric |
@@ -1263,6 +1343,7 @@ backend/agent/
 | 3C | HITL | User can approve/reject file edits |
 | 3D | Steering | User can redirect mid-conversation |
 | 3E | Multi-Agent | Research delegated to subagent |
+| 3F | Planning | Complex tasks use structured plans |
 
 ---
 
