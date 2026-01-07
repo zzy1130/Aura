@@ -404,3 +404,62 @@ async def think(ctx: RunContext[AuraDeps], thought: str) -> str:
     # The thought is captured in the tool call for context
     # This helps Claude's reasoning chain
     return "Thinking recorded. Continue with your analysis or take action."
+
+
+# =============================================================================
+# Subagent Delegation
+# =============================================================================
+
+@aura_agent.tool
+async def delegate_to_subagent(
+    ctx: RunContext[AuraDeps],
+    subagent: str,
+    task: str,
+) -> str:
+    """
+    Delegate a task to a specialized subagent.
+
+    Subagents are focused agents with specific expertise:
+    - "research": Search arXiv and Semantic Scholar for academic papers
+    - "compiler": Fix LaTeX compilation errors with deep knowledge of common issues
+
+    Use delegation when:
+    - You need to find academic papers (delegate to "research")
+    - You have a complex compilation error that needs iterative fixing (delegate to "compiler")
+
+    The subagent will work autonomously and return a result.
+
+    Args:
+        subagent: Name of the subagent ("research" or "compiler")
+        task: Detailed description of what you want the subagent to do
+
+    Returns:
+        Result from the subagent's work
+    """
+    from agent.subagents import get_subagent, list_subagents
+
+    # Validate subagent name
+    available = list_subagents()
+    available_names = [s["name"] for s in available]
+
+    if subagent not in available_names:
+        return f"Unknown subagent: '{subagent}'. Available: {', '.join(available_names)}"
+
+    try:
+        # Create context for subagent
+        context = {
+            "project_path": ctx.deps.project_path,
+            "project_name": ctx.deps.project_name,
+        }
+
+        # Get and run subagent
+        agent = get_subagent(subagent, project_path=ctx.deps.project_path)
+        result = await agent.run(task, context)
+
+        if result.success:
+            return f"[{subagent.upper()} AGENT RESULT]\n\n{result.output}"
+        else:
+            return f"[{subagent.upper()} AGENT ERROR]\n\n{result.error}: {result.output}"
+
+    except Exception as e:
+        return f"Subagent error: {str(e)}"
