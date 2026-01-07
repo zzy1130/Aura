@@ -3,17 +3,26 @@ Streaming Runner for PydanticAI Agent
 
 Provides SSE (Server-Sent Events) streaming for the Aura agent.
 Streams text deltas and tool events to the frontend.
+
+Features:
+- Text streaming with deltas
+- Tool call and result events
+- Automatic message compression for long conversations
 """
 
 from dataclasses import dataclass
 from typing import AsyncIterator, Literal
 import json
+import logging
 
 from pydantic_ai.agent import ModelRequestNode, CallToolsNode, UserPromptNode
 from pydantic_ai.run import End
 from pydantic_ai.messages import ToolCallPart, TextPart
 
 from agent.pydantic_agent import aura_agent, AuraDeps
+from agent.compression import compress_if_needed, get_compressor
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -99,6 +108,24 @@ class ErrorEvent(StreamEvent):
         return {"type": self.type, "message": self.message}
 
 
+@dataclass
+class CompressionEvent(StreamEvent):
+    """History was compressed to save context space."""
+    type: Literal["compression"] = "compression"
+    original_messages: int = 0
+    compressed_messages: int = 0
+    estimated_tokens_before: int = 0
+    estimated_tokens_after: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "original_messages": self.original_messages,
+            "compressed_messages": self.compressed_messages,
+            "tokens_saved": self.estimated_tokens_before - self.estimated_tokens_after,
+        }
+
+
 # =============================================================================
 # Streaming Runner
 # =============================================================================
@@ -108,6 +135,7 @@ async def stream_agent_response(
     project_path: str,
     project_name: str = "",
     message_history: list = None,
+    auto_compress: bool = True,
 ) -> AsyncIterator[StreamEvent]:
     """
     Stream agent response as events.
@@ -120,9 +148,10 @@ async def stream_agent_response(
         project_path: Path to the LaTeX project
         project_name: Optional project name (derived from path if not given)
         message_history: Optional conversation history for context
+        auto_compress: Whether to automatically compress long histories (default: True)
 
     Yields:
-        StreamEvent objects (TextDeltaEvent, ToolCallEvent, ToolResultEvent, DoneEvent, ErrorEvent)
+        StreamEvent objects (TextDeltaEvent, ToolCallEvent, ToolResultEvent, DoneEvent, ErrorEvent, CompressionEvent)
 
     Example:
         async for event in stream_agent_response("Read main.tex", "/path/to/project"):
@@ -130,8 +159,35 @@ async def stream_agent_response(
     """
     deps = AuraDeps(project_path=project_path, project_name=project_name)
 
+    # Handle compression if enabled and history provided
+    processed_history = message_history
+    if auto_compress and message_history:
+        try:
+            compressor = get_compressor()
+            tokens_before = compressor.counter.count(message_history)
+            original_count = len(message_history)
+
+            compressed_history, was_compressed = await compress_if_needed(message_history)
+
+            if was_compressed:
+                tokens_after = compressor.counter.count(compressed_history)
+                logger.info(
+                    f"Compressed history: {original_count} -> {len(compressed_history)} messages, "
+                    f"{tokens_before} -> {tokens_after} tokens"
+                )
+                yield CompressionEvent(
+                    original_messages=original_count,
+                    compressed_messages=len(compressed_history),
+                    estimated_tokens_before=tokens_before,
+                    estimated_tokens_after=tokens_after,
+                )
+                processed_history = compressed_history
+        except Exception as e:
+            logger.warning(f"Compression failed, using original history: {e}")
+            # Continue with original history on compression failure
+
     try:
-        async with aura_agent.iter(message, deps=deps, message_history=message_history) as run:
+        async with aura_agent.iter(message, deps=deps, message_history=processed_history) as run:
             async for node in run:
                 # Skip UserPromptNode - it's just our input
                 if isinstance(node, UserPromptNode):
@@ -220,6 +276,7 @@ async def run_agent(
     project_path: str,
     project_name: str = "",
     message_history: list = None,
+    auto_compress: bool = True,
 ) -> dict:
     """
     Run agent and return complete response (non-streaming).
@@ -229,16 +286,46 @@ async def run_agent(
         project_path: Path to the LaTeX project
         project_name: Optional project name
         message_history: Optional conversation history
+        auto_compress: Whether to automatically compress long histories (default: True)
 
     Returns:
-        Dictionary with output, usage, and tool_calls
+        Dictionary with output, usage, new_messages, and compression_info
     """
     deps = AuraDeps(project_path=project_path, project_name=project_name)
 
-    result = await aura_agent.run(message, deps=deps, message_history=message_history)
+    # Handle compression if enabled and history provided
+    processed_history = message_history
+    compression_info = None
+
+    if auto_compress and message_history:
+        try:
+            compressor = get_compressor()
+            tokens_before = compressor.counter.count(message_history)
+            original_count = len(message_history)
+
+            compressed_history, was_compressed = await compress_if_needed(message_history)
+
+            if was_compressed:
+                tokens_after = compressor.counter.count(compressed_history)
+                logger.info(
+                    f"Compressed history: {original_count} -> {len(compressed_history)} messages, "
+                    f"{tokens_before} -> {tokens_after} tokens"
+                )
+                compression_info = {
+                    "original_messages": original_count,
+                    "compressed_messages": len(compressed_history),
+                    "tokens_before": tokens_before,
+                    "tokens_after": tokens_after,
+                    "tokens_saved": tokens_before - tokens_after,
+                }
+                processed_history = compressed_history
+        except Exception as e:
+            logger.warning(f"Compression failed, using original history: {e}")
+
+    result = await aura_agent.run(message, deps=deps, message_history=processed_history)
     usage = result.usage()
 
-    return {
+    response = {
         "output": result.output,
         "usage": {
             "input_tokens": usage.input_tokens if usage else 0,
@@ -246,3 +333,8 @@ async def run_agent(
         },
         "new_messages": result.new_messages(),
     }
+
+    if compression_info:
+        response["compression"] = compression_info
+
+    return response
