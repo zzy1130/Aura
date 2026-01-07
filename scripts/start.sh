@@ -198,6 +198,25 @@ start_frontend() {
     log_success "Frontend started (PID: $FRONTEND_PID)"
 }
 
+start_electron() {
+    log_info "Starting Electron desktop app..."
+    log_info "(This will also start the Next.js server)"
+
+    cd "$FRONTEND_DIR"
+
+    # npm run dev starts both Next.js and Electron with concurrently
+    npm run dev &
+    FRONTEND_PID=$!
+
+    # Wait for Next.js to be ready (Electron waits automatically via wait-on)
+    if ! wait_for_frontend; then
+        log_error "Failed to start frontend"
+        exit 1
+    fi
+
+    log_success "Electron app launched"
+}
+
 # =============================================================================
 # Test Functions
 # =============================================================================
@@ -346,10 +365,16 @@ print_usage() {
     echo ""
     echo "Options:"
     echo "  --backend-only    Start only the backend server"
-    echo "  --frontend-only   Start only the frontend server"
+    echo "  --frontend-only   Start only the frontend server (web)"
+    echo "  --electron        Start full Electron desktop app"
     echo "  --test            Run API tests after starting backend"
     echo "  --test-only       Run API tests only (assumes backend is running)"
     echo "  --help            Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                    # Start backend + web frontend"
+    echo "  $0 --electron         # Start backend + Electron desktop app"
+    echo "  $0 --backend-only     # Start only backend (for testing)"
     echo ""
 }
 
@@ -360,6 +385,7 @@ main() {
     local frontend_only=false
     local run_test=false
     local test_only=false
+    local use_electron=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -370,6 +396,10 @@ main() {
                 ;;
             --frontend-only)
                 frontend_only=true
+                shift
+                ;;
+            --electron)
+                use_electron=true
                 shift
                 ;;
             --test)
@@ -412,7 +442,11 @@ main() {
     fi
 
     if [ "$backend_only" = false ]; then
-        start_frontend
+        if [ "$use_electron" = true ]; then
+            start_electron
+        else
+            start_frontend
+        fi
     fi
 
     # Print status
@@ -425,7 +459,11 @@ main() {
         log_info "  API Docs: http://127.0.0.1:$BACKEND_PORT/docs"
     fi
     if [ "$backend_only" = false ]; then
-        log_success "Frontend: http://127.0.0.1:$FRONTEND_PORT"
+        if [ "$use_electron" = true ]; then
+            log_success "Electron: Desktop app launched"
+        else
+            log_success "Frontend: http://127.0.0.1:$FRONTEND_PORT"
+        fi
     fi
     echo ""
     log_info "Press Ctrl+C to stop all services"
