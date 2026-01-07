@@ -4,7 +4,7 @@ Aura Backend API
 FastAPI server providing:
 - LaTeX compilation via Docker
 - Project management
-- Agent chat streaming
+- Agent chat streaming (PydanticAI)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -17,8 +17,8 @@ from typing import Optional
 import logging
 import json
 
-from backend.services.docker import DockerLatex, CompileResult
-from backend.services.project import ProjectService, ProjectInfo
+from services.docker import DockerLatex, CompileResult
+from services.project import ProjectService, ProjectInfo
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -149,7 +149,7 @@ async def get_pdf(project_name: str, filename: str = "main.pdf"):
     """
     Serve the compiled PDF file.
     """
-    from backend.services.project import PROJECTS_DIR
+    from services.project import PROJECTS_DIR
 
     pdf_path = PROJECTS_DIR / project_name / filename
 
@@ -198,7 +198,7 @@ async def create_project(request: CreateProjectRequest) -> dict:
 @app.get("/api/projects/{project_name}/files")
 async def get_project_files(project_name: str) -> list[dict]:
     """Get file tree for a project."""
-    from backend.services.project import PROJECTS_DIR
+    from services.project import PROJECTS_DIR
 
     project_path = PROJECTS_DIR / project_name
     if not project_path.exists():
@@ -237,25 +237,31 @@ async def chat_stream(request: ChatRequest):
 
     The agent will process the message and may use tools to help
     with LaTeX editing, compilation, and research.
+
+    Uses PydanticAI-based agent with streaming support.
     """
-    from backend.agent.core import run_agent_stream
+    from agent.streaming import stream_agent_sse
 
     async def event_generator():
         try:
-            async for event in run_agent_stream(
+            async for sse_data in stream_agent_sse(
                 message=request.message,
                 project_path=request.project_path,
-                history=request.history,
+                message_history=request.history,
             ):
-                yield {
-                    "event": event.type,
-                    "data": json.dumps(event.content) if event.content else "",
-                }
+                # SSE data is already formatted as "data: {...}\n\n"
+                # Parse it to get event type and content
+                if sse_data.startswith("data: "):
+                    data = json.loads(sse_data[6:].strip())
+                    yield {
+                        "event": data.get("type", "message"),
+                        "data": json.dumps(data),
+                    }
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
             yield {
                 "event": "error",
-                "data": json.dumps({"error": str(e)}),
+                "data": json.dumps({"type": "error", "message": str(e)}),
             }
 
     return EventSourceResponse(event_generator())
@@ -267,37 +273,40 @@ async def chat_simple(request: ChatRequest) -> dict:
     Simple non-streaming chat endpoint.
 
     Returns the complete response after agent finishes.
+    Uses PydanticAI-based agent.
     """
-    from backend.agent.core import get_agent
-    from backend.agent.context import AgentContext
+    from agent.streaming import run_agent
 
-    context = AgentContext(
-        project_path=request.project_path,
-        history=request.history or [],
-    )
-
-    agent = get_agent()
-    response = await agent.run_simple(request.message, context)
-
-    return {
-        "response": response,
-        "history": context.history,
-    }
+    try:
+        result = await run_agent(
+            message=request.message,
+            project_path=request.project_path,
+            message_history=request.history,
+        )
+        return {
+            "response": result["output"],
+            "usage": result["usage"],
+        }
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/tools")
 async def list_tools() -> list[dict]:
     """List all available agent tools."""
-    from backend.tools.manager import get_tool_manager
+    from agent.pydantic_agent import aura_agent
 
-    manager = get_tool_manager()
-    return [
-        {
-            "name": tool.name,
-            "description": tool.description,
-        }
-        for tool in manager.get_all_tools()
-    ]
+    # Get tool definitions from PydanticAI agent
+    tools = []
+    toolset = aura_agent._function_toolset
+    if toolset and hasattr(toolset, '_tools'):
+        for name, tool in toolset._tools.items():
+            tools.append({
+                "name": name,
+                "description": tool.description or "",
+            })
+    return tools
 
 
 # ============ Run Server ============

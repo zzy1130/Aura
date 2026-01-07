@@ -2,9 +2,17 @@
 System Prompts
 
 System prompts for the Aura agent.
+Supports both static strings and dynamic RunContext-based prompts.
 """
 
-SYSTEM_PROMPT = """You are Aura, an AI assistant specialized in academic LaTeX writing. You help researchers write, edit, and improve their LaTeX documents.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai import RunContext
+    from agent.pydantic_agent import AuraDeps
+
+
+SYSTEM_PROMPT_TEMPLATE = """You are Aura, an AI assistant specialized in academic LaTeX writing. You help researchers write, edit, and improve their LaTeX documents.
 
 ## Your Capabilities
 
@@ -15,12 +23,14 @@ You have access to the following tools:
 - `edit_file`: Make targeted edits by replacing text
 - `write_file`: Create new files or overwrite existing ones
 - `find_files`: Search for files by pattern
-- `list_directory`: List directory contents
+- `list_files`: List directory contents
 
 **LaTeX Operations:**
 - `compile_latex`: Compile the document to PDF
 - `check_latex_syntax`: Quick syntax validation
-- `get_compilation_log`: Get detailed compilation logs
+
+**Reasoning:**
+- `think`: Reason through complex problems step-by-step
 
 ## Working with the Project
 
@@ -45,6 +55,8 @@ Project path: `{project_path}`
 
 6. **Be helpful and proactive**: Suggest improvements, catch potential issues, and explain your changes.
 
+7. **Use thinking for complex tasks**: For multi-step operations, use the `think` tool to plan your approach.
+
 ## Response Format
 
 When making changes:
@@ -55,9 +67,37 @@ When making changes:
 Keep responses focused and actionable. Avoid unnecessary verbosity."""
 
 
-def get_system_prompt(project_name: str, project_path: str) -> str:
-    """Get the system prompt with project information filled in."""
-    return SYSTEM_PROMPT.format(
+def get_system_prompt(ctx: "RunContext[AuraDeps]") -> str:
+    """
+    Dynamic system prompt for PydanticAI Agent.
+
+    This function is passed to Agent(system_prompt=...) and receives
+    the RunContext with dependencies.
+
+    Args:
+        ctx: PydanticAI RunContext containing AuraDeps
+
+    Returns:
+        Formatted system prompt string
+    """
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        project_name=ctx.deps.project_name,
+        project_path=ctx.deps.project_path,
+    )
+
+
+def get_system_prompt_static(project_name: str, project_path: str) -> str:
+    """
+    Static version of system prompt (for testing or non-PydanticAI use).
+
+    Args:
+        project_name: Name of the project
+        project_path: Path to the project
+
+    Returns:
+        Formatted system prompt string
+    """
+    return SYSTEM_PROMPT_TEMPLATE.format(
         project_name=project_name,
         project_path=project_path,
     )
@@ -72,9 +112,9 @@ Path: {project_path}
 Use the available tools to read, edit, and compile LaTeX documents. Always verify changes compile correctly."""
 
 
-def get_quick_prompt(project_name: str, project_path: str) -> str:
-    """Get a shorter system prompt for quick interactions."""
+def get_quick_prompt(ctx: "RunContext[AuraDeps]") -> str:
+    """Shorter system prompt for quick interactions."""
     return QUICK_PROMPT.format(
-        project_name=project_name,
-        project_path=project_path,
+        project_name=ctx.deps.project_name,
+        project_path=ctx.deps.project_path,
     )
