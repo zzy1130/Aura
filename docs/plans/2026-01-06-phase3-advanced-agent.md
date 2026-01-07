@@ -6,7 +6,7 @@
 |-------|--------|-------------|
 | 3A | ✅ Complete | PydanticAI migration with Colorist provider |
 | 3B | ✅ Complete | Message compression |
-| 3C | ⏳ Pending | HITL (Human-in-the-loop) |
+| 3C | ✅ Complete | HITL (Human-in-the-loop) |
 | 3D | ⏳ Pending | Steering messages |
 | 3E | ⏳ Pending | Multi-agent (subagents) |
 
@@ -699,167 +699,60 @@ After compression:
 
 ---
 
-## Phase 3C: HITL (Human-in-the-Loop)
+## Phase 3C: HITL (Human-in-the-Loop) ✅
 
-PydanticAI has built-in HITL support. We leverage it.
+**Status: Complete**
+
+Implemented human-in-the-loop approval workflow for dangerous tool operations.
+
+### Implementation Summary
 
 **File: `backend/agent/hitl.py`**
 
-```python
-"""
-Human-in-the-Loop Support
+Components:
+- `HITLConfig` - Configuration (approval_required, preview_only, timeout)
+- `ApprovalStatus` - Enum (PENDING, APPROVED, REJECTED, MODIFIED, TIMEOUT)
+- `ApprovalRequest` - Data class for pending requests
+- `HITLManager` - Async manager with event-based waiting
 
-Uses PydanticAI's built-in HITL capabilities.
-"""
+Key features:
+- Configurable list of tools requiring approval (default: write_file, edit_file)
+- Async waiting with timeout (default: 5 minutes)
+- Support for modified args (user can edit before approving)
+- Event callback for streaming integration
 
-import asyncio
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
+### Tool Integration
 
+Updated `backend/agent/pydantic_agent.py`:
+- Added `hitl_manager` to `AuraDeps`
+- Added `_check_hitl()` helper function
+- Modified `edit_file` and `write_file` to check HITL before execution
 
-class ApprovalStatus(Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    MODIFIED = "modified"
+### Streaming Integration
 
+Updated `backend/agent/streaming.py`:
+- Added `ApprovalRequiredEvent` and `ApprovalResolvedEvent` event types
+- Added `enable_hitl` parameter to `stream_agent_response()`
+- Added `_stream_with_hitl()` for concurrent event handling via asyncio.Queue
 
-@dataclass
-class ApprovalRequest:
-    """A pending approval request."""
-    tool_call_id: str
-    tool_name: str
-    tool_args: dict
-    status: ApprovalStatus = ApprovalStatus.PENDING
-    modified_args: Optional[dict] = None
-    rejection_reason: Optional[str] = None
+### API Endpoints
 
+- `GET /api/hitl/pending` - List pending approval requests
+- `GET /api/hitl/request/{id}` - Get specific request
+- `POST /api/hitl/approve` - Approve request (with optional modified args)
+- `POST /api/hitl/reject` - Reject request with reason
+- `GET /api/hitl/config` - Get current HITL configuration
 
-@dataclass
-class HITLManager:
-    """Manages human-in-the-loop approvals."""
+### Test Results
 
-    # Tools requiring approval
-    approval_required: set[str] = field(default_factory=lambda: {
-        "write_file",
-        "edit_file",
-    })
+```
+Default config:
+  Approval required for: {'edit_file', 'write_file'}
+  Preview only for: {'compile_latex'}
+  Timeout: 300.0s
 
-    # Pending approvals by tool_call_id
-    pending: dict[str, ApprovalRequest] = field(default_factory=dict)
-
-    # Events for async waiting
-    _events: dict[str, asyncio.Event] = field(default_factory=dict)
-
-    def needs_approval(self, tool_name: str) -> bool:
-        """Check if tool requires user approval."""
-        return tool_name in self.approval_required
-
-    async def request_approval(
-        self,
-        tool_call_id: str,
-        tool_name: str,
-        tool_args: dict,
-        timeout: float = 300.0,
-    ) -> ApprovalRequest:
-        """
-        Request approval and wait for user response.
-
-        Returns after user approves/rejects or timeout.
-        """
-        request = ApprovalRequest(
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            tool_args=tool_args,
-        )
-
-        self.pending[tool_call_id] = request
-        self._events[tool_call_id] = asyncio.Event()
-
-        try:
-            await asyncio.wait_for(
-                self._events[tool_call_id].wait(),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            request.status = ApprovalStatus.REJECTED
-            request.rejection_reason = "Approval timeout"
-        finally:
-            self._events.pop(tool_call_id, None)
-
-        return self.pending.pop(tool_call_id)
-
-    def approve(
-        self,
-        tool_call_id: str,
-        modified_args: dict | None = None,
-    ):
-        """Approve a pending request."""
-        if tool_call_id in self.pending:
-            request = self.pending[tool_call_id]
-            if modified_args:
-                request.status = ApprovalStatus.MODIFIED
-                request.modified_args = modified_args
-            else:
-                request.status = ApprovalStatus.APPROVED
-
-            if tool_call_id in self._events:
-                self._events[tool_call_id].set()
-
-    def reject(self, tool_call_id: str, reason: str = "User rejected"):
-        """Reject a pending request."""
-        if tool_call_id in self.pending:
-            request = self.pending[tool_call_id]
-            request.status = ApprovalStatus.REJECTED
-            request.rejection_reason = reason
-
-            if tool_call_id in self._events:
-                self._events[tool_call_id].set()
-
-
-# Integration with runner
-async def run_with_hitl(
-    agent,
-    message: str,
-    deps,
-    hitl_manager: HITLManager,
-):
-    """
-    Run agent with HITL support.
-
-    Pauses for approval on dangerous tools.
-    """
-    async with agent.iter(message, deps=deps) as run:
-        async for event in run:
-            if hasattr(event, 'part'):
-                part = event.part
-
-                if isinstance(part, ToolCallPart):
-                    if hitl_manager.needs_approval(part.tool_name):
-                        # Yield approval request
-                        yield StreamEvent(
-                            type="approval_request",
-                            content={
-                                "id": part.tool_call_id,
-                                "name": part.tool_name,
-                                "args": part.args,
-                            },
-                        )
-
-                        # Wait for approval
-                        approval = await hitl_manager.request_approval(
-                            part.tool_call_id,
-                            part.tool_name,
-                            part.args,
-                        )
-
-                        if approval.status == ApprovalStatus.REJECTED:
-                            # Return rejection to agent via deferred_tool_results
-                            # PydanticAI handles this natively
-                            pass
-
-                # ... rest of event handling
+needs_approval('write_file'): True
+needs_approval('read_file'): False
 ```
 
 ---

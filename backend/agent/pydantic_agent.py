@@ -5,15 +5,18 @@ Main agent implementation using PydanticAI framework.
 Replaces the raw Anthropic SDK implementation.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, TYPE_CHECKING
 
 from pydantic_ai import Agent, RunContext
 
 from agent.providers.colorist import get_default_model
 from agent.prompts import get_system_prompt
 from agent.processors import default_history_processor
+
+if TYPE_CHECKING:
+    from agent.hitl import HITLManager, ApprovalStatus
 
 
 @dataclass
@@ -26,9 +29,48 @@ class AuraDeps:
     project_path: str
     project_name: str = ""
 
+    # HITL support (optional)
+    hitl_manager: Optional["HITLManager"] = None
+
     def __post_init__(self):
         if not self.project_name and self.project_path:
             self.project_name = Path(self.project_path).name
+
+
+async def _check_hitl(
+    ctx: RunContext[AuraDeps],
+    tool_name: str,
+    tool_args: dict[str, Any],
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """
+    Check HITL approval for a tool call.
+
+    Returns:
+        (should_proceed, rejection_message, modified_args)
+    """
+    hitl_manager = ctx.deps.hitl_manager
+    if not hitl_manager or not hitl_manager.needs_approval(tool_name):
+        return True, None, None
+
+    from agent.hitl import ApprovalStatus
+    import uuid
+
+    # Request approval
+    approval = await hitl_manager.request_approval(
+        tool_name=tool_name,
+        tool_args=tool_args,
+        tool_call_id=str(uuid.uuid4()),
+    )
+
+    if approval.status == ApprovalStatus.REJECTED:
+        return False, f"Operation cancelled: {approval.rejection_reason}", None
+
+    if approval.status == ApprovalStatus.TIMEOUT:
+        return False, "Operation cancelled: Approval timeout", None
+
+    # Return modified args if user edited them
+    modified = approval.modified_args if approval.status == ApprovalStatus.MODIFIED else None
+    return True, None, modified
 
 
 # Create the main Aura agent
@@ -98,6 +140,20 @@ async def edit_file(
     Returns:
         Success message or error
     """
+    # HITL check - wait for approval if enabled
+    should_proceed, rejection_msg, modified_args = await _check_hitl(
+        ctx, "edit_file",
+        {"filepath": filepath, "old_string": old_string[:200], "new_string": new_string[:200]}
+    )
+    if not should_proceed:
+        return rejection_msg
+
+    # Use modified args if user edited them
+    if modified_args:
+        filepath = modified_args.get("filepath", filepath)
+        old_string = modified_args.get("old_string", old_string)
+        new_string = modified_args.get("new_string", new_string)
+
     project_path = ctx.deps.project_path
     full_path = Path(project_path) / filepath
 
@@ -144,6 +200,20 @@ async def write_file(
     Returns:
         Success message or error
     """
+    # HITL check - wait for approval if enabled
+    should_proceed, rejection_msg, modified_args = await _check_hitl(
+        ctx, "write_file",
+        {"filepath": filepath, "content_preview": content[:500] + "..." if len(content) > 500 else content}
+    )
+    if not should_proceed:
+        return rejection_msg
+
+    # Use modified args if user edited them
+    if modified_args:
+        filepath = modified_args.get("filepath", filepath)
+        if "content" in modified_args:
+            content = modified_args["content"]
+
     project_path = ctx.deps.project_path
     full_path = Path(project_path) / filepath
 

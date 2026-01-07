@@ -8,10 +8,12 @@ Features:
 - Text streaming with deltas
 - Tool call and result events
 - Automatic message compression for long conversations
+- Human-in-the-loop (HITL) approval for dangerous operations
 """
 
+import asyncio
 from dataclasses import dataclass
-from typing import AsyncIterator, Literal
+from typing import AsyncIterator, Literal, Optional
 import json
 import logging
 
@@ -126,6 +128,44 @@ class CompressionEvent(StreamEvent):
         }
 
 
+@dataclass
+class ApprovalRequiredEvent(StreamEvent):
+    """Tool requires user approval before execution."""
+    type: Literal["approval_required"] = "approval_required"
+    request_id: str = ""
+    tool_name: str = ""
+    tool_args: dict = None
+
+    def __post_init__(self):
+        if self.tool_args is None:
+            self.tool_args = {}
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "request_id": self.request_id,
+            "tool_name": self.tool_name,
+            "tool_args": self.tool_args,
+        }
+
+
+@dataclass
+class ApprovalResolvedEvent(StreamEvent):
+    """Tool approval was resolved (approved/rejected)."""
+    type: Literal["approval_resolved"] = "approval_resolved"
+    request_id: str = ""
+    status: str = ""  # "approved", "rejected", "modified", "timeout"
+    tool_name: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "request_id": self.request_id,
+            "status": self.status,
+            "tool_name": self.tool_name,
+        }
+
+
 # =============================================================================
 # Streaming Runner
 # =============================================================================
@@ -136,6 +176,7 @@ async def stream_agent_response(
     project_name: str = "",
     message_history: list = None,
     auto_compress: bool = True,
+    enable_hitl: bool = False,
 ) -> AsyncIterator[StreamEvent]:
     """
     Stream agent response as events.
@@ -149,15 +190,40 @@ async def stream_agent_response(
         project_name: Optional project name (derived from path if not given)
         message_history: Optional conversation history for context
         auto_compress: Whether to automatically compress long histories (default: True)
+        enable_hitl: Whether to enable human-in-the-loop approval (default: False)
 
     Yields:
-        StreamEvent objects (TextDeltaEvent, ToolCallEvent, ToolResultEvent, DoneEvent, ErrorEvent, CompressionEvent)
+        StreamEvent objects (TextDeltaEvent, ToolCallEvent, ToolResultEvent, DoneEvent, ErrorEvent, CompressionEvent, ApprovalRequiredEvent)
 
     Example:
         async for event in stream_agent_response("Read main.tex", "/path/to/project"):
             yield event.to_sse()  # For SSE endpoints
     """
-    deps = AuraDeps(project_path=project_path, project_name=project_name)
+    # Set up HITL if enabled
+    hitl_manager = None
+    event_queue: Optional[asyncio.Queue] = None
+
+    if enable_hitl:
+        from agent.hitl import get_hitl_manager
+
+        hitl_manager = get_hitl_manager()
+        event_queue = asyncio.Queue()
+
+        # Set up callback to emit approval events to stream
+        async def on_approval_request(request):
+            await event_queue.put(ApprovalRequiredEvent(
+                request_id=request.request_id,
+                tool_name=request.tool_name,
+                tool_args=request.tool_args,
+            ))
+
+        hitl_manager.set_event_callback(on_approval_request)
+
+    deps = AuraDeps(
+        project_path=project_path,
+        project_name=project_name,
+        hitl_manager=hitl_manager,
+    )
 
     # Handle compression if enabled and history provided
     processed_history = message_history
@@ -187,47 +253,153 @@ async def stream_agent_response(
             # Continue with original history on compression failure
 
     try:
-        async with aura_agent.iter(message, deps=deps, message_history=processed_history) as run:
-            async for node in run:
-                # Skip UserPromptNode - it's just our input
-                if isinstance(node, UserPromptNode):
-                    continue
-
-                elif isinstance(node, ModelRequestNode):
-                    # Stream text deltas from the model
-                    async with node.stream(run.ctx) as stream:
-                        async for text in stream.stream_text(delta=True):
-                            yield TextDeltaEvent(content=text)
-
-                elif isinstance(node, CallToolsNode):
-                    # Report tool calls from the model response
-                    for part in node.model_response.parts:
-                        if isinstance(part, ToolCallPart):
-                            try:
-                                args = part.args_as_dict()
-                            except Exception:
-                                args = {}
-                            yield ToolCallEvent(
-                                tool_name=part.tool_name,
-                                args=args,
-                            )
-
-                elif isinstance(node, End):
-                    # Stream is complete
-                    pass
-
-        # Get final result
-        result = run.result
-        usage = result.usage()
-
-        yield DoneEvent(
-            output=result.output or "",
-            input_tokens=usage.input_tokens if usage else 0,
-            output_tokens=usage.output_tokens if usage else 0,
-        )
+        if enable_hitl and event_queue:
+            # HITL mode: Run agent with event queue for approval events
+            async for event in _stream_with_hitl(
+                message, deps, processed_history, event_queue
+            ):
+                yield event
+        else:
+            # Standard mode: Direct streaming
+            async for event in _stream_standard(message, deps, processed_history):
+                yield event
 
     except Exception as e:
+        logger.error(f"Streaming error: {e}")
         yield ErrorEvent(message=str(e))
+
+
+async def _stream_standard(
+    message: str,
+    deps: AuraDeps,
+    message_history: list,
+) -> AsyncIterator[StreamEvent]:
+    """Standard streaming without HITL."""
+    async with aura_agent.iter(message, deps=deps, message_history=message_history) as run:
+        async for node in run:
+            if isinstance(node, UserPromptNode):
+                continue
+
+            elif isinstance(node, ModelRequestNode):
+                async with node.stream(run.ctx) as stream:
+                    async for text in stream.stream_text(delta=True):
+                        yield TextDeltaEvent(content=text)
+
+            elif isinstance(node, CallToolsNode):
+                for part in node.model_response.parts:
+                    if isinstance(part, ToolCallPart):
+                        try:
+                            args = part.args_as_dict()
+                        except Exception:
+                            args = {}
+                        yield ToolCallEvent(
+                            tool_name=part.tool_name,
+                            args=args,
+                        )
+
+            elif isinstance(node, End):
+                pass
+
+    result = run.result
+    usage = result.usage()
+
+    yield DoneEvent(
+        output=result.output or "",
+        input_tokens=usage.input_tokens if usage else 0,
+        output_tokens=usage.output_tokens if usage else 0,
+    )
+
+
+async def _stream_with_hitl(
+    message: str,
+    deps: AuraDeps,
+    message_history: list,
+    event_queue: asyncio.Queue,
+) -> AsyncIterator[StreamEvent]:
+    """
+    Streaming with HITL support.
+
+    Uses asyncio.Queue to receive approval events from tools while
+    the agent is processing. The agent runs in a background task,
+    pushing events to the queue. This generator reads from the queue
+    and yields events.
+    """
+    # Queue for all events (both agent events and HITL events)
+    done_event = asyncio.Event()
+    agent_error = None
+
+    async def run_agent_task():
+        """Run agent and push events to queue."""
+        nonlocal agent_error
+        try:
+            async with aura_agent.iter(message, deps=deps, message_history=message_history) as run:
+                async for node in run:
+                    if isinstance(node, UserPromptNode):
+                        continue
+
+                    elif isinstance(node, ModelRequestNode):
+                        async with node.stream(run.ctx) as stream:
+                            async for text in stream.stream_text(delta=True):
+                                await event_queue.put(TextDeltaEvent(content=text))
+
+                    elif isinstance(node, CallToolsNode):
+                        for part in node.model_response.parts:
+                            if isinstance(part, ToolCallPart):
+                                try:
+                                    args = part.args_as_dict()
+                                except Exception:
+                                    args = {}
+                                await event_queue.put(ToolCallEvent(
+                                    tool_name=part.tool_name,
+                                    args=args,
+                                ))
+
+                    elif isinstance(node, End):
+                        pass
+
+            result = run.result
+            usage = result.usage()
+
+            await event_queue.put(DoneEvent(
+                output=result.output or "",
+                input_tokens=usage.input_tokens if usage else 0,
+                output_tokens=usage.output_tokens if usage else 0,
+            ))
+
+        except Exception as e:
+            agent_error = e
+            await event_queue.put(ErrorEvent(message=str(e)))
+
+        finally:
+            done_event.set()
+
+    # Start agent in background
+    agent_task = asyncio.create_task(run_agent_task())
+
+    try:
+        # Yield events as they come
+        while not done_event.is_set() or not event_queue.empty():
+            try:
+                # Use timeout to periodically check done_event
+                event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                yield event
+
+                # If it's a done or error event, we're finished
+                if isinstance(event, (DoneEvent, ErrorEvent)):
+                    break
+
+            except asyncio.TimeoutError:
+                # No event yet, continue waiting
+                continue
+
+    finally:
+        # Ensure agent task is cleaned up
+        if not agent_task.done():
+            agent_task.cancel()
+            try:
+                await agent_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def stream_agent_sse(
@@ -235,6 +407,7 @@ async def stream_agent_sse(
     project_path: str,
     project_name: str = "",
     message_history: list = None,
+    enable_hitl: bool = False,
 ) -> AsyncIterator[str]:
     """
     Stream agent response as SSE-formatted strings.
@@ -246,6 +419,7 @@ async def stream_agent_sse(
         project_path: Path to the LaTeX project
         project_name: Optional project name
         message_history: Optional conversation history
+        enable_hitl: Whether to enable HITL approval (default: False)
 
     Yields:
         SSE-formatted strings ready for StreamingResponse
@@ -263,6 +437,7 @@ async def stream_agent_sse(
         project_path=project_path,
         project_name=project_name,
         message_history=message_history,
+        enable_hitl=enable_hitl,
     ):
         yield event.to_sse()
 

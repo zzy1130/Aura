@@ -365,6 +365,126 @@ async def compress_history(request: CompressionStatsRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============ HITL (Human-in-the-Loop) Endpoints ============
+
+class HITLApproveRequest(BaseModel):
+    request_id: str
+    modified_args: Optional[dict] = None
+
+
+class HITLRejectRequest(BaseModel):
+    request_id: str
+    reason: str = "User rejected"
+
+
+@app.get("/api/hitl/pending")
+async def get_pending_approvals() -> list[dict]:
+    """
+    Get all pending HITL approval requests.
+
+    Returns list of pending requests that need user approval.
+    """
+    from agent.hitl import get_hitl_manager
+
+    manager = get_hitl_manager()
+    pending = await manager.get_pending()
+
+    return [req.to_dict() for req in pending]
+
+
+@app.get("/api/hitl/request/{request_id}")
+async def get_approval_request(request_id: str) -> dict:
+    """
+    Get a specific approval request by ID.
+    """
+    from agent.hitl import get_hitl_manager
+
+    manager = get_hitl_manager()
+    request = await manager.get_request(request_id)
+
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    return request.to_dict()
+
+
+@app.post("/api/hitl/approve")
+async def approve_request(request: HITLApproveRequest) -> dict:
+    """
+    Approve a pending HITL request.
+
+    The tool will continue execution after approval.
+    Optionally provide modified_args to change the tool arguments.
+    """
+    from agent.hitl import get_hitl_manager
+
+    manager = get_hitl_manager()
+    success = await manager.approve(
+        request_id=request.request_id,
+        modified_args=request.modified_args,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Request not found or already resolved"
+        )
+
+    return {
+        "success": True,
+        "request_id": request.request_id,
+        "status": "approved" if not request.modified_args else "modified",
+    }
+
+
+@app.post("/api/hitl/reject")
+async def reject_request(request: HITLRejectRequest) -> dict:
+    """
+    Reject a pending HITL request.
+
+    The tool will return a rejection message to the agent.
+    """
+    from agent.hitl import get_hitl_manager
+
+    manager = get_hitl_manager()
+    success = await manager.reject(
+        request_id=request.request_id,
+        reason=request.reason,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Request not found or already resolved"
+        )
+
+    return {
+        "success": True,
+        "request_id": request.request_id,
+        "status": "rejected",
+        "reason": request.reason,
+    }
+
+
+@app.get("/api/hitl/config")
+async def get_hitl_config() -> dict:
+    """
+    Get the current HITL configuration.
+
+    Shows which tools require approval.
+    """
+    from agent.hitl import get_hitl_manager
+
+    manager = get_hitl_manager()
+
+    return {
+        "approval_required": list(manager.config.approval_required),
+        "preview_only": list(manager.config.preview_only),
+        "approval_timeout": manager.config.approval_timeout,
+        "auto_approve_on_timeout": manager.config.auto_approve_on_timeout,
+    }
+
+
 # ============ Run Server ============
 
 if __name__ == "__main__":
