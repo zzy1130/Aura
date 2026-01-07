@@ -511,11 +511,17 @@ python-multipart>=0.0.6
 - `backend/agent/planning.py` - Structured planning system
 - `backend/agent/subagents/` - Research, Compiler, Planner agents
 
-### Phase 3.5: Research Tools (NEXT)
+### Phase 3.5: Research Tools ✅ COMPLETED
 
-7. **PDF reader tool** ⬜
-   - marker-pdf integration
-   - Extract text from academic papers
+7. **PDF reader tool** ✅
+   - PyMuPDF (fitz) for PDF text extraction
+   - Extract text from academic papers with page structure
+   - arXiv PDF download with caching
+   - URL-based PDF download
+   - Integrated into ResearchAgent as `read_arxiv_paper` and `read_pdf_url` tools
+
+**Files created:**
+- `backend/agent/tools/pdf_reader.py` - PDF extraction module
 
 ### Phase 4: Electron App
 
