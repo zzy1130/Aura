@@ -485,6 +485,97 @@ async def get_hitl_config() -> dict:
     }
 
 
+# ============ Steering Endpoints ============
+
+class SteeringAddRequest(BaseModel):
+    content: str
+    priority: int = 0
+    session_id: Optional[str] = None
+
+
+@app.post("/api/steering/add")
+async def add_steering(request: SteeringAddRequest) -> dict:
+    """
+    Add a steering message to guide the agent.
+
+    Steering messages are injected into the next agent request
+    to redirect or guide the agent's behavior.
+
+    Priority levels:
+        0 - Normal (default)
+        1 - High (processed before normal)
+        2 - Urgent (should interrupt if possible)
+    """
+    from agent.steering import get_steering_manager
+
+    manager = get_steering_manager()
+    message = await manager.add(
+        content=request.content,
+        priority=request.priority,
+        session_id=request.session_id,
+    )
+
+    return {
+        "success": True,
+        "message_id": message.message_id,
+        "priority": message.priority,
+        "queue_size": manager.queue_size(),
+    }
+
+
+@app.get("/api/steering/pending")
+async def get_pending_steering(session_id: Optional[str] = None) -> dict:
+    """
+    Get pending steering messages without removing them.
+
+    Useful for UI to display what steering is queued.
+    """
+    from agent.steering import get_steering_manager
+
+    manager = get_steering_manager()
+    messages = await manager.peek(session_id=session_id)
+
+    return {
+        "count": len(messages),
+        "messages": [msg.to_dict() for msg in messages],
+    }
+
+
+@app.delete("/api/steering/clear")
+async def clear_steering(session_id: Optional[str] = None) -> dict:
+    """
+    Clear all pending steering messages.
+
+    Optionally filter by session_id to clear only for a specific session.
+    """
+    from agent.steering import get_steering_manager
+
+    manager = get_steering_manager()
+    cleared = await manager.clear(session_id=session_id)
+
+    return {
+        "success": True,
+        "cleared_count": cleared,
+    }
+
+
+@app.get("/api/steering/config")
+async def get_steering_config() -> dict:
+    """
+    Get the current steering configuration.
+    """
+    from agent.steering import get_steering_manager
+
+    manager = get_steering_manager()
+
+    return {
+        "max_queue_size": manager.config.max_queue_size,
+        "default_priority": manager.config.default_priority,
+        "combine_messages": manager.config.combine_messages,
+        "current_queue_size": manager.queue_size(),
+    }
+
+
 # ============ Run Server ============
 
 if __name__ == "__main__":
