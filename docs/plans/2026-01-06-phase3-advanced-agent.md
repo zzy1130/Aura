@@ -7,7 +7,7 @@
 | 3A | ✅ Complete | PydanticAI migration with Colorist provider |
 | 3B | ✅ Complete | Message compression |
 | 3C | ✅ Complete | HITL (Human-in-the-loop) |
-| 3D | ⏳ Pending | Steering messages |
+| 3D | ✅ Complete | Steering messages |
 | 3E | ⏳ Pending | Multi-agent (subagents) |
 
 ---
@@ -833,6 +833,53 @@ async def check_steering(
     return False
 ```
 
+### Phase 3D Implementation Summary ✅
+
+**Status: Complete**
+
+Implemented steering messages to allow users to guide the agent mid-conversation.
+
+**File: `backend/agent/steering.py`**
+
+Components:
+- `SteeringConfig` - Configuration (max_queue_size, default_priority, combine_messages)
+- `SteeringMessage` - Data class with content, priority, session_id
+- `SteeringManager` - Async manager with priority queue
+- `check_and_inject_steering()` - Helper to prepend steering to user messages
+- `get_steering_manager()` - Singleton accessor
+
+Key features:
+- Priority-based ordering (higher priority = processed first)
+- Session isolation support for multi-user scenarios
+- Configurable message template for injection format
+- Thread-safe async operations with locks
+
+### Integration
+
+Updated `backend/agent/streaming.py`:
+- Added `SteeringEvent` stream event type
+- Added `enable_steering` and `session_id` parameters to `stream_agent_response()`
+- Added `enable_steering` and `session_id` parameters to `stream_agent_sse()`
+- Added `enable_steering` and `session_id` parameters to `run_agent()`
+- Steering checked at start of each request, injected before agent processes
+
+### API Endpoints
+
+- `POST /api/steering/add` - Add steering message with priority and optional session_id
+- `GET /api/steering/pending` - Peek at pending steering messages
+- `DELETE /api/steering/clear` - Clear pending steering messages
+- `GET /api/steering/config` - Get steering configuration
+
+### Test Results
+
+```
+Queue size: 3 messages
+Priority ordering: [1, 0, 0] (high priority first)
+Session isolation: Global messages visible to all, session-specific only to that session
+Message formatting: [USER STEERING - Priority N]: content
+✅ All steering tests passed!
+```
+
 ---
 
 ## Phase 3E: Multi-Agent (Subagents)
@@ -1132,9 +1179,9 @@ backend/agent/
 ├── pydantic_agent.py         # Phase 3A
 ├── runner.py                 # Phase 3A
 ├── processors.py             # Phase 3A
-├── compression.py            # Phase 3B
-├── hitl.py                   # Phase 3C
-├── steering.py               # Phase 3D
+├── compression.py            # Phase 3B ✅
+├── hitl.py                   # Phase 3C ✅
+├── steering.py               # Phase 3D ✅
 ├── subagents/
 │   ├── __init__.py           # Phase 3E
 │   ├── base.py               # Phase 3E
