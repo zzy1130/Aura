@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --aura-bg: #1e1e2e;
+  --aura-surface: #282838;
+  --aura-border: #3d3d5c;
+  --aura-text: #cdd6f4;
+  --aura-muted: #6c7086;
+  --aura-accent: #89b4fa;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: var(--aura-bg);
+  color: var(--aura-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Electron titlebar drag area */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--aura-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--aura-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--aura-muted);
+}
+
+/* Monaco editor overrides */
+.monaco-editor {
+  background-color: var(--aura-surface) !important;
+}
+
+/* Panel resizer */
+.resizer {
+  background: var(--aura-border);
+  cursor: col-resize;
+  transition: background 0.2s;
+}
+
+.resizer:hover {
+  background: var(--aura-accent);
+}
+
+/* PDF viewer container */
+.pdf-container {
+  background-color: #525659;
+}
+
+/* Agent message styles */
+.agent-message {
+  @apply bg-aura-surface rounded-lg p-3 mb-2;
+}
+
+.agent-message-user {
+  @apply bg-aura-accent/10 border border-aura-accent/20;
+}
+
+.agent-message-assistant {
+  @apply bg-aura-surface border border-aura-border;
+}
+
+.agent-tool-call {
+  @apply bg-aura-bg rounded p-2 my-1 font-mono text-sm;
+}
+
+/* File tree styles */
+.file-tree-item {
+  @apply flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-aura-surface;
+}
+
+.file-tree-item.selected {
+  @apply bg-aura-accent/20 text-aura-accent;
+}
+
+/* Toolbar button */
+.toolbar-btn {
+  @apply flex items-center gap-1 px-3 py-1.5 rounded text-sm font-medium transition-colors;
+  @apply hover:bg-aura-surface active:bg-aura-border;
+}
+
+.toolbar-btn-primary {
+  @apply bg-aura-accent text-aura-bg hover:bg-aura-accent/80;
+}

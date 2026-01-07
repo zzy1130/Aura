@@ -4,25 +4,27 @@
 
 Aura is a **local-first macOS desktop LaTeX IDE** with an embedded AI agent. Think "Overleaf + Claude Code" as a native app.
 
+**Current Status**: Phase 3.5 complete (backend agent feature-complete), Phase 4 (Electron UI) next.
+
 ## Architecture Summary
 
 ```
 Electron (.app) → Next.js UI → FastAPI Backend → Pydantic AI Agent
                                       ↓
-                              Tools (pluggy auto-discovery)
+                              Tools (decorator-based)
                                       ↓
-                    Docker (LaTeX) | arXiv API | Git (Overleaf)
+                    Docker (LaTeX) | arXiv API | PDF Reader | Git
 ```
 
-## Key Technical Decisions
+## Quick Reference
 
-1. **Desktop**: Electron (not native Swift, not Tauri)
-2. **Agent Framework**: Pydantic AI (not raw Anthropic API, not Claude Agent SDK)
-3. **LLM**: Claude Sonnet 4.5 via **Colorist gateway** (not direct Anthropic API)
-4. **Tool System**: Pluggy for auto-discovery (inspired by Paintress project)
-5. **LaTeX**: Docker isolation with texlive image
-6. **Storage**: Local filesystem (`~/aura-projects/`), no database
-7. **Streaming**: SSE from FastAPI to React
+| Component | Location | Entry Point |
+|-----------|----------|-------------|
+| FastAPI Backend | `backend/` | `main.py` |
+| Main Agent | `backend/agent/` | `pydantic_agent.py` |
+| Subagents | `backend/agent/subagents/` | `research.py`, `compiler.py`, `planner.py` |
+| Services | `backend/services/` | `docker.py`, `project.py` |
+| Tools | `backend/agent/tools/` | `pdf_reader.py` |
 
 ## Colorist API Configuration
 
@@ -32,7 +34,7 @@ Electron (.app) → Next.js UI → FastAPI Backend → Pydantic AI Agent
 from anthropic import AsyncAnthropic
 import httpx
 
-# Key points from paintress implementation:
+# Key points:
 # 1. Use auth_token (not api_key)
 # 2. No /v1 suffix on base_url
 # 3. Shared httpx.AsyncClient for connection pooling
@@ -45,108 +47,185 @@ client = AsyncAnthropic(
 )
 ```
 
-Environment variables:
-- `COLORIST_API_KEY`: `vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308ec8336`
-- `COLORIST_GATEWAY_URL`: `https://colorist-gateway-staging.arco.ai`
+**Default Model**: `claude-4-5-sonnet-by-all` (Colorist gateway format)
 
-## Default Model
-
-Use `claude-4-5-sonnet-by-all` as the default model (Colorist gateway format).
-
-## Project Structure
+## Project Structure (Current)
 
 ```
 Aura/
-├── app/                    # Electron + Next.js frontend
-│   ├── main/               # Electron main process
-│   └── renderer/           # Next.js app
-├── backend/                # Python FastAPI
-│   ├── agent/              # Pydantic AI agent
-│   ├── tools/              # Auto-discovered tools (pluggy)
-│   └── services/           # Docker, Git, Project management
-├── sandbox/                # Docker LaTeX environment
-└── docs/plans/             # Design documents
+├── backend/
+│   ├── main.py                    # FastAPI app with all endpoints
+│   ├── agent/
+│   │   ├── pydantic_agent.py      # Main agent (17 tools)
+│   │   ├── streaming.py           # SSE streaming
+│   │   ├── compression.py         # Message compression
+│   │   ├── hitl.py                # Human-in-the-loop approval
+│   │   ├── steering.py            # Mid-conversation steering
+│   │   ├── planning.py            # Structured planning system
+│   │   ├── providers/
+│   │   │   └── colorist.py        # Colorist gateway provider
+│   │   ├── subagents/
+│   │   │   ├── base.py            # Subagent base class
+│   │   │   ├── research.py        # arXiv/Semantic Scholar + PDF
+│   │   │   ├── compiler.py        # LaTeX error fixing
+│   │   │   └── planner.py         # Task planning
+│   │   └── tools/
+│   │       └── pdf_reader.py      # PDF text extraction
+│   └── services/
+│       ├── docker.py              # LaTeX compilation
+│       └── project.py             # Project management
+├── sandbox/
+│   └── Dockerfile                 # texlive image
+├── docs/plans/
+│   ├── 2026-01-06-aura-design.md           # Main design doc
+│   └── 2026-01-06-phase3-advanced-agent.md # Phase 3 details
+└── projects/                      # User LaTeX projects (gitignored)
 ```
 
-## Tool Registration Pattern
+## Tool Registration Pattern (PydanticAI)
 
-Tools are auto-discovered via pluggy. Each tool file exports:
+Tools are registered via decorators on the agent:
 
 ```python
-from backend.tools.manager import hookimpl
+from pydantic_ai import Agent, RunContext
+from dataclasses import dataclass
 
-@hookimpl
-def register_tools() -> list[Tool]:
-    return [Tool(my_function, description="...")]
+@dataclass
+class MyDeps:
+    project_path: str
+
+agent = Agent(model=..., deps_type=MyDeps)
+
+@agent.tool
+async def my_tool(ctx: RunContext[MyDeps], arg1: str, arg2: int = 10) -> str:
+    """
+    Tool description shown to the LLM.
+
+    Args:
+        arg1: Description of arg1
+        arg2: Description of arg2 (default: 10)
+
+    Returns:
+        Result description
+    """
+    project = ctx.deps.project_path
+    return f"Result for {arg1}"
 ```
 
-Place tools in `backend/tools/<category>/<tool_name>.py`.
+## Subagent Pattern
 
-## Reference Projects
+```python
+from agent.subagents.base import Subagent, SubagentConfig, register_subagent
 
-- **Paintress** (`/Users/zhongzhiyi/Desktop/paintress`): Reference for agent architecture, tool system (pluggy), streaming patterns
-- **Appraiser** (`/Users/zhongzhiyi/Desktop/appraiser`): Reference for Colorist API integration
+@register_subagent("my_subagent")
+class MySubagent(Subagent[MyDeps]):
+    def __init__(self):
+        config = SubagentConfig(
+            name="my_subagent",
+            description="What this subagent does",
+            use_haiku=True,  # Use cheaper model
+        )
+        super().__init__(config)
 
-## Agent Capabilities (Priority Order)
+    @property
+    def system_prompt(self) -> str:
+        return "You are a specialized agent for..."
 
-1. Writing assistant - Draft/edit LaTeX, fix errors
-2. Research helper - Search arXiv/Semantic Scholar, summarize papers
-3. Compiler fixer - Auto-fix LaTeX compilation errors
-4. Vibe matching - Mimic writing style (future)
-
-## Build Order
-
-See `docs/plans/2026-01-06-aura-design.md` for detailed 17-phase build plan.
-
-Quick summary:
-1. Phase 1: Docker LaTeX sandbox + FastAPI skeleton
-2. Phase 2: Colorist client + Pydantic AI agent + tools
-3. Phase 3: Research tools (arXiv, Semantic Scholar, PDF reader)
-4. Phase 4: Electron shell + UI components
-5. Phase 5: Git/Overleaf sync + packaging
-
-## UI Layout
-
+    def _create_agent(self) -> Agent:
+        agent = Agent(model=self._get_model(), ...)
+        # Register tools with @agent.tool
+        return agent
 ```
-┌──────────┬─────────────────────┬─────────────┬──────────────┐
-│ File Tree│   Monaco Editor     │ PDF Preview │ Agent Panel  │
-│  200px   │     flexible        │    ~40%     │    350px     │
-└──────────┴─────────────────────┴─────────────┴──────────────┘
-```
-
-## Key Dependencies
-
-Backend:
-- `pydantic-ai` - Agent framework
-- `anthropic` - LLM client (pointed at Colorist)
-- `pluggy` - Tool auto-discovery
-- `docker` - LaTeX compilation
-- `gitpython` - Overleaf sync
-
-Frontend:
-- `electron` - Desktop shell
-- `next` - React framework
-- `@monaco-editor/react` - LaTeX editor
-- `react-pdf` - PDF viewer
 
 ## Common Commands
 
 ```bash
-# Backend dev
-cd backend && uvicorn main:app --reload --port 8000
+# Backend dev server
+cd /Users/zhongzhiyi/Aura/backend && uvicorn main:app --reload --port 8000
 
-# Frontend dev
-cd app && npm run dev
+# Run inline Python tests (preferred pattern)
+cd /Users/zhongzhiyi/Aura/backend && python3 << 'EOF'
+import asyncio
+from agent.subagents.research import ResearchAgent
+# ... test code
+asyncio.run(test_function())
+EOF
 
-# Build Docker image
-cd sandbox && docker build -t aura-texlive .
+# Build Docker LaTeX image
+cd /Users/zhongzhiyi/Aura/sandbox && docker build -t aura-texlive .
 
-# Full dev (both)
-cd app && npm run dev  # runs concurrently
+# Install backend dependencies
+cd /Users/zhongzhiyi/Aura/backend && pip install -r requirements.txt
 ```
+
+## Import Conventions
+
+When running from `backend/` directory, use relative imports:
+
+```python
+# Correct (from backend/)
+from agent.pydantic_agent import aura_agent
+from agent.subagents.research import ResearchAgent
+from agent.tools.pdf_reader import read_arxiv_paper
+from services.docker import get_docker_latex
+
+# NOT: from backend.agent...
+```
+
+## Key API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/chat/stream` | POST | SSE streaming agent responses |
+| `/api/compile` | POST | Compile LaTeX project |
+| `/api/projects` | GET/POST | List/create projects |
+| `/api/subagents` | GET | List available subagents |
+| `/api/planning/create` | POST | Create execution plan |
+| `/api/hitl/approve` | POST | Approve pending tool call |
+| `/api/steering/add` | POST | Add steering message |
+
+## Key Dependencies
+
+Backend (`requirements.txt`):
+- `pydantic-ai>=0.0.14` - Agent framework
+- `anthropic>=0.40.0` - LLM client (Colorist gateway)
+- `PyMuPDF>=1.24.0` - PDF text extraction
+- `httpx>=0.26.0` - HTTP client
+- `arxiv>=2.1.0` - arXiv API
+- `docker>=7.0.0` - LaTeX compilation
+- `sse-starlette>=1.8.0` - SSE streaming
+
+## Agent Tools (17 total)
+
+Main agent (`pydantic_agent.py`):
+- `read_file`, `edit_file`, `write_file`, `list_files`, `find_files`
+- `compile_latex`, `check_latex_syntax`, `get_compilation_log`
+- `think` (reasoning tool)
+- `delegate_to_subagent` (handoff to research/compiler/planner)
+- Planning tools: `plan_task`, `get_current_plan`, `start_plan_execution`, `complete_plan_step`, `fail_plan_step`, `skip_plan_step`, `abandon_plan`
+
+Research subagent:
+- `search_arxiv`, `search_semantic_scholar`, `read_arxiv_paper`, `read_pdf_url`, `think`
+
+## Build Phases
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1 | ✅ | Docker LaTeX sandbox + FastAPI skeleton |
+| 2 | ✅ | Colorist client + Pydantic AI agent + tools |
+| 3A-3F | ✅ | Advanced agent (compression, HITL, steering, subagents, planning) |
+| 3.5 | ✅ | PDF reader tool |
+| 4 | **NEXT** | Electron shell + UI components |
+| 5 | Pending | Git/Overleaf sync + packaging |
 
 ## Git Workflow
 
-When committing:
-- Always pull from origin main/master first
+- Always pull from origin before committing
 - Do not cite Claude Code in commit messages
+- Use descriptive commit messages with bullet points
+- Current branch: `phase3e-subagents`
+
+## Reference Projects
+
+- **Paintress** (`/Users/zhongzhiyi/Desktop/paintress`): Agent architecture patterns
+- **Appraiser** (`/Users/zhongzhiyi/Desktop/appraiser`): Colorist API integration

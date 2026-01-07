@@ -489,54 +489,74 @@ python-multipart>=0.0.6
 - `backend/tools/files/operations.py` - File tools
 - `backend/tools/latex/compile.py` - LaTeX tools
 
-### Phase 3: Research Tools
+### Phase 3: Advanced Agent Features ✅ COMPLETED
 
-7. **arXiv search tool**
-   - API integration
-   - Parse Atom XML response
+**See detailed doc:** `docs/plans/2026-01-06-phase3-advanced-agent.md`
 
-8. **Semantic Scholar tool**
-   - API integration
-   - Citation data
+| Sub-Phase | Feature | Status |
+|-----------|---------|--------|
+| 3A | PydanticAI migration + Colorist provider | ✅ |
+| 3B | Message compression | ✅ |
+| 3C | HITL (Human-in-the-loop) | ✅ |
+| 3D | Steering messages | ✅ |
+| 3E | Multi-agent (subagents: research, compiler) | ✅ |
+| 3F | Planning system (PlannerAgent) | ✅ |
 
-9. **PDF reader tool**
-   - marker-pdf integration
-   - Extract text from papers
+**Key files:**
+- `backend/agent/pydantic_agent.py` - Main agent (17 tools including planning)
+- `backend/agent/streaming.py` - SSE streaming with events
+- `backend/agent/compression.py` - Message compression
+- `backend/agent/hitl.py` - Human-in-the-loop approval
+- `backend/agent/steering.py` - Mid-conversation guidance
+- `backend/agent/planning.py` - Structured planning system
+- `backend/agent/subagents/` - Research, Compiler, Planner agents
+
+### Phase 3.5: Research Tools ✅ COMPLETED
+
+7. **PDF reader tool** ✅
+   - PyMuPDF (fitz) for PDF text extraction
+   - Extract text from academic papers with page structure
+   - arXiv PDF download with caching
+   - URL-based PDF download
+   - Integrated into ResearchAgent as `read_arxiv_paper` and `read_pdf_url` tools
+
+**Files created:**
+- `backend/agent/tools/pdf_reader.py` - PDF extraction module
 
 ### Phase 4: Electron App
 
-10. **Electron shell**
+8. **Electron shell**
     - Main process, spawn Python
     - IPC bridge
 
-11. **Monaco editor component**
+9. **Monaco editor component**
     - LaTeX syntax highlighting
     - File save/load
 
-12. **File tree component**
+10. **File tree component**
     - List project files
     - Create/delete files
 
-13. **PDF viewer component**
+11. **PDF viewer component**
     - Display compiled PDF
     - Page navigation
 
-14. **Agent panel component**
+12. **Agent panel component**
     - SSE consumer hook
     - Message display, input
 
 ### Phase 5: Git & Polish
 
-15. **Git/Overleaf sync**
+13. **Git/Overleaf sync**
     - Setup, pull, push
     - Conflict detection
 
-16. **Toolbar & settings**
+14. **Toolbar & settings**
     - Compile button
     - Sync button
     - Overleaf URL config
 
-17. **Packaging**
+15. **Packaging**
     - electron-builder config
     - Bundle Python backend
     - Create .dmg for macOS

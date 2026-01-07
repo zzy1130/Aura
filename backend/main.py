@@ -45,6 +45,14 @@ docker_latex = DockerLatex()
 project_service = ProjectService()
 
 
+# ============ Health Check ============
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint for Electron app."""
+    return {"status": "ok", "service": "aura-backend"}
+
+
 # ============ Request/Response Models ============
 
 class CompileRequest(BaseModel):

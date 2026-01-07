@@ -9,6 +9,8 @@
 | 3C | ✅ Complete | HITL (Human-in-the-loop) |
 | 3D | ✅ Complete | Steering messages |
 | 3E | ✅ Complete | Multi-agent (subagents) |
+| 3F | ✅ Complete | Planning system |
+| 3.5 | ✅ Complete | PDF reader tool |
 
 ---
 
@@ -1242,13 +1244,157 @@ backend/agent/
 ├── compression.py            # Phase 3B ✅
 ├── hitl.py                   # Phase 3C ✅
 ├── steering.py               # Phase 3D ✅
+├── planning.py               # Phase 3F ✅
 ├── subagents/
 │   ├── __init__.py           # Phase 3E ✅
 │   ├── base.py               # Phase 3E ✅
-│   ├── research.py           # Phase 3E ✅
-│   └── compiler.py           # Phase 3E ✅
+│   ├── research.py           # Phase 3E ✅ (updated for PDF in 3.5)
+│   ├── compiler.py           # Phase 3E ✅
+│   └── planner.py            # Phase 3F ✅
+├── tools/
+│   └── pdf_reader.py         # Phase 3.5 ✅
 ├── context.py                # (existing, enhanced)
 └── prompts.py                # (existing)
+```
+
+---
+
+## Phase 3F: Planning System ✅
+
+**Status: Complete**
+
+Implemented structured planning system for complex multi-step tasks.
+
+### Implementation Summary
+
+**Files Created:**
+
+- `backend/agent/planning.py` - Core planning infrastructure
+- `backend/agent/subagents/planner.py` - PlannerAgent subagent
+
+**Components in `planning.py`:**
+
+- `PlanningConfig` - Configuration (auto_plan_threshold, trigger_keywords)
+- `PlanStatus` - Enum (DRAFT, APPROVED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED)
+- `StepStatus` - Enum (PENDING, IN_PROGRESS, COMPLETED, FAILED, SKIPPED)
+- `StepType` - Enum (ANALYSIS, EDIT, CREATE, DELETE, COMPILE, TEST, RESEARCH, VERIFY, OTHER)
+- `PlanStep` - Data class for plan steps with dependencies and status
+- `Plan` - Data class with steps, progress tracking, and markdown export
+- `PlanManager` - Async manager for plan lifecycle with history
+
+**Components in `planner.py`:**
+
+- `PlannerDeps` - Dependencies for planner agent
+- `PlannerAgent` - Specialized agent for task analysis and plan generation
+- Tools: `read_file`, `list_files`, `analyze_task_complexity`, `create_structured_plan`, `think`
+- `create_plan_for_task()` - Convenience function
+
+**Main Agent Integration:**
+
+Added 7 planning tools to `pydantic_agent.py`:
+- `plan_task` - Create a structured plan using PlannerAgent
+- `get_current_plan` - View current plan and progress
+- `start_plan_execution` - Begin executing plan
+- `complete_plan_step` - Mark step as done
+- `fail_plan_step` - Mark step as failed
+- `skip_plan_step` - Skip current step
+- `abandon_plan` - Cancel plan
+
+**System Prompt Updates:**
+
+Added CRITICAL planning requirements to `prompts.py`:
+- Plan REQUIRED for: 2+ file changes, new features, refactoring, multi-step tasks
+- Planning workflow steps documented
+- "DO NOT skip planning for complex tasks" enforcement
+
+**Streaming Events:**
+
+- `PlanCreatedEvent` - Plan was created
+- `PlanStepEvent` - Step status changed
+- `PlanCompletedEvent` - Plan finished
+
+**API Endpoints:**
+
+- `POST /api/planning/create` - Create plan for task
+- `GET /api/planning/current` - Get active plan
+- `POST /api/planning/start` - Start plan execution
+- `POST /api/planning/step/complete` - Complete current step
+- `POST /api/planning/step/fail` - Fail current step
+- `POST /api/planning/step/skip` - Skip current step
+- `POST /api/planning/cancel` - Cancel/abandon plan
+- `GET /api/planning/history` - Get plan history
+
+### Test Results
+
+```
+✅ PlanStep creation and serialization
+✅ Plan progress tracking (0/3 → 3/3 steps)
+✅ Plan markdown export
+✅ PlanManager singleton
+✅ Step completion and auto-advancement
+✅ Plan archiving to history
+✅ Planning events (PlanCreatedEvent)
+```
+
+---
+
+## Phase 3.5: PDF Reader Tool ✅
+
+**Status: Complete**
+
+Implemented PDF text extraction for academic papers using PyMuPDF.
+
+### Implementation Summary
+
+**File: `backend/agent/tools/pdf_reader.py`**
+
+Components:
+- `PDFPage` - Dataclass for single page with text and char count
+- `PDFDocument` - Dataclass for full document with pages, metadata
+- `extract_text_from_pdf()` - Extract text from local PDF file
+- `download_arxiv_pdf()` - Download PDF from arXiv with caching
+- `download_pdf_from_url()` - Download PDF from any URL with caching
+- `read_arxiv_paper()` - High-level API: download + extract from arXiv
+- `read_pdf_from_url()` - High-level API: download + extract from URL
+- `read_local_pdf()` - Extract from local file
+- `clear_pdf_cache()` - Clear temporary PDF cache
+
+Key features:
+- PyMuPDF (fitz) for efficient text extraction
+- Lazy module loading for graceful degradation
+- Temporary file caching to avoid re-downloading
+- Page structure preservation
+- Configurable page/character limits
+- Metadata extraction (title, page count)
+
+### ResearchAgent Integration
+
+Updated `backend/agent/subagents/research.py`:
+- Added `read_arxiv_paper` tool - read full text of arXiv papers by ID
+- Added `read_pdf_url` tool - read PDFs from any URL
+- Updated system prompt with PDF reading instructions
+
+### Test Results
+
+```
+1. Download arXiv paper 1706.03762 (Attention Is All You Need)
+   ✅ Downloaded to temp cache
+   ✅ File exists
+
+2. Extract text from PDF
+   ✅ Title extracted
+   ✅ 15 pages detected
+   ✅ 39,307 characters extracted
+
+3. High-level API
+   ✅ read_arxiv_paper works
+   ✅ arxiv_id and source_url populated
+
+4. ResearchAgent tools
+   ✅ 5 tools registered: search_arxiv, search_semantic_scholar, think, read_arxiv_paper, read_pdf_url
+
+5. End-to-end test
+   ✅ Agent searches arXiv, reads PDF, summarizes abstract
 ```
 
 ---
@@ -1263,6 +1409,8 @@ backend/agent/
 | 3C | HITL | User can approve/reject file edits |
 | 3D | Steering | User can redirect mid-conversation |
 | 3E | Multi-Agent | Research delegated to subagent |
+| 3F | Planning | Complex tasks use structured plans |
+| 3.5 | PDF Reader | Agent can download and read arXiv papers |
 
 ---
 
