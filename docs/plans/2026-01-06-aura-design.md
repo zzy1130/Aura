@@ -550,9 +550,14 @@ python-multipart>=0.0.6
     - Message display (user/assistant)
     - Tool call visualization with expandable details
 
+12. **Backend API wiring** ✅
+    - API client utility (app/lib/api.ts)
+    - File operations (read, write, list)
+    - Compilation with PDF display
+    - Error handling with dismissible banners
+
 **Remaining:**
-- Wire up backend API calls (compile, file operations)
-- Test full Electron app flow
+- Test full Electron app flow end-to-end
 - Polish and error handling
 
 ### Phase 5: Git & Polish
@@ -600,3 +605,47 @@ python-multipart>=0.0.6
 - **Fact-Groundedness**: All citations must be real (no hallucinations)
 - **Responsive UI**: Streaming events render in <100ms
 - **Reliable Sync**: Git operations handle conflicts gracefully
+
+---
+
+## Development Scripts
+
+### Starting the Application
+
+```bash
+# Start both backend and frontend
+./scripts/start.sh
+
+# Start backend only
+./scripts/start.sh --backend-only
+
+# Start frontend only (assumes backend running)
+./scripts/start.sh --frontend-only
+
+# Start backend and run tests
+./scripts/start.sh --test
+```
+
+### Testing the API
+
+```bash
+# Run full API test suite (requires backend running)
+python scripts/test_api.py
+
+# Verbose output
+python scripts/test_api.py --verbose
+
+# Custom backend URL
+python scripts/test_api.py --base-url http://localhost:8080
+```
+
+### Test Coverage
+
+The test suite validates:
+- Health & info endpoints (4 tests)
+- Project operations (3 tests)
+- File operations (3 tests)
+- HITL endpoints (2 tests)
+- Steering endpoints (2 tests)
+- Planning endpoints (2 tests)
+- Compression endpoints (1 test)
