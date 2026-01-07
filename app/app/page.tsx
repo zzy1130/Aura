@@ -6,6 +6,7 @@ import FileTree from '@/components/FileTree';
 import Editor from '@/components/Editor';
 import PDFViewer from '@/components/PDFViewer';
 import AgentPanel from '@/components/AgentPanel';
+import NewProjectModal from '@/components/NewProjectModal';
 import { api } from '@/lib/api';
 
 // =============================================================================
@@ -47,6 +48,9 @@ export default function Home() {
   // Error state
   const [error, setError] = useState<string | null>(null);
 
+  // Modal state
+  const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
+
   // Initialize API client on mount
   useEffect(() => {
     api.init().catch(console.error);
@@ -56,9 +60,8 @@ export default function Home() {
   // File List Fetching
   // =============================================================================
 
-  const fetchFileList = useCallback(async (projectPath: string) => {
+  const fetchFileList = useCallback(async (_projectPath: string, projectName: string) => {
     try {
-      const projectName = projectPath.split('/').pop() || '';
       const files = await api.getProjectFiles(projectName);
 
       // Extract paths from file objects (backend returns {name, path, type, size})
@@ -70,7 +73,14 @@ export default function Home() {
       }));
     } catch (err) {
       console.error('Failed to fetch file list:', err);
-      setError(`Failed to load files: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      // If project not found in backend, it might be opened from a different location
+      // Try to show a helpful message
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      if (errorMsg.includes('not found')) {
+        setError(`Project not found in ~/aura-projects/. Please create a new project or open one from the projects directory.`);
+      } else {
+        setError(`Failed to load files: ${errorMsg}`);
+      }
     }
   }, []);
 
@@ -96,40 +106,41 @@ export default function Home() {
         setError(null);
 
         // Fetch file list from backend
-        await fetchFileList(projectPath);
+        await fetchFileList(projectPath, name);
       }
     }
   }, [fetchFileList]);
 
-  const handleNewProject = useCallback(async () => {
-    const name = prompt('Project name:');
-    if (name && typeof window !== 'undefined' && window.aura) {
-      try {
-        // Create project via backend API
-        const newProject = await api.createProject(name);
+  const handleNewProject = useCallback(() => {
+    setIsNewProjectModalOpen(true);
+  }, []);
 
-        // Use the IPC path or construct from response
-        const projectPath = newProject.path || await window.aura.newProject(name);
-        if (projectPath) {
-          setProject({
-            path: projectPath,
-            name,
-            currentFile: null,
-            files: [],
-          });
-          setEditorContent('');
-          setIsDirty(false);
-          setPdfUrl(null);
-          setCompileStatus('idle');
-          setError(null);
+  const handleCreateProject = useCallback(async (name: string) => {
+    try {
+      // Create project via backend API
+      const newProject = await api.createProject(name);
 
-          // Fetch file list
-          await fetchFileList(projectPath);
-        }
-      } catch (err) {
-        console.error('Failed to create project:', err);
-        setError(`Failed to create project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      // Use the path from the response
+      const projectPath = newProject.path;
+      if (projectPath) {
+        setProject({
+          path: projectPath,
+          name,
+          currentFile: null,
+          files: [],
+        });
+        setEditorContent('');
+        setIsDirty(false);
+        setPdfUrl(null);
+        setCompileStatus('idle');
+        setError(null);
+
+        // Fetch file list
+        await fetchFileList(projectPath, name);
       }
+    } catch (err) {
+      console.error('Failed to create project:', err);
+      setError(`Failed to create project: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [fetchFileList]);
 
@@ -199,8 +210,7 @@ export default function Home() {
       if (result.success) {
         setCompileStatus('success');
         // Update PDF URL
-        const projectName = project.path.split('/').pop() || '';
-        setPdfUrl(api.getPdfUrl(projectName, 'main.pdf'));
+        setPdfUrl(api.getPdfUrl(project.name, 'main.pdf'));
       } else {
         setCompileStatus('error');
         setError(result.error_summary || 'Compilation failed');
@@ -212,17 +222,17 @@ export default function Home() {
     } finally {
       setIsCompiling(false);
     }
-  }, [project.path, project.currentFile, isDirty, handleSave]);
+  }, [project.path, project.name, project.currentFile, isDirty, handleSave]);
 
   // =============================================================================
   // Refresh File List
   // =============================================================================
 
   const handleRefreshFiles = useCallback(async () => {
-    if (project.path) {
-      await fetchFileList(project.path);
+    if (project.path && project.name) {
+      await fetchFileList(project.path, project.name);
     }
-  }, [project.path, fetchFileList]);
+  }, [project.path, project.name, fetchFileList]);
 
   // =============================================================================
   // Render
@@ -318,6 +328,13 @@ export default function Home() {
           </button>
         )}
       </div>
+
+      {/* New Project Modal */}
+      <NewProjectModal
+        isOpen={isNewProjectModalOpen}
+        onClose={() => setIsNewProjectModalOpen(false)}
+        onSubmit={handleCreateProject}
+      />
     </div>
   );
 }
