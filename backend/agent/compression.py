@@ -350,6 +350,7 @@ Create a concise summary following your instructions."""
         now = datetime.now(timezone.utc)
 
         # Create summary as user context message
+        # Note: ModelRequest doesn't have timestamp in newer PydanticAI versions
         summary_request = ModelRequest(
             parts=[
                 UserPromptPart(
@@ -357,7 +358,6 @@ Create a concise summary following your instructions."""
                     timestamp=now,
                 )
             ],
-            timestamp=now,
         )
 
         # Create acknowledgment response

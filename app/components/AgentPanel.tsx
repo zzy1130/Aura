@@ -201,9 +201,11 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
           if (line.startsWith('data:')) {
             try {
               const data = JSON.parse(line.slice(5).trim());
+              console.log('[Agent] SSE event:', data);
 
-              // Handle different event types
-              if (data.type === 'text' && data.content) {
+              // Handle different event types (matching backend format)
+              if (data.type === 'text_delta' && data.content) {
+                // Text streaming from model
                 setMessages((prev) => {
                   const updated = [...prev];
                   const last = updated[updated.length - 1];
@@ -212,11 +214,12 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
                   }
                   return updated;
                 });
-              } else if (data.type === 'tool_call' && data.content) {
+              } else if (data.type === 'tool_call') {
+                // Tool is being called - backend sends {tool_name, args}
                 const toolCall: ToolCall = {
-                  id: data.content.id || crypto.randomUUID(),
-                  name: data.content.name,
-                  args: data.content.args || {},
+                  id: crypto.randomUUID(),
+                  name: data.tool_name,
+                  args: data.args || {},
                   status: 'running',
                 };
                 setMessages((prev) => {
@@ -227,31 +230,40 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
                   }
                   return updated;
                 });
-              } else if (data.type === 'tool_result' && data.content) {
+              } else if (data.type === 'tool_result') {
+                // Tool execution result - backend sends {tool_name, result}
                 setMessages((prev) => {
                   const updated = [...prev];
                   const last = updated[updated.length - 1];
                   if (last.role === 'assistant' && last.toolCalls) {
-                    const tc = last.toolCalls.find((t) => t.id === data.content.id);
+                    // Find the most recent tool call with matching name that hasn't been resolved
+                    const tc = last.toolCalls.find((t) => t.name === data.tool_name && t.status === 'running');
                     if (tc) {
-                      tc.result = data.content.output;
+                      tc.result = data.result;
                       tc.status = 'success';
                     }
                   }
                   return updated;
                 });
+              } else if (data.type === 'done') {
+                // Stream complete - backend sends {output, usage}
+                console.log('[Agent] Stream done:', data);
               } else if (data.type === 'error') {
+                // Error occurred - backend sends {message}
                 setMessages((prev) => {
                   const updated = [...prev];
                   const last = updated[updated.length - 1];
                   if (last.role === 'assistant') {
-                    last.content += `\n\nError: ${data.content}`;
+                    last.content += `\n\nError: ${data.message || 'Unknown error'}`;
                   }
                   return updated;
                 });
+              } else if (data.type === 'compression') {
+                // History was compressed - informational
+                console.log('[Agent] History compressed:', data);
               }
             } catch (e) {
-              // Ignore JSON parse errors
+              console.error('[Agent] JSON parse error:', e, 'Line:', line);
             }
           }
         }

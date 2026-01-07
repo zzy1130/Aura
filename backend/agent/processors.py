@@ -84,9 +84,9 @@ def truncate_tool_results(
                     else:
                         new_parts.append(part)
 
+                # ModelRequest doesn't have timestamp in newer PydanticAI versions
                 msg = ModelRequest(
                     parts=new_parts,
-                    timestamp=msg.timestamp,
                     instructions=msg.instructions,
                     run_id=msg.run_id,
                     metadata=msg.metadata,
@@ -133,9 +133,9 @@ def remove_thinking_tools(messages: Messages) -> Messages:
                 if not (isinstance(part, ToolReturnPart) and part.tool_name == "think")
             ]
             if new_parts:
+                # ModelRequest doesn't have timestamp in newer PydanticAI versions
                 msg = ModelRequest(
                     parts=new_parts,
-                    timestamp=msg.timestamp,
                     instructions=msg.instructions,
                     run_id=msg.run_id,
                     metadata=msg.metadata,
