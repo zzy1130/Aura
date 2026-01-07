@@ -7,6 +7,7 @@ The main agent delegates to these subagents for focused work.
 Available Subagents:
     - research: Search arXiv and Semantic Scholar for papers
     - compiler: Fix LaTeX compilation errors
+    - planner: Create structured plans for complex tasks
 
 Usage:
     from agent.subagents import get_subagent, run_subagent, list_subagents
@@ -23,6 +24,13 @@ Usage:
     # Or get a subagent instance
     agent = get_subagent("compiler", project_path="/path/to/project")
     result = await agent.run("Fix the undefined control sequence error")
+
+    # Create a plan for a complex task
+    from agent.subagents.planner import create_plan_for_task
+    plan = await create_plan_for_task(
+        "Add a new methodology section",
+        project_path="/path/to/project",
+    )
 """
 
 # Base classes
@@ -39,10 +47,12 @@ from agent.subagents.base import (
 # Import subagent implementations to register them
 from agent.subagents import research
 from agent.subagents import compiler
+from agent.subagents import planner
 
 # Re-export specific subagents for direct access
 from agent.subagents.research import ResearchAgent
 from agent.subagents.compiler import CompilerAgent
+from agent.subagents.planner import PlannerAgent, create_plan_for_task
 
 
 __all__ = [
@@ -58,4 +68,7 @@ __all__ = [
     # Specific subagents
     "ResearchAgent",
     "CompilerAgent",
+    "PlannerAgent",
+    # Planning helpers
+    "create_plan_for_task",
 ]

@@ -14,6 +14,9 @@ from agent.streaming import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     SteeringEvent,
+    PlanCreatedEvent,
+    PlanStepEvent,
+    PlanCompletedEvent,
 )
 from agent.compression import (
     MessageCompressor,
@@ -36,6 +39,16 @@ from agent.steering import (
     get_steering_manager,
     check_and_inject_steering,
 )
+from agent.planning import (
+    Plan,
+    PlanStep,
+    PlanStatus,
+    StepStatus,
+    StepType,
+    PlanManager,
+    PlanningConfig,
+    get_plan_manager,
+)
 from agent.subagents import (
     Subagent,
     SubagentConfig,
@@ -45,6 +58,8 @@ from agent.subagents import (
     run_subagent,
     ResearchAgent,
     CompilerAgent,
+    PlannerAgent,
+    create_plan_for_task,
 )
 
 __all__ = [
@@ -65,6 +80,9 @@ __all__ = [
     "ApprovalRequiredEvent",
     "ApprovalResolvedEvent",
     "SteeringEvent",
+    "PlanCreatedEvent",
+    "PlanStepEvent",
+    "PlanCompletedEvent",
     # Compression
     "MessageCompressor",
     "CompressionConfig",
@@ -83,6 +101,15 @@ __all__ = [
     "SteeringMessage",
     "get_steering_manager",
     "check_and_inject_steering",
+    # Planning
+    "Plan",
+    "PlanStep",
+    "PlanStatus",
+    "StepStatus",
+    "StepType",
+    "PlanManager",
+    "PlanningConfig",
+    "get_plan_manager",
     # Subagents
     "Subagent",
     "SubagentConfig",
@@ -92,4 +119,6 @@ __all__ = [
     "run_subagent",
     "ResearchAgent",
     "CompilerAgent",
+    "PlannerAgent",
+    "create_plan_for_task",
 ]

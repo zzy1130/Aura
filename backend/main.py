@@ -643,6 +643,315 @@ async def run_subagent_endpoint(request: SubagentRunRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============ Planning Endpoints ============
+
+class CreatePlanRequest(BaseModel):
+    task: str
+    project_path: str
+    project_name: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class UpdateStepRequest(BaseModel):
+    step_id: str
+    status: str  # "completed", "failed", "skipped"
+    output: Optional[str] = None
+    error: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class PlanSessionRequest(BaseModel):
+    session_id: Optional[str] = None
+
+
+@app.post("/api/planning/create")
+async def create_plan_endpoint(request: CreatePlanRequest) -> dict:
+    """
+    Create a structured plan for a complex task.
+
+    Uses the PlannerAgent to analyze the task and generate
+    a step-by-step execution plan.
+
+    Returns:
+        The created plan with steps and metadata
+    """
+    from agent.subagents.planner import create_plan_for_task
+    from agent.planning import get_plan_manager
+
+    try:
+        plan = await create_plan_for_task(
+            task=request.task,
+            project_path=request.project_path,
+            project_name=request.project_name or "",
+        )
+
+        if not plan:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create plan. Please try with more details."
+            )
+
+        # Register the plan with the manager
+        plan_manager = get_plan_manager()
+        await plan_manager.create_plan(
+            goal=plan.goal,
+            original_request=request.task,
+            steps=[s.to_dict() for s in plan.steps],
+            session_id=request.session_id or "default",
+            context=plan.context,
+            complexity=plan.complexity,
+            estimated_files=plan.estimated_files,
+            risks=plan.risks,
+            assumptions=plan.assumptions,
+        )
+
+        return {
+            "plan_id": plan.plan_id,
+            "goal": plan.goal,
+            "status": plan.status.value,
+            "complexity": plan.complexity,
+            "steps": [s.to_dict() for s in plan.steps],
+            "estimated_files": plan.estimated_files,
+            "risks": plan.risks,
+            "assumptions": plan.assumptions,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Planning error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/planning/current")
+async def get_current_plan_endpoint(session_id: Optional[str] = None) -> dict:
+    """
+    Get the current active plan for a session.
+
+    Returns:
+        The current plan with progress info, or empty if no plan
+    """
+    from agent.planning import get_plan_manager
+
+    plan_manager = get_plan_manager()
+    plan = await plan_manager.get_plan(session_id or "default")
+
+    if not plan:
+        return {
+            "has_plan": False,
+            "message": "No active plan",
+        }
+
+    return {
+        "has_plan": True,
+        "plan_id": plan.plan_id,
+        "goal": plan.goal,
+        "status": plan.status.value,
+        "progress": plan.progress,
+        "current_step": plan.current_step.to_dict() if plan.current_step else None,
+        "steps": [s.to_dict() for s in plan.steps],
+        "markdown": plan.to_markdown(),
+    }
+
+
+@app.post("/api/planning/start")
+async def start_plan_endpoint(request: PlanSessionRequest) -> dict:
+    """
+    Start executing the current plan.
+
+    Marks the plan as in-progress and returns the first step.
+    """
+    from agent.planning import get_plan_manager, PlanStatus
+
+    plan_manager = get_plan_manager()
+    session_id = request.session_id or "default"
+    plan = await plan_manager.get_plan(session_id)
+
+    if not plan:
+        raise HTTPException(status_code=404, detail="No active plan")
+
+    if plan.status not in [PlanStatus.DRAFT, PlanStatus.APPROVED]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan is already {plan.status.value}"
+        )
+
+    # Approve and start
+    await plan_manager.approve_plan(session_id)
+    step = await plan_manager.start_next_step(session_id)
+
+    return {
+        "success": True,
+        "status": "in_progress",
+        "current_step": step.to_dict() if step else None,
+    }
+
+
+@app.post("/api/planning/step/complete")
+async def complete_step_endpoint(request: UpdateStepRequest) -> dict:
+    """
+    Mark the current step as completed.
+
+    Automatically advances to the next step if available.
+    """
+    from agent.planning import get_plan_manager, PlanStatus
+
+    plan_manager = get_plan_manager()
+    session_id = request.session_id or "default"
+
+    plan = await plan_manager.get_plan(session_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No active plan")
+
+    current = plan.current_step
+    if not current:
+        raise HTTPException(status_code=400, detail="No step in progress")
+
+    # Complete current step
+    await plan_manager.complete_current_step(
+        output=request.output or "",
+        session_id=session_id,
+    )
+
+    # Refresh plan
+    plan = await plan_manager.get_plan(session_id)
+
+    # Start next step if plan not complete
+    next_step = None
+    if plan.status != PlanStatus.COMPLETED:
+        next_step = await plan_manager.start_next_step(session_id)
+
+    return {
+        "success": True,
+        "completed_step": current.to_dict(),
+        "plan_status": plan.status.value,
+        "next_step": next_step.to_dict() if next_step else None,
+        "progress": plan.progress,
+    }
+
+
+@app.post("/api/planning/step/fail")
+async def fail_step_endpoint(request: UpdateStepRequest) -> dict:
+    """
+    Mark the current step as failed.
+    """
+    from agent.planning import get_plan_manager
+
+    plan_manager = get_plan_manager()
+    session_id = request.session_id or "default"
+
+    plan = await plan_manager.get_plan(session_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No active plan")
+
+    current = plan.current_step
+    if not current:
+        raise HTTPException(status_code=400, detail="No step in progress")
+
+    # Fail current step
+    await plan_manager.fail_current_step(
+        error=request.error or "Step failed",
+        session_id=session_id,
+    )
+
+    return {
+        "success": True,
+        "failed_step": current.to_dict(),
+        "error": request.error,
+    }
+
+
+@app.post("/api/planning/step/skip")
+async def skip_step_endpoint(request: UpdateStepRequest) -> dict:
+    """
+    Skip the current step.
+    """
+    from agent.planning import get_plan_manager, StepStatus
+
+    plan_manager = get_plan_manager()
+    session_id = request.session_id or "default"
+
+    plan = await plan_manager.get_plan(session_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No active plan")
+
+    current = plan.current_step
+    if not current:
+        raise HTTPException(status_code=400, detail="No step in progress")
+
+    # Skip current step
+    await plan_manager.update_step(
+        current.step_id,
+        StepStatus.SKIPPED,
+        request.output or "Skipped",
+        session_id=session_id,
+    )
+
+    # Start next step
+    next_step = await plan_manager.start_next_step(session_id)
+
+    return {
+        "success": True,
+        "skipped_step": current.to_dict(),
+        "next_step": next_step.to_dict() if next_step else None,
+    }
+
+
+@app.post("/api/planning/cancel")
+async def cancel_plan_endpoint(request: PlanSessionRequest) -> dict:
+    """
+    Cancel/abandon the current plan.
+    """
+    from agent.planning import get_plan_manager
+
+    plan_manager = get_plan_manager()
+    session_id = request.session_id or "default"
+
+    plan = await plan_manager.get_plan(session_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No active plan")
+
+    progress = plan.progress
+    await plan_manager.cancel_plan(session_id)
+
+    return {
+        "success": True,
+        "cancelled_goal": plan.goal,
+        "progress_at_cancellation": progress,
+    }
+
+
+@app.get("/api/planning/history")
+async def get_plan_history_endpoint(
+    session_id: Optional[str] = None,
+    limit: int = 10,
+) -> dict:
+    """
+    Get recent plan history for a session.
+
+    Returns completed/cancelled plans for reference.
+    """
+    from agent.planning import get_plan_manager
+
+    plan_manager = get_plan_manager()
+    history = await plan_manager.get_history(session_id or "default", limit=limit)
+
+    return {
+        "count": len(history),
+        "plans": [
+            {
+                "plan_id": p.plan_id,
+                "goal": p.goal,
+                "status": p.status.value,
+                "progress": p.progress,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "completed_at": p.completed_at.isoformat() if p.completed_at else None,
+            }
+            for p in history
+        ],
+    }
+
+
 # ============ Run Server ============
 
 if __name__ == "__main__":
