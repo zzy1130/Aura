@@ -309,6 +309,62 @@ async def list_tools() -> list[dict]:
     return tools
 
 
+# ============ Compression Endpoints ============
+
+class CompressionStatsRequest(BaseModel):
+    history: list
+
+
+@app.post("/api/compression/stats")
+async def get_compression_stats(request: CompressionStatsRequest) -> dict:
+    """
+    Get compression statistics for a message history.
+
+    Returns token estimates and whether compression would be triggered.
+    """
+    from agent.compression import get_compressor
+
+    compressor = get_compressor()
+    return compressor.get_compression_stats(request.history)
+
+
+@app.post("/api/compression/compress")
+async def compress_history(request: CompressionStatsRequest) -> dict:
+    """
+    Manually compress a message history.
+
+    Returns the compressed history and statistics.
+    """
+    from agent.compression import get_compressor
+
+    compressor = get_compressor()
+    stats_before = compressor.get_compression_stats(request.history)
+
+    if not compressor.should_compress(request.history):
+        return {
+            "compressed": False,
+            "reason": "History does not meet compression threshold",
+            "stats": stats_before,
+        }
+
+    try:
+        compressed = await compressor.compress(request.history)
+        stats_after = compressor.get_compression_stats(compressed)
+
+        return {
+            "compressed": True,
+            "original_messages": len(request.history),
+            "compressed_messages": len(compressed),
+            "tokens_before": stats_before["estimated_tokens"],
+            "tokens_after": stats_after["estimated_tokens"],
+            "tokens_saved": stats_before["estimated_tokens"] - stats_after["estimated_tokens"],
+            "history": compressed,
+        }
+    except Exception as e:
+        logger.error(f"Compression error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============ Run Server ============
 
 if __name__ == "__main__":

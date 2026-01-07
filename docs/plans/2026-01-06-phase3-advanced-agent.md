@@ -5,7 +5,7 @@
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 3A | ✅ Complete | PydanticAI migration with Colorist provider |
-| 3B | ⏳ Pending | Message compression |
+| 3B | ✅ Complete | Message compression |
 | 3C | ⏳ Pending | HITL (Human-in-the-loop) |
 | 3D | ⏳ Pending | Steering messages |
 | 3E | ⏳ Pending | Multi-agent (subagents) |
@@ -650,126 +650,51 @@ backend/agent/
 
 ---
 
-## Phase 3B: Message Compression
+## Phase 3B: Message Compression ✅
 
-With PydanticAI foundation in place, add compression as a history processor.
+**Status: Complete**
+
+Implemented automatic message compression for long conversations.
+
+### Implementation Summary
 
 **File: `backend/agent/compression.py`**
 
-```python
-"""
-Message Compression
+Components:
+- `CompressionConfig` - Configuration (max_tokens, threshold, keep_recent_turns)
+- `TokenCounter` - Character-based token estimation (chars/4)
+- `MessageCompressor` - Main compression logic with summarization
+- `get_compactor_agent()` - Haiku model agent for summarization
 
-Automatically compress old messages when approaching context limit.
-"""
+Key features:
+- Auto-compresses when token count exceeds 65% of 200K max
+- Preserves 4 most recent conversation turns
+- Uses Claude Haiku for fast, cheap summarization
+- Structured summary with Context, Key Actions, Current State, Important Details
 
-from dataclasses import dataclass
-from pydantic_ai.messages import ModelMessage
+### Integration
 
+Updated `backend/agent/streaming.py`:
+- Added `CompressionEvent` stream event type
+- Both `stream_agent_response()` and `run_agent()` support auto-compression
+- Compression happens before agent.iter() call (not as history processor due to async requirement)
 
-@dataclass
-class CompressionConfig:
-    max_tokens: int = 200_000
-    compress_threshold: float = 0.65  # 65% = ~130K tokens
-    keep_recent_turns: int = 4
-    compactor_model: str = "claude-4-5-haiku-by-all"
+### API Endpoints
 
+- `POST /api/compression/stats` - Get compression statistics for a history
+- `POST /api/compression/compress` - Manually trigger compression
 
-class TokenCounter:
-    """Estimate token count for messages."""
+### Test Results
 
-    CHARS_PER_TOKEN = 4  # Rough estimate
+```
+Before compression:
+  Messages: 24
+  Estimated tokens: 8750
 
-    def count(self, messages: list[ModelMessage]) -> int:
-        """Count approximate tokens in message list."""
-        total = 0
-        for msg in messages:
-            if hasattr(msg, 'parts'):
-                for part in msg.parts:
-                    if hasattr(part, 'content'):
-                        total += len(str(part.content)) // self.CHARS_PER_TOKEN
-        return total
-
-
-class MessageCompressor:
-    """Compress message history when needed."""
-
-    def __init__(self, config: CompressionConfig | None = None):
-        self.config = config or CompressionConfig()
-        self.counter = TokenCounter()
-
-    def should_compress(self, messages: list[ModelMessage]) -> bool:
-        """Check if compression is needed."""
-        tokens = self.counter.count(messages)
-        threshold = self.config.max_tokens * self.config.compress_threshold
-        return tokens > threshold
-
-    async def compress(
-        self,
-        messages: list[ModelMessage],
-        compactor_agent,  # Separate agent for compression
-    ) -> list[ModelMessage]:
-        """Compress old messages, keeping recent turns."""
-        if len(messages) <= self.config.keep_recent_turns * 2:
-            return messages  # Too short to compress
-
-        # Split into old and recent
-        keep_count = self.config.keep_recent_turns * 2
-        old_messages = messages[:-keep_count]
-        recent_messages = messages[-keep_count:]
-
-        # Summarize old messages
-        summary = await self._summarize(old_messages, compactor_agent)
-
-        # Create summary message
-        from pydantic_ai.messages import UserPrompt, ModelTextResponse
-
-        summary_messages = [
-            UserPrompt(content=f"[Previous conversation summary]\n{summary}"),
-            ModelTextResponse(content="I understand. I'll continue from where we left off."),
-        ]
-
-        return summary_messages + recent_messages
-
-    async def _summarize(
-        self,
-        messages: list[ModelMessage],
-        compactor_agent,
-    ) -> str:
-        """Use a smaller model to summarize messages."""
-        # Format messages for summarization
-        formatted = self._format_for_summary(messages)
-
-        result = await compactor_agent.run(
-            f"Summarize this conversation in 2-3 paragraphs:\n\n{formatted}"
-        )
-
-        return result.data
-
-    def _format_for_summary(self, messages: list[ModelMessage]) -> str:
-        """Format messages as text for summarization."""
-        lines = []
-        for msg in messages:
-            role = msg.__class__.__name__
-            if hasattr(msg, 'parts'):
-                content = " ".join(
-                    str(p.content) for p in msg.parts if hasattr(p, 'content')
-                )
-                lines.append(f"{role}: {content[:500]}...")
-        return "\n\n".join(lines)
-
-
-# History processor that compresses when needed
-def create_compression_processor(compressor: MessageCompressor):
-    """Create a history processor for compression."""
-
-    async def compress_if_needed(messages: list[ModelMessage]) -> list[ModelMessage]:
-        if compressor.should_compress(messages):
-            # Note: This needs async handling, may need different integration
-            pass
-        return messages
-
-    return compress_if_needed
+After compression:
+  Messages: 6
+  Estimated tokens: 1811
+  Tokens saved: 6939
 ```
 
 ---
