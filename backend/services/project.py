@@ -107,20 +107,55 @@ class ProjectService:
             last_modified=datetime.now().isoformat(),
         )
 
-    def get_files(self, project_path: str) -> list[dict]:
-        """Get file tree for a project."""
+    def get_files(self, project_path: str, max_files: int = 1000) -> list[dict]:
+        """
+        Get file tree for a project.
+
+        Skips common non-essential directories (node_modules, .venv, etc.)
+        and limits results to prevent timeouts on large directories.
+        """
+        import os
+
         project_path = Path(project_path)
         files = []
 
-        for f in sorted(project_path.rglob("*")):
-            if f.is_file() and not any(p.startswith(".") for p in f.relative_to(project_path).parts):
-                rel_path = str(f.relative_to(project_path))
-                files.append({
-                    "name": f.name,
-                    "path": rel_path,
-                    "type": self._get_file_type(f.suffix),
-                    "size": f.stat().st_size,
-                })
+        # Directories to skip (case-insensitive)
+        skip_dirs = {
+            'node_modules', '.venv', 'venv', '__pycache__', '.git',
+            '.svn', '.hg', 'dist', 'build', '.tox', '.pytest_cache',
+            '.mypy_cache', 'egg-info', '.eggs', 'target', 'out',
+            '.next', '.nuxt', '.cache', 'coverage', '.nyc_output',
+        }
+
+        for dirpath, dirnames, filenames in os.walk(project_path):
+            # Prune directories in-place to prevent descending into them
+            dirnames[:] = [
+                d for d in dirnames
+                if not d.startswith('.') and d.lower() not in skip_dirs
+            ]
+
+            for filename in sorted(filenames):
+                # Skip hidden files
+                if filename.startswith('.'):
+                    continue
+
+                # Skip if we've hit the max
+                if len(files) >= max_files:
+                    return files
+
+                filepath = Path(dirpath) / filename
+                rel_path = str(filepath.relative_to(project_path))
+
+                try:
+                    files.append({
+                        "name": filename,
+                        "path": rel_path,
+                        "type": self._get_file_type(filepath.suffix),
+                        "size": filepath.stat().st_size,
+                    })
+                except (OSError, IOError):
+                    # Skip files we can't stat
+                    pass
 
         return files
 

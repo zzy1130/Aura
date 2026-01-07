@@ -139,7 +139,8 @@ class ApiClient {
   }
 
   /**
-   * Get file list for a project
+   * Get file list for a project by name (only works for ~/aura-projects/)
+   * @deprecated Use listFiles() instead for arbitrary paths
    */
   async getProjectFiles(projectName: string): Promise<ProjectFile[]> {
     await this.ensureInitialized();
@@ -152,6 +153,30 @@ class ApiClient {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       console.error('[API] getProjectFiles error:', error);
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * List files in any directory (works with any path)
+   */
+  async listFiles(projectPath: string): Promise<ProjectFile[]> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/files/list`;
+    console.log('[API] listFiles:', url, { projectPath });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      console.error('[API] listFiles error:', error);
       throw new Error(error.detail || `HTTP ${response.status}`);
     }
 

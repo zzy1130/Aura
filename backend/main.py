@@ -83,6 +83,10 @@ class FileWriteRequest(BaseModel):
     content: str
 
 
+class FileListRequest(BaseModel):
+    project_path: str
+
+
 class ChatRequest(BaseModel):
     message: str
     project_path: str
@@ -234,6 +238,24 @@ async def write_file(request: FileWriteRequest) -> dict:
         request.content,
     )
     return {"success": True}
+
+
+@app.post("/api/files/list")
+async def list_files(request: FileListRequest) -> list[dict]:
+    """
+    List files in a project directory.
+
+    Works with any directory path, not just projects in ~/aura-projects/.
+    """
+    from pathlib import Path
+
+    project_path = Path(request.project_path)
+    if not project_path.exists():
+        raise HTTPException(status_code=404, detail=f"Directory not found: {request.project_path}")
+    if not project_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {request.project_path}")
+
+    return project_service.get_files(str(project_path))
 
 
 # ============ Agent Chat Endpoints ============

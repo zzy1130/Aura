@@ -60,10 +60,10 @@ export default function Home() {
   // File List Fetching
   // =============================================================================
 
-  const fetchFileList = useCallback(async (_projectPath: string, projectName: string) => {
+  const fetchFileList = useCallback(async (projectPath: string) => {
     try {
-      console.log('[Page] Fetching files for project:', projectName);
-      const files = await api.getProjectFiles(projectName);
+      console.log('[Page] Fetching files for path:', projectPath);
+      const files = await api.listFiles(projectPath);
 
       // Extract paths from file objects (backend returns {name, path, type, size})
       const filePaths = files.map((f) => f.path);
@@ -75,14 +75,8 @@ export default function Home() {
       setError(null);
     } catch (err) {
       console.error('Failed to fetch file list:', err);
-      // If project not found in backend, it might be opened from a different location
-      // Try to show a helpful message
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      if (errorMsg.includes('not found')) {
-        setError(`Project "${projectName}" not found in ~/aura-projects/. Please create a new project or open one from the projects directory.`);
-      } else {
-        setError(`Failed to load files for "${projectName}": ${errorMsg}`);
-      }
+      setError(`Failed to load files: ${errorMsg}`);
     }
   }, []);
 
@@ -113,8 +107,8 @@ export default function Home() {
         setCompileStatus('idle');
         setError(null);
 
-        // Fetch file list from backend
-        await fetchFileList(projectPath, name);
+        // Fetch file list using full path
+        await fetchFileList(projectPath);
       }
     }
   }, [fetchFileList]);
@@ -143,8 +137,8 @@ export default function Home() {
         setCompileStatus('idle');
         setError(null);
 
-        // Fetch file list
-        await fetchFileList(projectPath, name);
+        // Fetch file list using full path
+        await fetchFileList(projectPath);
       }
     } catch (err) {
       console.error('Failed to create project:', err);
@@ -237,10 +231,10 @@ export default function Home() {
   // =============================================================================
 
   const handleRefreshFiles = useCallback(async () => {
-    if (project.path && project.name) {
-      await fetchFileList(project.path, project.name);
+    if (project.path) {
+      await fetchFileList(project.path);
     }
-  }, [project.path, project.name, fetchFileList]);
+  }, [project.path, fetchFileList]);
 
   // =============================================================================
   // Render
