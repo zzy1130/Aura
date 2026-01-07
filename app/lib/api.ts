@@ -36,13 +36,42 @@ export interface Project {
 
 class ApiClient {
   private baseUrl: string = 'http://127.0.0.1:8000';
+  private initialized: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   /**
    * Initialize the API client with the backend URL
    */
   async init(): Promise<void> {
-    if (typeof window !== 'undefined' && window.aura) {
-      this.baseUrl = await window.aura.getBackendUrl();
+    if (this.initialized) return;
+
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    this.initPromise = (async () => {
+      if (typeof window !== 'undefined' && window.aura) {
+        try {
+          this.baseUrl = await window.aura.getBackendUrl();
+          console.log('[API] Initialized with URL:', this.baseUrl);
+        } catch (e) {
+          console.error('[API] Failed to get backend URL:', e);
+        }
+      } else {
+        console.log('[API] Using default URL:', this.baseUrl);
+      }
+      this.initialized = true;
+    })();
+
+    return this.initPromise;
+  }
+
+  /**
+   * Ensure API is initialized before making a request
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.init();
     }
   }
 
@@ -61,7 +90,12 @@ class ApiClient {
    * Read a file from a project
    */
   async readFile(projectPath: string, filename: string): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/api/files/read`, {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/files/read`;
+    console.log('[API] readFile:', url, { projectPath, filename });
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -83,7 +117,12 @@ class ApiClient {
    * Write a file to a project
    */
   async writeFile(projectPath: string, filename: string, content: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/api/files/write`, {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/files/write`;
+    console.log('[API] writeFile:', url, { projectPath, filename });
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -103,10 +142,16 @@ class ApiClient {
    * Get file list for a project
    */
   async getProjectFiles(projectName: string): Promise<ProjectFile[]> {
-    const response = await fetch(`${this.baseUrl}/api/projects/${projectName}/files`);
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/projects/${encodeURIComponent(projectName)}/files`;
+    console.log('[API] getProjectFiles:', url, { projectName });
+
+    const response = await fetch(url);
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      console.error('[API] getProjectFiles error:', error);
       throw new Error(error.detail || `HTTP ${response.status}`);
     }
 
@@ -121,7 +166,12 @@ class ApiClient {
    * List all projects
    */
   async listProjects(): Promise<Project[]> {
-    const response = await fetch(`${this.baseUrl}/api/projects`);
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/projects`;
+    console.log('[API] listProjects:', url);
+
+    const response = await fetch(url);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -134,7 +184,12 @@ class ApiClient {
    * Create a new project
    */
   async createProject(name: string, template: string = 'article'): Promise<Project> {
-    const response = await fetch(`${this.baseUrl}/api/projects`, {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/projects`;
+    console.log('[API] createProject:', url, { name, template });
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, template }),
@@ -156,7 +211,12 @@ class ApiClient {
    * Compile a LaTeX project
    */
   async compile(projectPath: string, filename: string = 'main.tex'): Promise<CompileResult> {
-    const response = await fetch(`${this.baseUrl}/api/compile`, {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/compile`;
+    console.log('[API] compile:', url, { projectPath, filename });
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -177,14 +237,19 @@ class ApiClient {
    * Get PDF URL for a project
    */
   getPdfUrl(projectName: string, filename: string = 'main.pdf'): string {
-    return `${this.baseUrl}/api/pdf/${projectName}?filename=${encodeURIComponent(filename)}`;
+    return `${this.baseUrl}/api/pdf/${encodeURIComponent(projectName)}?filename=${encodeURIComponent(filename)}`;
   }
 
   /**
    * Check LaTeX syntax without full compilation
    */
   async checkSyntax(projectPath: string, filename: string = 'main.tex'): Promise<CompileResult> {
-    const response = await fetch(`${this.baseUrl}/api/check-syntax`, {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/check-syntax`;
+    console.log('[API] checkSyntax:', url, { projectPath, filename });
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -209,6 +274,8 @@ class ApiClient {
    * Check if the backend is healthy
    */
   async healthCheck(): Promise<boolean> {
+    await this.ensureInitialized();
+
     try {
       const response = await fetch(`${this.baseUrl}/api/health`);
       return response.ok;
@@ -221,7 +288,7 @@ class ApiClient {
 // Singleton instance
 export const api = new ApiClient();
 
-// Initialize on import (async)
+// Initialize on import (async) - but callers should await ensureInitialized
 if (typeof window !== 'undefined') {
   api.init().catch(console.error);
 }

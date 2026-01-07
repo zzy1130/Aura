@@ -62,6 +62,7 @@ export default function Home() {
 
   const fetchFileList = useCallback(async (_projectPath: string, projectName: string) => {
     try {
+      console.log('[Page] Fetching files for project:', projectName);
       const files = await api.getProjectFiles(projectName);
 
       // Extract paths from file objects (backend returns {name, path, type, size})
@@ -71,15 +72,16 @@ export default function Home() {
         ...prev,
         files: filePaths,
       }));
+      setError(null);
     } catch (err) {
       console.error('Failed to fetch file list:', err);
       // If project not found in backend, it might be opened from a different location
       // Try to show a helpful message
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       if (errorMsg.includes('not found')) {
-        setError(`Project not found in ~/aura-projects/. Please create a new project or open one from the projects directory.`);
+        setError(`Project "${projectName}" not found in ~/aura-projects/. Please create a new project or open one from the projects directory.`);
       } else {
-        setError(`Failed to load files: ${errorMsg}`);
+        setError(`Failed to load files for "${projectName}": ${errorMsg}`);
       }
     }
   }, []);
@@ -91,8 +93,14 @@ export default function Home() {
   const handleOpenProject = useCallback(async () => {
     if (typeof window !== 'undefined' && window.aura) {
       const projectPath = await window.aura.openProject();
+      console.log('[Page] Open project path:', projectPath);
+
       if (projectPath) {
-        const name = projectPath.split('/').pop() || 'Project';
+        // Extract project name - filter out empty strings to handle trailing slashes
+        const pathParts = projectPath.split('/').filter((p: string) => p.length > 0);
+        const name = pathParts[pathParts.length - 1] || 'Project';
+        console.log('[Page] Extracted project name:', name);
+
         setProject({
           path: projectPath,
           name,
