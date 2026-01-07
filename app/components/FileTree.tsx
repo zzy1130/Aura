@@ -18,6 +18,7 @@ interface FileTreeProps {
   files: string[];
   currentFile: string | null;
   onFileSelect: (filePath: string) => void;
+  onRefresh?: () => void;
 }
 
 interface FileNode {
@@ -114,9 +115,10 @@ function TreeNode({
 
 export default function FileTree({
   projectPath,
-  files: _files,
+  files,
   currentFile,
   onFileSelect,
+  onRefresh,
 }: FileTreeProps) {
   const [tree, setTree] = useState<FileNode[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -186,32 +188,28 @@ export default function FileTree({
 
     setIsLoading(true);
     try {
-      // TODO: Fetch from backend
-      // For now, use mock data
-      const mockFiles = [
-        'main.tex',
-        'refs.bib',
-        'sections/introduction.tex',
-        'sections/methodology.tex',
-        'sections/results.tex',
-        'figures/diagram.png',
-        '.aura/config.json',
-      ];
-      setTree(buildTree(mockFiles));
+      // Use the onRefresh prop to trigger a refresh from parent
+      if (onRefresh) {
+        await onRefresh();
+      }
     } catch (error) {
       console.error('Failed to fetch files:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [projectPath, buildTree]);
+  }, [projectPath, onRefresh]);
 
+  // Build tree when files prop changes
   useEffect(() => {
-    if (projectPath) {
-      fetchFiles();
+    if (files && files.length > 0) {
+      setTree(buildTree(files));
+    } else if (projectPath) {
+      // If no files provided, show empty tree
+      setTree([]);
     } else {
       setTree([]);
     }
-  }, [projectPath, fetchFiles]);
+  }, [files, projectPath, buildTree]);
 
   return (
     <div className="h-full flex flex-col bg-aura-bg">
