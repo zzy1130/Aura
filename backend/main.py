@@ -576,6 +576,73 @@ async def get_steering_config() -> dict:
     }
 
 
+# ============ Subagent Endpoints ============
+
+class SubagentRunRequest(BaseModel):
+    subagent: str
+    task: str
+    project_path: Optional[str] = None
+
+
+@app.get("/api/subagents")
+async def get_available_subagents() -> list[dict]:
+    """
+    List all available subagents.
+
+    Returns a list of subagents with their names and descriptions.
+    """
+    from agent.subagents import list_subagents
+
+    return list_subagents()
+
+
+@app.post("/api/subagents/run")
+async def run_subagent_endpoint(request: SubagentRunRequest) -> dict:
+    """
+    Run a subagent directly (for testing/debugging).
+
+    This endpoint bypasses the main agent and runs a subagent directly.
+    Useful for testing subagent behavior.
+
+    Args:
+        subagent: Name of the subagent ("research" or "compiler")
+        task: Task description for the subagent
+        project_path: Optional project path (required for compiler)
+
+    Returns:
+        Result from the subagent
+    """
+    from agent.subagents import run_subagent, list_subagents
+
+    # Validate subagent name
+    available = list_subagents()
+    available_names = [s["name"] for s in available]
+
+    if request.subagent not in available_names:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown subagent: '{request.subagent}'. Available: {', '.join(available_names)}"
+        )
+
+    try:
+        context = {}
+        if request.project_path:
+            context["project_path"] = request.project_path
+
+        result = await run_subagent(
+            name=request.subagent,
+            task=request.task,
+            context=context,
+            project_path=request.project_path or "",
+        )
+
+        return result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Subagent error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============ Run Server ============
 
 if __name__ == "__main__":

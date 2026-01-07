@@ -36,6 +36,16 @@ from agent.steering import (
     get_steering_manager,
     check_and_inject_steering,
 )
+from agent.subagents import (
+    Subagent,
+    SubagentConfig,
+    SubagentResult,
+    get_subagent,
+    list_subagents,
+    run_subagent,
+    ResearchAgent,
+    CompilerAgent,
+)
 
 __all__ = [
     # Agent
@@ -73,4 +83,13 @@ __all__ = [
     "SteeringMessage",
     "get_steering_manager",
     "check_and_inject_steering",
+    # Subagents
+    "Subagent",
+    "SubagentConfig",
+    "SubagentResult",
+    "get_subagent",
+    "list_subagents",
+    "run_subagent",
+    "ResearchAgent",
+    "CompilerAgent",
 ]
