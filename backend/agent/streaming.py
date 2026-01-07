@@ -182,6 +182,67 @@ class SteeringEvent(StreamEvent):
         }
 
 
+@dataclass
+class PlanCreatedEvent(StreamEvent):
+    """A plan was created for the task."""
+    type: Literal["plan_created"] = "plan_created"
+    plan_id: str = ""
+    goal: str = ""
+    steps_count: int = 0
+    complexity: int = 1
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "plan_id": self.plan_id,
+            "goal": self.goal,
+            "steps_count": self.steps_count,
+            "complexity": self.complexity,
+        }
+
+
+@dataclass
+class PlanStepEvent(StreamEvent):
+    """A plan step status changed."""
+    type: Literal["plan_step"] = "plan_step"
+    plan_id: str = ""
+    step_number: int = 0
+    step_title: str = ""
+    status: str = ""  # "started", "completed", "failed", "skipped"
+    progress_percent: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "plan_id": self.plan_id,
+            "step_number": self.step_number,
+            "step_title": self.step_title,
+            "status": self.status,
+            "progress_percent": self.progress_percent,
+        }
+
+
+@dataclass
+class PlanCompletedEvent(StreamEvent):
+    """A plan was completed."""
+    type: Literal["plan_completed"] = "plan_completed"
+    plan_id: str = ""
+    goal: str = ""
+    total_steps: int = 0
+    completed_steps: int = 0
+    failed_steps: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "plan_id": self.plan_id,
+            "goal": self.goal,
+            "total_steps": self.total_steps,
+            "completed_steps": self.completed_steps,
+            "failed_steps": self.failed_steps,
+        }
+
+
 # =============================================================================
 # Streaming Runner
 # =============================================================================
@@ -194,6 +255,7 @@ async def stream_agent_response(
     auto_compress: bool = True,
     enable_hitl: bool = False,
     enable_steering: bool = False,
+    enable_planning: bool = True,
     session_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """
@@ -258,10 +320,18 @@ async def stream_agent_response(
 
         hitl_manager.set_event_callback(on_approval_request)
 
+    # Set up planning if enabled
+    plan_manager = None
+    if enable_planning:
+        from agent.planning import get_plan_manager
+        plan_manager = get_plan_manager()
+
     deps = AuraDeps(
         project_path=project_path,
         project_name=project_name,
         hitl_manager=hitl_manager,
+        plan_manager=plan_manager,
+        session_id=session_id or "default",
     )
 
     # Handle compression if enabled and history provided
@@ -498,6 +568,7 @@ async def run_agent(
     message_history: list = None,
     auto_compress: bool = True,
     enable_steering: bool = False,
+    enable_planning: bool = True,
     session_id: str | None = None,
 ) -> dict:
     """
@@ -510,12 +581,24 @@ async def run_agent(
         message_history: Optional conversation history
         auto_compress: Whether to automatically compress long histories (default: True)
         enable_steering: Whether to check for steering messages (default: False)
+        enable_planning: Whether to enable planning features (default: True)
         session_id: Session ID for steering isolation (optional)
 
     Returns:
-        Dictionary with output, usage, new_messages, compression_info, and steering_info
+        Dictionary with output, usage, new_messages, compression_info, steering_info, and planning_info
     """
-    deps = AuraDeps(project_path=project_path, project_name=project_name)
+    # Set up planning if enabled
+    plan_manager = None
+    if enable_planning:
+        from agent.planning import get_plan_manager
+        plan_manager = get_plan_manager()
+
+    deps = AuraDeps(
+        project_path=project_path,
+        project_name=project_name,
+        plan_manager=plan_manager,
+        session_id=session_id or "default",
+    )
 
     # Process steering if enabled
     effective_message = message
@@ -581,5 +664,16 @@ async def run_agent(
 
     if steering_info:
         response["steering"] = steering_info
+
+    # Include planning info if plan was used/created
+    if plan_manager:
+        plan = await plan_manager.get_plan(session_id or "default")
+        if plan:
+            response["planning"] = {
+                "plan_id": plan.plan_id,
+                "goal": plan.goal,
+                "status": plan.status.value,
+                "progress": plan.progress,
+            }
 
     return response
