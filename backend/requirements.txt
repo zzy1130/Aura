@@ -18,7 +18,7 @@ httpx>=0.26.0
 
 # Research tools (Phase 3)
 arxiv>=2.1.0
-# marker-pdf>=0.2.0  # Uncomment when needed
+PyMuPDF>=1.24.0  # PDF text extraction (lighter than marker-pdf)
 
 # Docker
 docker>=7.0.0
