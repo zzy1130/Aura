@@ -215,7 +215,7 @@ Research subagent:
 | 2 | ✅ | Colorist client + Pydantic AI agent + tools |
 | 3A-3F | ✅ | Advanced agent (compression, HITL, steering, subagents, planning) |
 | 3.5 | ✅ | PDF reader tool |
-| 4 | **NEXT** | Electron shell + UI components |
+| 4 | **IN PROGRESS** | Electron shell + UI components (scaffolding complete) |
 | 5 | Pending | Git/Overleaf sync + packaging |
 
 ## Git Workflow
