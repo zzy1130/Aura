@@ -9,6 +9,7 @@ Features:
 - Tool call and result events
 - Automatic message compression for long conversations
 - Human-in-the-loop (HITL) approval for dangerous operations
+- Steering messages for mid-conversation guidance
 """
 
 import asyncio
@@ -166,6 +167,21 @@ class ApprovalResolvedEvent(StreamEvent):
         }
 
 
+@dataclass
+class SteeringEvent(StreamEvent):
+    """Steering message was injected into the conversation."""
+    type: Literal["steering"] = "steering"
+    messages_count: int = 0
+    content_preview: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "messages_count": self.messages_count,
+            "content_preview": self.content_preview,
+        }
+
+
 # =============================================================================
 # Streaming Runner
 # =============================================================================
@@ -177,6 +193,8 @@ async def stream_agent_response(
     message_history: list = None,
     auto_compress: bool = True,
     enable_hitl: bool = False,
+    enable_steering: bool = False,
+    session_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """
     Stream agent response as events.
@@ -191,14 +209,35 @@ async def stream_agent_response(
         message_history: Optional conversation history for context
         auto_compress: Whether to automatically compress long histories (default: True)
         enable_hitl: Whether to enable human-in-the-loop approval (default: False)
+        enable_steering: Whether to check for steering messages (default: False)
+        session_id: Session ID for steering isolation (optional)
 
     Yields:
-        StreamEvent objects (TextDeltaEvent, ToolCallEvent, ToolResultEvent, DoneEvent, ErrorEvent, CompressionEvent, ApprovalRequiredEvent)
+        StreamEvent objects (TextDeltaEvent, ToolCallEvent, ToolResultEvent, DoneEvent, ErrorEvent, CompressionEvent, ApprovalRequiredEvent, SteeringEvent)
 
     Example:
         async for event in stream_agent_response("Read main.tex", "/path/to/project"):
             yield event.to_sse()  # For SSE endpoints
     """
+    # Process steering if enabled
+    effective_message = message
+    if enable_steering:
+        from agent.steering import get_steering_manager, check_and_inject_steering
+
+        steering_manager = get_steering_manager()
+        effective_message, steering_used = await check_and_inject_steering(
+            steering_manager, message, session_id
+        )
+
+        if steering_used:
+            # Emit steering event
+            preview = steering_used[0].content[:100] + "..." if len(steering_used[0].content) > 100 else steering_used[0].content
+            yield SteeringEvent(
+                messages_count=len(steering_used),
+                content_preview=preview,
+            )
+            logger.info(f"Steering: Injected {len(steering_used)} messages")
+
     # Set up HITL if enabled
     hitl_manager = None
     event_queue: Optional[asyncio.Queue] = None
@@ -256,12 +295,12 @@ async def stream_agent_response(
         if enable_hitl and event_queue:
             # HITL mode: Run agent with event queue for approval events
             async for event in _stream_with_hitl(
-                message, deps, processed_history, event_queue
+                effective_message, deps, processed_history, event_queue
             ):
                 yield event
         else:
             # Standard mode: Direct streaming
-            async for event in _stream_standard(message, deps, processed_history):
+            async for event in _stream_standard(effective_message, deps, processed_history):
                 yield event
 
     except Exception as e:
@@ -408,6 +447,8 @@ async def stream_agent_sse(
     project_name: str = "",
     message_history: list = None,
     enable_hitl: bool = False,
+    enable_steering: bool = False,
+    session_id: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream agent response as SSE-formatted strings.
@@ -420,6 +461,8 @@ async def stream_agent_sse(
         project_name: Optional project name
         message_history: Optional conversation history
         enable_hitl: Whether to enable HITL approval (default: False)
+        enable_steering: Whether to enable steering messages (default: False)
+        session_id: Session ID for steering isolation (optional)
 
     Yields:
         SSE-formatted strings ready for StreamingResponse
@@ -438,6 +481,8 @@ async def stream_agent_sse(
         project_name=project_name,
         message_history=message_history,
         enable_hitl=enable_hitl,
+        enable_steering=enable_steering,
+        session_id=session_id,
     ):
         yield event.to_sse()
 
@@ -452,6 +497,8 @@ async def run_agent(
     project_name: str = "",
     message_history: list = None,
     auto_compress: bool = True,
+    enable_steering: bool = False,
+    session_id: str | None = None,
 ) -> dict:
     """
     Run agent and return complete response (non-streaming).
@@ -462,11 +509,31 @@ async def run_agent(
         project_name: Optional project name
         message_history: Optional conversation history
         auto_compress: Whether to automatically compress long histories (default: True)
+        enable_steering: Whether to check for steering messages (default: False)
+        session_id: Session ID for steering isolation (optional)
 
     Returns:
-        Dictionary with output, usage, new_messages, and compression_info
+        Dictionary with output, usage, new_messages, compression_info, and steering_info
     """
     deps = AuraDeps(project_path=project_path, project_name=project_name)
+
+    # Process steering if enabled
+    effective_message = message
+    steering_info = None
+    if enable_steering:
+        from agent.steering import get_steering_manager, check_and_inject_steering
+
+        steering_manager = get_steering_manager()
+        effective_message, steering_used = await check_and_inject_steering(
+            steering_manager, message, session_id
+        )
+
+        if steering_used:
+            steering_info = {
+                "messages_injected": len(steering_used),
+                "priorities": [m.priority for m in steering_used],
+            }
+            logger.info(f"Steering: Injected {len(steering_used)} messages into run_agent")
 
     # Handle compression if enabled and history provided
     processed_history = message_history
@@ -497,7 +564,7 @@ async def run_agent(
         except Exception as e:
             logger.warning(f"Compression failed, using original history: {e}")
 
-    result = await aura_agent.run(message, deps=deps, message_history=processed_history)
+    result = await aura_agent.run(effective_message, deps=deps, message_history=processed_history)
     usage = result.usage()
 
     response = {
@@ -511,5 +578,8 @@ async def run_agent(
 
     if compression_info:
         response["compression"] = compression_info
+
+    if steering_info:
+        response["steering"] = steering_info
 
     return response

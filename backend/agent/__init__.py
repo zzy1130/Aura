@@ -13,6 +13,7 @@ from agent.streaming import (
     CompressionEvent,
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
+    SteeringEvent,
 )
 from agent.compression import (
     MessageCompressor,
@@ -27,6 +28,13 @@ from agent.hitl import (
     ApprovalRequest,
     ApprovalStatus,
     get_hitl_manager,
+)
+from agent.steering import (
+    SteeringManager,
+    SteeringConfig,
+    SteeringMessage,
+    get_steering_manager,
+    check_and_inject_steering,
 )
 
 __all__ = [
@@ -46,6 +54,7 @@ __all__ = [
     "CompressionEvent",
     "ApprovalRequiredEvent",
     "ApprovalResolvedEvent",
+    "SteeringEvent",
     # Compression
     "MessageCompressor",
     "CompressionConfig",
@@ -58,4 +67,10 @@ __all__ = [
     "ApprovalRequest",
     "ApprovalStatus",
     "get_hitl_manager",
+    # Steering
+    "SteeringManager",
+    "SteeringConfig",
+    "SteeringMessage",
+    "get_steering_manager",
+    "check_and_inject_steering",
 ]
