@@ -195,6 +195,22 @@ export default function Home() {
   const handleCompile = useCallback(async () => {
     if (!project.path) return;
 
+    // Determine which file to compile
+    let fileToCompile = project.currentFile;
+
+    // If current file is not a .tex file, try to find main.tex or any .tex file
+    if (!fileToCompile || !fileToCompile.endsWith('.tex')) {
+      const texFiles = project.files.filter(f => f.endsWith('.tex'));
+      if (texFiles.includes('main.tex')) {
+        fileToCompile = 'main.tex';
+      } else if (texFiles.length > 0) {
+        fileToCompile = texFiles[0];
+      } else {
+        setError('No .tex file found to compile');
+        return;
+      }
+    }
+
     // Save current file first if dirty
     if (isDirty && project.currentFile) {
       await handleSave();
@@ -205,14 +221,26 @@ export default function Home() {
     setCompileLog('');
 
     try {
-      const result = await api.compile(project.path, 'main.tex');
+      const result = await api.compile(project.path, fileToCompile);
 
       setCompileLog(result.log_output || '');
 
       if (result.success) {
         setCompileStatus('success');
-        // Update PDF URL
-        setPdfUrl(api.getPdfUrl(project.name, 'main.pdf'));
+        // Fetch PDF as blob and create object URL
+        const pdfName = fileToCompile.replace(/\.tex$/, '.pdf');
+        try {
+          const pdfBlob = await api.fetchPdfBlob(project.path, pdfName);
+          // Revoke old URL to prevent memory leaks
+          if (pdfUrl) {
+            URL.revokeObjectURL(pdfUrl);
+          }
+          const newPdfUrl = URL.createObjectURL(pdfBlob);
+          setPdfUrl(newPdfUrl);
+        } catch (pdfErr) {
+          console.error('Failed to load PDF:', pdfErr);
+          setError(`Compilation succeeded but failed to load PDF: ${pdfErr instanceof Error ? pdfErr.message : 'Unknown error'}`);
+        }
       } else {
         setCompileStatus('error');
         setError(result.error_summary || 'Compilation failed');
@@ -224,7 +252,7 @@ export default function Home() {
     } finally {
       setIsCompiling(false);
     }
-  }, [project.path, project.name, project.currentFile, isDirty, handleSave]);
+  }, [project.path, project.currentFile, project.files, isDirty, handleSave, pdfUrl]);
 
   // =============================================================================
   // Refresh File List

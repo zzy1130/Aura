@@ -159,7 +159,7 @@ async def check_syntax(request: CompileRequest):
 @app.get("/api/pdf/{project_name}")
 async def get_pdf(project_name: str, filename: str = "main.pdf"):
     """
-    Serve the compiled PDF file.
+    Serve the compiled PDF file from ~/aura-projects/.
     """
     from services.project import PROJECTS_DIR
 
@@ -172,6 +172,30 @@ async def get_pdf(project_name: str, filename: str = "main.pdf"):
         path=str(pdf_path),
         media_type="application/pdf",
         filename=filename,
+    )
+
+
+class PdfRequest(BaseModel):
+    project_path: str
+    filename: str = "main.pdf"
+
+
+@app.post("/api/pdf/serve")
+async def serve_pdf(request: PdfRequest):
+    """
+    Serve a PDF file from any project path.
+    """
+    from pathlib import Path
+
+    pdf_path = Path(request.project_path) / request.filename
+
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"PDF not found: {request.filename}")
+
+    return FileResponse(
+        path=str(pdf_path),
+        media_type="application/pdf",
+        filename=request.filename,
     )
 
 

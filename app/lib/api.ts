@@ -259,10 +259,38 @@ class ApiClient {
   }
 
   /**
-   * Get PDF URL for a project
+   * Get PDF URL for a project in ~/aura-projects/ (legacy)
+   * @deprecated Use getPdfUrlForPath() for projects outside ~/aura-projects/
    */
   getPdfUrl(projectName: string, filename: string = 'main.pdf'): string {
     return `${this.baseUrl}/api/pdf/${encodeURIComponent(projectName)}?filename=${encodeURIComponent(filename)}`;
+  }
+
+  /**
+   * Get PDF URL for any project path
+   * Note: This returns a URL that requires POST, so we need to handle it differently
+   */
+  async fetchPdfBlob(projectPath: string, filename: string = 'main.pdf'): Promise<Blob> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/pdf/serve`;
+    console.log('[API] fetchPdfBlob:', url, { projectPath, filename });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        filename: filename,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.blob();
   }
 
   /**
