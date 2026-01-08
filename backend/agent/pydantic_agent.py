@@ -441,6 +441,70 @@ async def read_file_lines(
 
 
 # =============================================================================
+# PDF Tools
+# =============================================================================
+
+@aura_agent.tool
+async def read_pdf(
+    ctx: RunContext[AuraDeps],
+    filepath: str,
+    max_pages: int = 20,
+) -> str:
+    """
+    Read and extract text from a PDF file in the project.
+
+    Use this to read academic papers, documentation, or any PDF files
+    in the project directory.
+
+    Args:
+        filepath: Path to the PDF file relative to project root (e.g., "paper.pdf", "references/article.pdf")
+        max_pages: Maximum number of pages to extract (default: 20)
+
+    Returns:
+        Extracted text from the PDF with page structure
+    """
+    from agent.tools.pdf_reader import read_local_pdf
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    if not full_path.exists():
+        return f"Error: PDF file not found: {filepath}"
+
+    if not filepath.lower().endswith('.pdf'):
+        return f"Error: Not a PDF file: {filepath}"
+
+    # Security: ensure path is within project
+    try:
+        full_path.resolve().relative_to(Path(project_path).resolve())
+    except ValueError:
+        return f"Error: Path escapes project directory: {filepath}"
+
+    try:
+        doc = await read_local_pdf(
+            path=str(full_path),
+            max_pages=max_pages,
+            max_chars=100000,
+        )
+
+        # Format output
+        text = doc.get_text(max_pages=max_pages, max_chars=100000)
+        return f"""PDF: {filepath}
+Title: {doc.title}
+Pages: {doc.num_pages}
+
+--- Content ---
+
+{text}
+"""
+
+    except ImportError:
+        return "Error: PDF reading requires PyMuPDF. Install with: pip install PyMuPDF"
+    except Exception as e:
+        return f"Error reading PDF: {str(e)}"
+
+
+# =============================================================================
 # LaTeX Tools
 # =============================================================================
 
