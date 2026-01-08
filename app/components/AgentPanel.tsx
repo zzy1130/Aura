@@ -300,23 +300,42 @@ export default function AgentPanel({
                   const last = updated[lastIndex];
                   if (last.role === 'assistant') {
                     const parts = [...last.parts];
-                    for (let i = parts.length - 1; i >= 0; i--) {
-                      const part = parts[i];
-                      if (part.type === 'tool' && part.toolCall) {
-                        const tc = part.toolCall;
-                        const matchById = data.tool_call_id && tc.id === data.tool_call_id;
-                        const matchByName = tc.name === data.tool_name &&
-                          (tc.status === 'running' || tc.status === 'waiting_approval');
+                    let matched = false;
 
-                        if (matchById || matchByName) {
+                    // First try to match by tool_call_id (exact match)
+                    if (data.tool_call_id) {
+                      for (let i = 0; i < parts.length; i++) {
+                        const part = parts[i];
+                        if (part.type === 'tool' && part.toolCall &&
+                            part.toolCall.id === data.tool_call_id) {
                           parts[i] = {
                             ...part,
-                            toolCall: { ...tc, result: data.result, status: 'success' },
+                            toolCall: { ...part.toolCall, result: data.result, status: 'success' },
                           };
+                          matched = true;
                           break;
                         }
                       }
                     }
+
+                    // If no ID match, match by name (iterate forwards to match in order)
+                    if (!matched) {
+                      for (let i = 0; i < parts.length; i++) {
+                        const part = parts[i];
+                        if (part.type === 'tool' && part.toolCall) {
+                          const tc = part.toolCall;
+                          if (tc.name === data.tool_name &&
+                              (tc.status === 'running' || tc.status === 'waiting_approval')) {
+                            parts[i] = {
+                              ...part,
+                              toolCall: { ...tc, result: data.result, status: 'success' },
+                            };
+                            break;
+                          }
+                        }
+                      }
+                    }
+
                     updated[lastIndex] = { ...last, parts };
                   }
                   return updated;
