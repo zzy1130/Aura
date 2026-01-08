@@ -13,6 +13,7 @@ import {
   ChevronRight,
   AlertCircle,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
 
@@ -424,14 +425,56 @@ export default function AgentPanel({
     }
   }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved]);
 
+  // Send steering message to redirect agent while it's running
+  const sendSteering = useCallback(async () => {
+    if (!input.trim() || !projectPath) return;
+
+    const steeringContent = input.trim();
+    setInput('');
+
+    // Reset textarea height
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
+
+    try {
+      const response = await fetch('http://localhost:8000/api/steering/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: steeringContent,
+          priority: 1, // High priority
+          session_id: 'default',
+        }),
+      });
+
+      if (response.ok) {
+        // Add a visual indicator that steering was sent
+        const steeringMessage: Message = {
+          id: crypto.randomUUID(),
+          role: 'user',
+          parts: [{ type: 'text', content: `⚡ Steering: ${steeringContent}` }],
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, steeringMessage]);
+      }
+    } catch (error) {
+      console.error('Failed to send steering:', error);
+    }
+  }, [input, projectPath]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        sendMessage();
+        if (isStreaming) {
+          sendSteering();
+        } else {
+          sendMessage();
+        }
       }
     },
-    [sendMessage]
+    [sendMessage, sendSteering, isStreaming]
   );
 
   return (
@@ -472,6 +515,13 @@ export default function AgentPanel({
 
       {/* Input */}
       <div className="border-t border-black/6 p-3 bg-white">
+        {/* Steering mode indicator */}
+        {isStreaming && (
+          <div className="flex items-center gap-1.5 mb-2 text-orange1">
+            <Zap size={12} />
+            <span className="typo-ex-small">Steering mode - redirect the agent</span>
+          </div>
+        )}
         <div className="relative">
           <textarea
             ref={inputRef}
@@ -483,22 +533,34 @@ export default function AgentPanel({
               e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
             }}
             onKeyDown={handleKeyDown}
-            placeholder={projectPath ? "Ask the assistant..." : "Open a project first"}
-            disabled={!projectPath || isStreaming}
-            className="w-full min-h-[44px] max-h-[200px] rounded-yw-lg border border-black/12 bg-white pl-3 pr-12 py-2.5 typo-body placeholder:text-tertiary focus:border-green2 focus:outline-none focus:ring-1 focus:ring-green2/20 transition-colors resize-none overflow-y-auto"
+            placeholder={
+              !projectPath
+                ? "Open a project first"
+                : isStreaming
+                ? "Send steering instruction..."
+                : "Ask the assistant..."
+            }
+            disabled={!projectPath}
+            className={`w-full min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-12 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
+              isStreaming
+                ? 'border-orange1/30 focus:border-orange1 focus:ring-orange1/20'
+                : 'border-black/12 focus:border-green2 focus:ring-green2/20'
+            }`}
             rows={1}
           />
           <button
-            onClick={sendMessage}
-            disabled={!input.trim() || !projectPath || isStreaming}
+            onClick={isStreaming ? sendSteering : sendMessage}
+            disabled={!input.trim() || !projectPath}
             className={`absolute right-2 bottom-2 flex h-7 w-7 items-center justify-center rounded-yw-md transition-all ${
-              (!input.trim() || !projectPath || isStreaming)
+              !input.trim() || !projectPath
                 ? 'bg-black/6 text-tertiary cursor-not-allowed'
+                : isStreaming
+                ? 'bg-orange1 text-white hover:opacity-90'
                 : 'bg-green1 text-white hover:opacity-90'
             }`}
           >
             {isStreaming ? (
-              <Loader2 size={14} className="animate-spin" />
+              <Zap size={14} />
             ) : (
               <Send size={14} />
             )}
