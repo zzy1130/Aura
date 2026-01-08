@@ -13,6 +13,7 @@ import {
   ChevronRight,
   AlertCircle,
   Sparkles,
+  Square,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
 
@@ -174,28 +175,67 @@ export default function AgentPanel({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const pendingMessageRef = useRef<string | null>(null);
+
+  // Keep ref in sync with state for use in callbacks
+  useEffect(() => {
+    pendingMessageRef.current = pendingMessage;
+  }, [pendingMessage]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Auto-scroll to pending message when it changes
+  useEffect(() => {
+    if (pendingMessage) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [pendingMessage]);
+
+  // Reference to sendMessage for use in effect
+  const sendMessageRef = useRef<(content?: string) => Promise<void>>();
+
+  // Track previous streaming state to detect when it ends
+  const wasStreamingRef = useRef(false);
+  useEffect(() => {
+    // When streaming ends and there's a pending message, send it
+    if (wasStreamingRef.current && !isStreaming && pendingMessageRef.current) {
+      const pending = pendingMessageRef.current;
+      setPendingMessage(null);
+      // Use setTimeout to ensure state updates have propagated
+      setTimeout(() => {
+        sendMessageRef.current?.(pending);
+      }, 100);
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
   // Send message to agent
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isStreaming || !projectPath) return;
+  const sendMessage = useCallback(async (messageContent?: string) => {
+    const content = messageContent || input.trim();
+    if (!content || isStreaming || !projectPath) return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      parts: [{ type: 'text', content: input.trim() }],
+      parts: [{ type: 'text', content }],
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setInput('');
+    if (!messageContent) {
+      setInput('');
+    }
     setIsStreaming(true);
+
+    // Create abort controller for this request
+    abortControllerRef.current = new AbortController();
 
     const assistantMessage: Message = {
       id: crypto.randomUUID(),
@@ -215,7 +255,7 @@ export default function AgentPanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMessage.parts[0]?.content || '',
+          message: content,
           project_path: projectPath,
           history: messages.map((m) => ({
             role: m.role,
@@ -225,6 +265,7 @@ export default function AgentPanel({
               .join('\n'),
           })),
         }),
+        signal: abortControllerRef.current?.signal,
       });
 
       if (!response.ok) {
@@ -300,23 +341,42 @@ export default function AgentPanel({
                   const last = updated[lastIndex];
                   if (last.role === 'assistant') {
                     const parts = [...last.parts];
-                    for (let i = parts.length - 1; i >= 0; i--) {
-                      const part = parts[i];
-                      if (part.type === 'tool' && part.toolCall) {
-                        const tc = part.toolCall;
-                        const matchById = data.tool_call_id && tc.id === data.tool_call_id;
-                        const matchByName = tc.name === data.tool_name &&
-                          (tc.status === 'running' || tc.status === 'waiting_approval');
+                    let matched = false;
 
-                        if (matchById || matchByName) {
+                    // First try to match by tool_call_id (exact match)
+                    if (data.tool_call_id) {
+                      for (let i = 0; i < parts.length; i++) {
+                        const part = parts[i];
+                        if (part.type === 'tool' && part.toolCall &&
+                            part.toolCall.id === data.tool_call_id) {
                           parts[i] = {
                             ...part,
-                            toolCall: { ...tc, result: data.result, status: 'success' },
+                            toolCall: { ...part.toolCall, result: data.result, status: 'success' },
                           };
+                          matched = true;
                           break;
                         }
                       }
                     }
+
+                    // If no ID match, match by name (iterate forwards to match in order)
+                    if (!matched) {
+                      for (let i = 0; i < parts.length; i++) {
+                        const part = parts[i];
+                        if (part.type === 'tool' && part.toolCall) {
+                          const tc = part.toolCall;
+                          if (tc.name === data.tool_name &&
+                              (tc.status === 'running' || tc.status === 'waiting_approval')) {
+                            parts[i] = {
+                              ...part,
+                              toolCall: { ...tc, result: data.result, status: 'success' },
+                            };
+                            break;
+                          }
+                        }
+                      }
+                    }
+
                     updated[lastIndex] = { ...last, parts };
                   }
                   return updated;
@@ -402,17 +462,65 @@ export default function AgentPanel({
       });
     } finally {
       setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved]);
+
+  // Keep sendMessageRef in sync
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
+
+  // Stop the current generation
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsStreaming(false);
+
+    // Add a note that generation was stopped
+    setMessages((prev) => {
+      const updated = [...prev];
+      const lastIndex = updated.length - 1;
+      const last = updated[lastIndex];
+      if (last.role === 'assistant') {
+        const parts = [...last.parts];
+        parts.push({ type: 'text', content: '\n\n*[Generation stopped]*' });
+        updated[lastIndex] = { ...last, parts };
+      }
+      return updated;
+    });
+  }, []);
+
+  // Queue a message to be sent after current generation
+  const queuePendingMessage = useCallback(() => {
+    if (!input.trim()) return;
+    setPendingMessage(input.trim());
+    setInput('');
+    // Reset textarea height
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
+  }, [input]);
+
+  // Clear pending message
+  const clearPendingMessage = useCallback(() => {
+    setPendingMessage(null);
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        sendMessage();
+        if (isStreaming) {
+          queuePendingMessage();
+        } else {
+          sendMessage();
+        }
       }
     },
-    [sendMessage]
+    [sendMessage, queuePendingMessage, isStreaming]
   );
 
   return (
@@ -446,6 +554,24 @@ export default function AgentPanel({
             {messages.map((msg) => (
               <MessageDisplay key={msg.id} message={msg} />
             ))}
+            {/* Pending message box */}
+            {pendingMessage && (
+              <div className="flex justify-end">
+                <div className="max-w-[85%] rounded-yw-lg bg-orange2/30 border border-orange1/30 p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Loader2 size={12} className="text-orange1 animate-spin" />
+                    <span className="typo-ex-small text-orange1">Pending - will send when current generation ends</span>
+                  </div>
+                  <div className="typo-body text-primary">{pendingMessage}</div>
+                  <button
+                    onClick={clearPendingMessage}
+                    className="mt-2 typo-ex-small text-tertiary hover:text-error transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </>
         )}
@@ -453,7 +579,7 @@ export default function AgentPanel({
 
       {/* Input */}
       <div className="border-t border-black/6 p-3 bg-white">
-        <div className="relative">
+        <div className="relative flex gap-2">
           <textarea
             ref={inputRef}
             value={input}
@@ -464,26 +590,55 @@ export default function AgentPanel({
               e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
             }}
             onKeyDown={handleKeyDown}
-            placeholder={projectPath ? "Ask the assistant..." : "Open a project first"}
-            disabled={!projectPath || isStreaming}
-            className="w-full min-h-[44px] max-h-[200px] rounded-yw-lg border border-black/12 bg-white pl-3 pr-12 py-2.5 typo-body placeholder:text-tertiary focus:border-green2 focus:outline-none focus:ring-1 focus:ring-green2/20 transition-colors resize-none overflow-y-auto"
+            placeholder={
+              !projectPath
+                ? "Open a project first"
+                : isStreaming
+                ? "Queue next message..."
+                : "Ask the assistant..."
+            }
+            disabled={!projectPath || !!pendingMessage}
+            className={`flex-1 min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-3 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
+              isStreaming
+                ? 'border-orange1/20 focus:border-orange1 focus:ring-orange1/20'
+                : 'border-black/12 focus:border-green2 focus:ring-green2/20'
+            }`}
             rows={1}
           />
-          <button
-            onClick={sendMessage}
-            disabled={!input.trim() || !projectPath || isStreaming}
-            className={`absolute right-2 bottom-2 flex h-7 w-7 items-center justify-center rounded-yw-md transition-all ${
-              (!input.trim() || !projectPath || isStreaming)
-                ? 'bg-black/6 text-tertiary cursor-not-allowed'
-                : 'bg-green1 text-white hover:opacity-90'
-            }`}
-          >
-            {isStreaming ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
+          {isStreaming ? (
+            <>
+              {/* Queue button - only show when there's input and no pending message */}
+              {input.trim() && !pendingMessage && (
+                <button
+                  onClick={queuePendingMessage}
+                  className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-orange1 text-white hover:opacity-90 transition-all flex-shrink-0"
+                  title="Queue message"
+                >
+                  <Send size={14} />
+                </button>
+              )}
+              {/* Stop button */}
+              <button
+                onClick={stopGeneration}
+                className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-error text-white hover:opacity-90 transition-all flex-shrink-0"
+                title="Stop generation"
+              >
+                <Square size={14} fill="currentColor" />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => sendMessage()}
+              disabled={!input.trim() || !projectPath}
+              className={`flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg transition-all flex-shrink-0 ${
+                !input.trim() || !projectPath
+                  ? 'bg-black/6 text-tertiary cursor-not-allowed'
+                  : 'bg-green1 text-white hover:opacity-90'
+              }`}
+            >
               <Send size={14} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
     </div>

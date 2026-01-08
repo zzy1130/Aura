@@ -32,6 +32,7 @@ You have access to the following tools:
 - `write_file`: Create new files or overwrite existing ones
 - `find_files`: Search for files by pattern
 - `list_files`: List directory contents
+- `read_pdf`: Read and extract text from PDF files in the project
 
 **LaTeX Operations:**
 - `compile_latex`: Compile the document to PDF
