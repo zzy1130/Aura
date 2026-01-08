@@ -13,7 +13,7 @@ import {
   ChevronRight,
   AlertCircle,
   Sparkles,
-  Zap,
+  Square,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
 
@@ -177,6 +177,7 @@ export default function AgentPanel({
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -197,6 +198,9 @@ export default function AgentPanel({
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsStreaming(true);
+
+    // Create abort controller for this request
+    abortControllerRef.current = new AbortController();
 
     const assistantMessage: Message = {
       id: crypto.randomUUID(),
@@ -226,6 +230,7 @@ export default function AgentPanel({
               .join('\n'),
           })),
         }),
+        signal: abortControllerRef.current?.signal,
       });
 
       if (!response.ok) {
@@ -422,59 +427,43 @@ export default function AgentPanel({
       });
     } finally {
       setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved]);
 
-  // Send steering message to redirect agent while it's running
-  const sendSteering = useCallback(async () => {
-    if (!input.trim() || !projectPath) return;
-
-    const steeringContent = input.trim();
-    setInput('');
-
-    // Reset textarea height
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
+  // Stop the current generation
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
+    setIsStreaming(false);
 
-    try {
-      const response = await fetch('http://localhost:8000/api/steering/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: steeringContent,
-          priority: 1, // High priority
-          session_id: 'default',
-        }),
-      });
-
-      if (response.ok) {
-        // Add a visual indicator that steering was sent
-        const steeringMessage: Message = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          parts: [{ type: 'text', content: `⚡ Steering: ${steeringContent}` }],
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, steeringMessage]);
+    // Add a note that generation was stopped
+    setMessages((prev) => {
+      const updated = [...prev];
+      const lastIndex = updated.length - 1;
+      const last = updated[lastIndex];
+      if (last.role === 'assistant') {
+        const parts = [...last.parts];
+        parts.push({ type: 'text', content: '\n\n*[Generation stopped]*' });
+        updated[lastIndex] = { ...last, parts };
       }
-    } catch (error) {
-      console.error('Failed to send steering:', error);
-    }
-  }, [input, projectPath]);
+      return updated;
+    });
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (isStreaming) {
-          sendSteering();
-        } else {
+        if (!isStreaming) {
           sendMessage();
         }
+        // When streaming, Enter does nothing - user must click Stop first
       }
     },
-    [sendMessage, sendSteering, isStreaming]
+    [sendMessage, isStreaming]
   );
 
   return (
@@ -515,14 +504,7 @@ export default function AgentPanel({
 
       {/* Input */}
       <div className="border-t border-black/6 p-3 bg-white">
-        {/* Steering mode indicator */}
-        {isStreaming && (
-          <div className="flex items-center gap-1.5 mb-2 text-orange1">
-            <Zap size={12} />
-            <span className="typo-ex-small">Steering mode - redirect the agent</span>
-          </div>
-        )}
-        <div className="relative">
+        <div className="relative flex gap-2">
           <textarea
             ref={inputRef}
             value={input}
@@ -537,35 +519,44 @@ export default function AgentPanel({
               !projectPath
                 ? "Open a project first"
                 : isStreaming
-                ? "Send steering instruction..."
+                ? "Type next message (pending)..."
                 : "Ask the assistant..."
             }
             disabled={!projectPath}
-            className={`w-full min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-12 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
+            className={`flex-1 min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-3 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
               isStreaming
-                ? 'border-orange1/30 focus:border-orange1 focus:ring-orange1/20'
+                ? 'border-black/6 bg-fill-secondary'
                 : 'border-black/12 focus:border-green2 focus:ring-green2/20'
             }`}
             rows={1}
           />
-          <button
-            onClick={isStreaming ? sendSteering : sendMessage}
-            disabled={!input.trim() || !projectPath}
-            className={`absolute right-2 bottom-2 flex h-7 w-7 items-center justify-center rounded-yw-md transition-all ${
-              !input.trim() || !projectPath
-                ? 'bg-black/6 text-tertiary cursor-not-allowed'
-                : isStreaming
-                ? 'bg-orange1 text-white hover:opacity-90'
-                : 'bg-green1 text-white hover:opacity-90'
-            }`}
-          >
-            {isStreaming ? (
-              <Zap size={14} />
-            ) : (
+          {isStreaming ? (
+            <button
+              onClick={stopGeneration}
+              className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-error text-white hover:opacity-90 transition-all flex-shrink-0"
+              title="Stop generation"
+            >
+              <Square size={14} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={sendMessage}
+              disabled={!input.trim() || !projectPath}
+              className={`flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg transition-all flex-shrink-0 ${
+                !input.trim() || !projectPath
+                  ? 'bg-black/6 text-tertiary cursor-not-allowed'
+                  : 'bg-green1 text-white hover:opacity-90'
+              }`}
+            >
               <Send size={14} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
+        {isStreaming && input.trim() && (
+          <div className="mt-2 typo-ex-small text-tertiary">
+            Press Stop to send your pending message
+          </div>
+        )}
       </div>
     </div>
   );
