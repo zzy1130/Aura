@@ -34,77 +34,79 @@ export default function Toolbar({
   onCompile,
 }: ToolbarProps) {
   return (
-    <div className="h-10 bg-aura-surface border-b border-aura-border flex items-center px-2 gap-1 titlebar-no-drag">
+    <div className="h-11 bg-white border-b border-black/6 flex items-center px-3 gap-2 titlebar-no-drag">
       {/* Project name */}
-      <div className="flex items-center gap-2 px-2 min-w-[150px]">
-        <span className="text-sm font-medium text-aura-text truncate">
+      <div className="flex items-center gap-2 min-w-[140px]">
+        <span className="typo-body-strong truncate">
           {projectName}
         </span>
-        {isDirty && <span className="text-aura-warning">●</span>}
+        {isDirty && (
+          <span className="w-2 h-2 rounded-full bg-warn" title="Unsaved changes" />
+        )}
       </div>
 
       {/* Separator */}
-      <div className="w-px h-5 bg-aura-border mx-1" />
+      <div className="w-px h-5 bg-black/10 mx-1" />
 
       {/* File operations */}
       <button
         onClick={onOpenProject}
-        className="toolbar-btn"
+        className="btn-ghost"
         title="Open Project"
       >
-        <FolderOpen size={16} />
-        <span className="hidden sm:inline">Open</span>
+        <FolderOpen size={16} className="text-secondary" />
+        <span className="hidden sm:inline text-secondary">Open</span>
       </button>
 
       <button
         onClick={onNewProject}
-        className="toolbar-btn"
+        className="btn-ghost"
         title="New Project"
       >
-        <FilePlus size={16} />
-        <span className="hidden sm:inline">New</span>
+        <FilePlus size={16} className="text-secondary" />
+        <span className="hidden sm:inline text-secondary">New</span>
       </button>
 
       <button
         onClick={onSave}
-        className="toolbar-btn"
+        className={`btn-ghost ${!isDirty ? 'opacity-40 cursor-not-allowed' : ''}`}
         title="Save (⌘S)"
         disabled={!isDirty}
       >
-        <Save size={16} />
-        <span className="hidden sm:inline">Save</span>
+        <Save size={16} className="text-secondary" />
+        <span className="hidden sm:inline text-secondary">Save</span>
       </button>
 
       {/* Separator */}
-      <div className="w-px h-5 bg-aura-border mx-1" />
+      <div className="w-px h-5 bg-black/10 mx-1" />
 
-      {/* Compile */}
+      {/* Compile - Primary action */}
       <button
         onClick={onCompile}
-        className="toolbar-btn toolbar-btn-primary"
+        className={`flex h-7 items-center gap-1.5 rounded-full bg-green1 px-3 text-white typo-small-strong hover:opacity-90 transition-opacity ${isCompiling ? 'opacity-80' : ''}`}
         title="Compile (⌘B)"
         disabled={isCompiling}
       >
         {isCompiling ? (
-          <Loader2 size={16} className="animate-spin" />
+          <Loader2 size={14} className="animate-spin" />
         ) : compileStatus === 'success' ? (
-          <Check size={16} />
+          <Check size={14} />
         ) : compileStatus === 'error' ? (
-          <X size={16} />
+          <X size={14} />
         ) : (
-          <Play size={16} />
+          <Play size={14} />
         )}
         <span>Compile</span>
       </button>
 
       {/* Sync placeholder */}
       <button
-        className="toolbar-btn"
-        title="Sync with Overleaf"
+        className="btn-ghost opacity-40 cursor-not-allowed"
+        title="Sync with Overleaf (Coming soon)"
         disabled
       >
-        <RefreshCw size={16} />
-        <span className="hidden sm:inline">Sync</span>
+        <RefreshCw size={16} className="text-secondary" />
+        <span className="hidden sm:inline text-secondary">Sync</span>
       </button>
 
       {/* Spacer */}
@@ -112,10 +114,10 @@ export default function Toolbar({
 
       {/* Settings */}
       <button
-        className="toolbar-btn"
+        className="btn-icon"
         title="Settings"
       >
-        <Settings size={16} />
+        <Settings size={16} className="text-secondary" />
       </button>
     </div>
   );

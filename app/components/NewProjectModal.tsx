@@ -62,57 +62,64 @@ export default function NewProjectModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
       onClick={onClose}
       onKeyDown={handleKeyDown}
     >
       <div
-        className="bg-aura-surface rounded-lg shadow-xl w-[400px] max-w-[90vw]"
+        className="flex w-[392px] max-w-[calc(100vw-32px)] flex-col gap-4 rounded-yw-2xl bg-white p-5 shadow-modal animate-fade-in-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-aura-border">
-          <h2 className="text-lg font-medium">New Project</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="typo-h2">New Project</h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-aura-bg rounded"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-tertiary hover:bg-black/3 hover:text-secondary transition-colors"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </div>
 
         {/* Content */}
-        <form onSubmit={handleSubmit} className="p-4">
-          <label className="block text-sm text-aura-muted mb-2">
-            Project Name
-          </label>
-          <input
-            ref={inputRef}
-            type="text"
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              setError('');
-            }}
-            placeholder="my-research-paper"
-            className="w-full bg-aura-bg border border-aura-border rounded px-3 py-2 text-sm focus:outline-none focus:border-aura-accent"
-          />
-          {error && (
-            <p className="text-aura-error text-sm mt-2">{error}</p>
-          )}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="typo-small-strong text-secondary">
+              Project Name
+            </label>
+            <input
+              ref={inputRef}
+              type="text"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setError('');
+              }}
+              placeholder="my-research-paper"
+              className="input-field"
+            />
+            {error && (
+              <p className="typo-small text-error">{error}</p>
+            )}
+          </div>
+
+          {/* Info text */}
+          <p className="typo-small text-tertiary">
+            Creates a new LaTeX project with a basic article template.
+          </p>
 
           {/* Actions */}
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="flex gap-2 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm hover:bg-aura-bg rounded"
+              className="flex-1 rounded-yw-lg bg-black/6 py-2.5 typo-body-strong hover:bg-black/12 transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-2 text-sm bg-aura-accent text-aura-bg rounded hover:bg-aura-accent/80"
+              className="flex-1 rounded-yw-lg bg-green1 py-2.5 typo-body-strong text-white hover:opacity-90 transition-opacity"
             >
               Create
             </button>
