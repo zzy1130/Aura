@@ -20,12 +20,85 @@ import logging
 
 from pydantic_ai.agent import ModelRequestNode, CallToolsNode, UserPromptNode
 from pydantic_ai.run import End
-from pydantic_ai.messages import ToolCallPart, TextPart
+from pydantic_ai.messages import ToolCallPart, TextPart, ModelRequest, ModelResponse, UserPromptPart
 
 from agent.pydantic_agent import aura_agent, AuraDeps
 from agent.compression import compress_if_needed, get_compressor
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Session-based History Storage
+# =============================================================================
+
+# Store actual PydanticAI messages per session (in-memory for now)
+# Key: session_id, Value: list of ModelRequest/ModelResponse
+_session_histories: dict[str, list] = {}
+
+
+def get_session_history(session_id: str) -> list:
+    """Get message history for a session."""
+    return _session_histories.get(session_id, [])
+
+
+def save_session_history(session_id: str, messages: list) -> None:
+    """Save message history for a session."""
+    _session_histories[session_id] = messages
+
+
+def clear_session_history(session_id: str) -> None:
+    """Clear message history for a session."""
+    if session_id in _session_histories:
+        del _session_histories[session_id]
+
+
+def convert_simple_history(history: list) -> list:
+    """
+    Convert simple history format to PydanticAI message format.
+
+    Input format: [{"role": "user"|"assistant", "content": "..."}]
+    Output format: [ModelRequest(...), ModelResponse(...), ...]
+
+    PydanticAI requires alternating ModelRequest/ModelResponse pairs.
+    """
+    if not history:
+        return []
+
+    # Check if already in PydanticAI format
+    if history and isinstance(history[0], (ModelRequest, ModelResponse)):
+        return history
+
+    converted = []
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    for msg in history:
+        if not isinstance(msg, dict):
+            continue
+
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+
+        if role == "user":
+            converted.append(ModelRequest(
+                parts=[UserPromptPart(content=content, timestamp=now)],
+            ))
+        elif role == "assistant":
+            converted.append(ModelResponse(
+                parts=[TextPart(content=content)],
+                timestamp=now,
+                model_name="history",
+            ))
+
+    # PydanticAI requires history to end with ModelRequest (user message)
+    # If history ends with assistant message, we need to handle that
+    # The simplest approach: don't pass history that ends with assistant
+    if converted and isinstance(converted[-1], ModelResponse):
+        # Remove trailing assistant message - the agent will regenerate
+        converted = converted[:-1]
+
+    return converted
 
 
 # =============================================================================
@@ -61,6 +134,7 @@ class ToolCallEvent(StreamEvent):
     """Tool is being called."""
     type: Literal["tool_call"] = "tool_call"
     tool_name: str = ""
+    tool_call_id: str = ""
     args: dict = None
 
     def __post_init__(self):
@@ -68,7 +142,7 @@ class ToolCallEvent(StreamEvent):
             self.args = {}
 
     def to_dict(self) -> dict:
-        return {"type": self.type, "tool_name": self.tool_name, "args": self.args}
+        return {"type": self.type, "tool_name": self.tool_name, "tool_call_id": self.tool_call_id, "args": self.args}
 
 
 @dataclass
@@ -76,10 +150,11 @@ class ToolResultEvent(StreamEvent):
     """Tool execution result."""
     type: Literal["tool_result"] = "tool_result"
     tool_name: str = ""
+    tool_call_id: str = ""
     result: str = ""
 
     def to_dict(self) -> dict:
-        return {"type": self.type, "tool_name": self.tool_name, "result": self.result}
+        return {"type": self.type, "tool_name": self.tool_name, "tool_call_id": self.tool_call_id, "result": self.result}
 
 
 @dataclass
@@ -253,7 +328,7 @@ async def stream_agent_response(
     project_name: str = "",
     message_history: list = None,
     auto_compress: bool = True,
-    enable_hitl: bool = False,
+    enable_hitl: bool = True,  # Enabled by default for file safety
     enable_steering: bool = False,
     enable_planning: bool = True,
     session_id: str | None = None,
@@ -270,7 +345,7 @@ async def stream_agent_response(
         project_name: Optional project name (derived from path if not given)
         message_history: Optional conversation history for context
         auto_compress: Whether to automatically compress long histories (default: True)
-        enable_hitl: Whether to enable human-in-the-loop approval (default: False)
+        enable_hitl: Whether to enable human-in-the-loop approval (default: True)
         enable_steering: Whether to check for steering messages (default: False)
         session_id: Session ID for steering isolation (optional)
 
@@ -304,14 +379,19 @@ async def stream_agent_response(
     hitl_manager = None
     event_queue: Optional[asyncio.Queue] = None
 
+    logger.info(f"HITL enabled: {enable_hitl}")
+
     if enable_hitl:
         from agent.hitl import get_hitl_manager
 
         hitl_manager = get_hitl_manager()
         event_queue = asyncio.Queue()
+        logger.info(f"HITL manager created: {hitl_manager}, approval_required={hitl_manager.config.approval_required}")
 
         # Set up callback to emit approval events to stream
         async def on_approval_request(request):
+            logger.info(f"HITL approval request: tool={request.tool_name}, args_keys={list(request.tool_args.keys())}")
+            logger.info(f"HITL tool_args: old_string={len(request.tool_args.get('old_string', ''))} chars, new_string={len(request.tool_args.get('new_string', ''))} chars")
             await event_queue.put(ApprovalRequiredEvent(
                 request_id=request.request_id,
                 tool_name=request.tool_name,
@@ -333,16 +413,21 @@ async def stream_agent_response(
         plan_manager=plan_manager,
         session_id=session_id or "default",
     )
+    logger.info(f"Created AuraDeps with hitl_manager={deps.hitl_manager}")
+
+    # Use session-based history instead of frontend history
+    # This preserves the full PydanticAI message structure including tool calls
+    effective_session_id = session_id or "default"
+    processed_history = get_session_history(effective_session_id)
 
     # Handle compression if enabled and history provided
-    processed_history = message_history
-    if auto_compress and message_history:
+    if auto_compress and processed_history:
         try:
             compressor = get_compressor()
-            tokens_before = compressor.counter.count(message_history)
-            original_count = len(message_history)
+            tokens_before = compressor.counter.count(processed_history)
+            original_count = len(processed_history)
 
-            compressed_history, was_compressed = await compress_if_needed(message_history)
+            compressed_history, was_compressed = await compress_if_needed(processed_history)
 
             if was_compressed:
                 tokens_after = compressor.counter.count(compressed_history)
@@ -365,12 +450,12 @@ async def stream_agent_response(
         if enable_hitl and event_queue:
             # HITL mode: Run agent with event queue for approval events
             async for event in _stream_with_hitl(
-                effective_message, deps, processed_history, event_queue
+                effective_message, deps, processed_history, event_queue, effective_session_id
             ):
                 yield event
         else:
             # Standard mode: Direct streaming
-            async for event in _stream_standard(effective_message, deps, processed_history):
+            async for event in _stream_standard(effective_message, deps, processed_history, effective_session_id):
                 yield event
 
     except Exception as e:
@@ -382,10 +467,25 @@ async def _stream_standard(
     message: str,
     deps: AuraDeps,
     message_history: list,
+    session_id: str,
 ) -> AsyncIterator[StreamEvent]:
     """Standard streaming without HITL."""
+    # Track pending tool calls to emit results after they complete
+    pending_tool_calls: list[tuple[str, str]] = []  # (tool_name, tool_call_id)
+
     async with aura_agent.iter(message, deps=deps, message_history=message_history) as run:
         async for node in run:
+            # If we have pending tool calls and we're now at a new model request,
+            # that means the tools have completed. We'll emit generic success for them.
+            if pending_tool_calls and isinstance(node, ModelRequestNode):
+                for tool_name, tool_call_id in pending_tool_calls:
+                    yield ToolResultEvent(
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        result="(completed)",
+                    )
+                pending_tool_calls.clear()
+
             if isinstance(node, UserPromptNode):
                 continue
 
@@ -401,16 +501,32 @@ async def _stream_standard(
                             args = part.args_as_dict()
                         except Exception:
                             args = {}
+                        tool_call_id = part.tool_call_id or ""
+                        pending_tool_calls.append((part.tool_name, tool_call_id))
                         yield ToolCallEvent(
                             tool_name=part.tool_name,
+                            tool_call_id=tool_call_id,
                             args=args,
                         )
 
             elif isinstance(node, End):
-                pass
+                # Emit any remaining pending tool results
+                for tool_name, tool_call_id in pending_tool_calls:
+                    yield ToolResultEvent(
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        result="(completed)",
+                    )
+                pending_tool_calls.clear()
 
     result = run.result
     usage = result.usage()
+
+    # Save the updated message history for this session
+    # all_messages() returns the complete conversation including new messages
+    all_messages = result.all_messages()
+    save_session_history(session_id, all_messages)
+    logger.info(f"Saved {len(all_messages)} messages to session {session_id}")
 
     yield DoneEvent(
         output=result.output or "",
@@ -424,6 +540,7 @@ async def _stream_with_hitl(
     deps: AuraDeps,
     message_history: list,
     event_queue: asyncio.Queue,
+    session_id: str,
 ) -> AsyncIterator[StreamEvent]:
     """
     Streaming with HITL support.
@@ -440,9 +557,23 @@ async def _stream_with_hitl(
     async def run_agent_task():
         """Run agent and push events to queue."""
         nonlocal agent_error
+        # Track pending tool calls to emit results after they complete
+        pending_tool_calls: list[tuple[str, str]] = []  # (tool_name, tool_call_id)
+
         try:
             async with aura_agent.iter(message, deps=deps, message_history=message_history) as run:
                 async for node in run:
+                    # If we have pending tool calls and we're now at a new model request,
+                    # that means the tools have completed
+                    if pending_tool_calls and isinstance(node, ModelRequestNode):
+                        for tool_name, tool_call_id in pending_tool_calls:
+                            await event_queue.put(ToolResultEvent(
+                                tool_name=tool_name,
+                                tool_call_id=tool_call_id,
+                                result="(completed)",
+                            ))
+                        pending_tool_calls.clear()
+
                     if isinstance(node, UserPromptNode):
                         continue
 
@@ -458,16 +589,31 @@ async def _stream_with_hitl(
                                     args = part.args_as_dict()
                                 except Exception:
                                     args = {}
+                                tool_call_id = part.tool_call_id or ""
+                                pending_tool_calls.append((part.tool_name, tool_call_id))
                                 await event_queue.put(ToolCallEvent(
                                     tool_name=part.tool_name,
+                                    tool_call_id=tool_call_id,
                                     args=args,
                                 ))
 
                     elif isinstance(node, End):
-                        pass
+                        # Emit any remaining pending tool results
+                        for tool_name, tool_call_id in pending_tool_calls:
+                            await event_queue.put(ToolResultEvent(
+                                tool_name=tool_name,
+                                tool_call_id=tool_call_id,
+                                result="(completed)",
+                            ))
+                        pending_tool_calls.clear()
 
             result = run.result
             usage = result.usage()
+
+            # Save the updated message history for this session
+            all_messages = result.all_messages()
+            save_session_history(session_id, all_messages)
+            logger.info(f"Saved {len(all_messages)} messages to session {session_id}")
 
             await event_queue.put(DoneEvent(
                 output=result.output or "",
@@ -516,7 +662,7 @@ async def stream_agent_sse(
     project_path: str,
     project_name: str = "",
     message_history: list = None,
-    enable_hitl: bool = False,
+    enable_hitl: bool = True,  # Enabled by default for file safety
     enable_steering: bool = False,
     session_id: str | None = None,
 ) -> AsyncIterator[str]:
@@ -530,7 +676,7 @@ async def stream_agent_sse(
         project_path: Path to the LaTeX project
         project_name: Optional project name
         message_history: Optional conversation history
-        enable_hitl: Whether to enable HITL approval (default: False)
+        enable_hitl: Whether to enable HITL approval (default: True)
         enable_steering: Whether to enable steering messages (default: False)
         session_id: Session ID for steering isolation (optional)
 
@@ -618,17 +764,19 @@ async def run_agent(
             }
             logger.info(f"Steering: Injected {len(steering_used)} messages into run_agent")
 
-    # Handle compression if enabled and history provided
-    processed_history = message_history
+    # Use session-based history instead of frontend history
+    effective_session_id = session_id or "default"
+    processed_history = get_session_history(effective_session_id)
     compression_info = None
 
-    if auto_compress and message_history:
+    # Handle compression if enabled and history provided
+    if auto_compress and processed_history:
         try:
             compressor = get_compressor()
-            tokens_before = compressor.counter.count(message_history)
-            original_count = len(message_history)
+            tokens_before = compressor.counter.count(processed_history)
+            original_count = len(processed_history)
 
-            compressed_history, was_compressed = await compress_if_needed(message_history)
+            compressed_history, was_compressed = await compress_if_needed(processed_history)
 
             if was_compressed:
                 tokens_after = compressor.counter.count(compressed_history)
@@ -649,6 +797,11 @@ async def run_agent(
 
     result = await aura_agent.run(effective_message, deps=deps, message_history=processed_history)
     usage = result.usage()
+
+    # Save the updated message history for this session
+    all_messages = result.all_messages()
+    save_session_history(effective_session_id, all_messages)
+    logger.info(f"Saved {len(all_messages)} messages to session {effective_session_id}")
 
     response = {
         "output": result.output,

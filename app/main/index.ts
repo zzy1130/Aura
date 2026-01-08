@@ -203,20 +203,10 @@ function setupIpcHandlers(): void {
 
   // Open project dialog
   ipcMain.handle('open-project', async () => {
-    // Default to aura-projects directory
-    const homeDir = app.getPath('home');
-    const projectsDir = path.join(homeDir, 'aura-projects');
-
-    // Ensure directory exists
-    if (!fs.existsSync(projectsDir)) {
-      fs.mkdirSync(projectsDir, { recursive: true });
-    }
-
     const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openDirectory'],
       title: 'Open LaTeX Project',
-      defaultPath: projectsDir,
-      message: 'Select a project from ~/aura-projects',
+      message: 'Select a LaTeX project directory',
     });
 
     if (!result.canceled && result.filePaths.length > 0) {

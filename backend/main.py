@@ -83,6 +83,10 @@ class FileWriteRequest(BaseModel):
     content: str
 
 
+class FileListRequest(BaseModel):
+    project_path: str
+
+
 class ChatRequest(BaseModel):
     message: str
     project_path: str
@@ -155,7 +159,7 @@ async def check_syntax(request: CompileRequest):
 @app.get("/api/pdf/{project_name}")
 async def get_pdf(project_name: str, filename: str = "main.pdf"):
     """
-    Serve the compiled PDF file.
+    Serve the compiled PDF file from ~/aura-projects/.
     """
     from services.project import PROJECTS_DIR
 
@@ -168,6 +172,30 @@ async def get_pdf(project_name: str, filename: str = "main.pdf"):
         path=str(pdf_path),
         media_type="application/pdf",
         filename=filename,
+    )
+
+
+class PdfRequest(BaseModel):
+    project_path: str
+    filename: str = "main.pdf"
+
+
+@app.post("/api/pdf/serve")
+async def serve_pdf(request: PdfRequest):
+    """
+    Serve a PDF file from any project path.
+    """
+    from pathlib import Path
+
+    pdf_path = Path(request.project_path) / request.filename
+
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"PDF not found: {request.filename}")
+
+    return FileResponse(
+        path=str(pdf_path),
+        media_type="application/pdf",
+        filename=request.filename,
     )
 
 
@@ -236,6 +264,24 @@ async def write_file(request: FileWriteRequest) -> dict:
     return {"success": True}
 
 
+@app.post("/api/files/list")
+async def list_files(request: FileListRequest) -> list[dict]:
+    """
+    List files in a project directory.
+
+    Works with any directory path, not just projects in ~/aura-projects/.
+    """
+    from pathlib import Path
+
+    project_path = Path(request.project_path)
+    if not project_path.exists():
+        raise HTTPException(status_code=404, detail=f"Directory not found: {request.project_path}")
+    if not project_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {request.project_path}")
+
+    return project_service.get_files(str(project_path))
+
+
 # ============ Agent Chat Endpoints ============
 
 @app.post("/api/chat/stream")
@@ -250,12 +296,16 @@ async def chat_stream(request: ChatRequest):
     """
     from agent.streaming import stream_agent_sse
 
+    # Use project_path as session_id for conversation continuity
+    session_id = request.project_path or "default"
+
     async def event_generator():
         try:
             async for sse_data in stream_agent_sse(
                 message=request.message,
                 project_path=request.project_path,
                 message_history=request.history,
+                session_id=session_id,
             ):
                 # SSE data is already formatted as "data: {...}\n\n"
                 # Parse it to get event type and content
@@ -285,11 +335,15 @@ async def chat_simple(request: ChatRequest) -> dict:
     """
     from agent.streaming import run_agent
 
+    # Use project_path as session_id for conversation continuity
+    session_id = request.project_path or "default"
+
     try:
         result = await run_agent(
             message=request.message,
             project_path=request.project_path,
             message_history=request.history,
+            session_id=session_id,
         )
         return {
             "response": result["output"],
@@ -298,6 +352,28 @@ async def chat_simple(request: ChatRequest) -> dict:
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ClearChatRequest(BaseModel):
+    project_path: str
+
+
+@app.post("/api/chat/clear")
+async def clear_chat_history(request: ClearChatRequest) -> dict:
+    """
+    Clear conversation history for a project.
+
+    Use this to start a fresh conversation.
+    """
+    from agent.streaming import clear_session_history
+
+    session_id = request.project_path or "default"
+    clear_session_history(session_id)
+
+    return {
+        "success": True,
+        "message": f"Cleared chat history for session: {session_id}",
+    }
 
 
 @app.get("/api/tools")

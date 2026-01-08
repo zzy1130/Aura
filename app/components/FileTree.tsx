@@ -28,18 +28,18 @@ interface FileNode {
   children?: FileNode[];
 }
 
-// Get icon for file type
+// Get icon for file type - YouWare green palette
 function getFileIcon(name: string) {
-  if (name.endsWith('.tex')) return <FileCode size={14} className="text-aura-accent" />;
-  if (name.endsWith('.bib')) return <FileText size={14} className="text-yellow-400" />;
-  if (name.endsWith('.pdf')) return <FileText size={14} className="text-red-400" />;
+  if (name.endsWith('.tex')) return <FileCode size={14} className="text-green1" />;
+  if (name.endsWith('.bib')) return <FileText size={14} className="text-orange1" />;
+  if (name.endsWith('.pdf')) return <FileText size={14} className="text-error" />;
   if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg')) {
-    return <Image size={14} className="text-green-400" />;
+    return <Image size={14} className="text-success" />;
   }
   if (name.endsWith('.sty') || name.endsWith('.cls')) {
-    return <FileCode size={14} className="text-purple-400" />;
+    return <FileCode size={14} className="text-green2" />;
   }
-  return <FileText size={14} className="text-aura-muted" />;
+  return <FileText size={14} className="text-tertiary" />;
 }
 
 // Tree node component
@@ -68,7 +68,14 @@ function TreeNode({
   return (
     <div>
       <div
-        className={`file-tree-item ${isSelected ? 'selected' : ''}`}
+        className={`
+          flex items-center gap-2 py-1.5 px-2 cursor-pointer rounded-yw-lg mx-1
+          transition-colors duration-200
+          ${isSelected
+            ? 'bg-green3 text-green1'
+            : 'hover:bg-black/3'
+          }
+        `}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}
       >
@@ -76,23 +83,25 @@ function TreeNode({
         {node.type === 'directory' ? (
           <>
             {isExpanded ? (
-              <ChevronDown size={14} className="text-aura-muted" />
+              <ChevronDown size={14} className="text-tertiary" />
             ) : (
-              <ChevronRight size={14} className="text-aura-muted" />
+              <ChevronRight size={14} className="text-tertiary" />
             )}
             {isExpanded ? (
-              <FolderOpen size={14} className="text-aura-accent" />
+              <FolderOpen size={14} className="text-green2" />
             ) : (
-              <Folder size={14} className="text-aura-accent" />
+              <Folder size={14} className="text-green2" />
             )}
           </>
         ) : (
           <>
-            <span className="w-[14px]" /> {/* Spacer */}
+            <span className="w-[14px]" />
             {getFileIcon(node.name)}
           </>
         )}
-        <span className="truncate text-sm">{node.name}</span>
+        <span className={`truncate typo-small ${isSelected ? 'typo-small-strong' : ''}`}>
+          {node.name}
+        </span>
       </div>
 
       {/* Children */}
@@ -188,7 +197,6 @@ export default function FileTree({
 
     setIsLoading(true);
     try {
-      // Use the onRefresh prop to trigger a refresh from parent
       if (onRefresh) {
         await onRefresh();
       }
@@ -204,7 +212,6 @@ export default function FileTree({
     if (files && files.length > 0) {
       setTree(buildTree(files));
     } else if (projectPath) {
-      // If no files provided, show empty tree
       setTree([]);
     } else {
       setTree([]);
@@ -212,31 +219,31 @@ export default function FileTree({
   }, [files, projectPath, buildTree]);
 
   return (
-    <div className="h-full flex flex-col bg-aura-bg">
+    <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="h-8 border-b border-aura-border flex items-center justify-between px-3">
-        <span className="text-xs font-medium text-aura-muted uppercase tracking-wider">
+      <div className="panel-header">
+        <span className="typo-small-strong text-secondary uppercase tracking-wider">
           Files
         </span>
         <div className="flex gap-1">
           <button
-            className="p-1 hover:bg-aura-surface rounded"
+            className="btn-icon w-6 h-6"
             title="New File"
           >
-            <Plus size={14} className="text-aura-muted" />
+            <Plus size={14} className="text-secondary" />
           </button>
           <button
-            className="p-1 hover:bg-aura-surface rounded"
+            className="btn-icon w-6 h-6"
             title="Refresh"
             onClick={fetchFiles}
           >
-            <RefreshCw size={14} className={`text-aura-muted ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw size={14} className={`text-secondary ${isLoading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
       {/* Tree */}
-      <div className="flex-1 overflow-auto py-1">
+      <div className="flex-1 overflow-auto py-2">
         {projectPath ? (
           tree.length > 0 ? (
             tree.map((node) => (
@@ -249,13 +256,18 @@ export default function FileTree({
               />
             ))
           ) : (
-            <div className="p-4 text-center text-sm text-aura-muted">
+            <div className="p-4 text-center typo-small text-tertiary">
               No files found
             </div>
           )
         ) : (
-          <div className="p-4 text-center text-sm text-aura-muted">
-            Open a project to see files
+          <div className="p-6 text-center">
+            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-black/3 flex items-center justify-center">
+              <Folder size={24} className="text-tertiary" />
+            </div>
+            <p className="typo-small text-tertiary">
+              Open a project to see files
+            </p>
           </div>
         )}
       </div>

@@ -2,13 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+   YouWare Design System - Global Styles
+   ============================================================================ */
+
 :root {
-  --aura-bg: #1e1e2e;
-  --aura-surface: #282838;
-  --aura-border: #3d3d5c;
-  --aura-text: #cdd6f4;
-  --aura-muted: #6c7086;
-  --aura-accent: #89b4fa;
+  /* YouWare Brand Colors */
+  --yw-green1: #2e4226;
+  --yw-green2: #55644a;
+  --yw-green3: #e0e7d0;
+  --yw-orange1: #a55500;
+  --yw-orange2: #ffd15d;
+
+  /* Surfaces */
+  --yw-fill-primary: #ffffff;
+  --yw-fill-secondary: #f6f4f1;
+  --yw-sidebar-bg: #F1EFEC;
+
+  /* Text */
+  --yw-text-primary: rgba(0, 0, 0, 0.95);
+  --yw-text-secondary: rgba(0, 0, 0, 0.60);
+  --yw-text-tertiary: rgba(0, 0, 0, 0.40);
+
+  /* Opacity-based neutrals */
+  --yw-border-light: rgba(0, 0, 0, 0.06);
+  --yw-border-medium: rgba(0, 0, 0, 0.12);
+  --yw-hover-light: rgba(0, 0, 0, 0.03);
+  --yw-hover-medium: rgba(0, 0, 0, 0.06);
+  --yw-bg-light: rgba(0, 0, 0, 0.06);
+  --yw-bg-medium: rgba(0, 0, 0, 0.12);
+
+  /* Editor (dark theme for code) */
+  --editor-bg: #1e1e2e;
+  --editor-surface: #282838;
+  --editor-border: #3d3d5c;
+  --editor-text: #cdd6f4;
+  --editor-muted: #6c7086;
+  --editor-accent: #89b4fa;
 }
 
 * {
@@ -21,12 +51,105 @@ html,
 body {
   max-width: 100vw;
   overflow-x: hidden;
-  background-color: var(--aura-bg);
-  color: var(--aura-text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--yw-fill-secondary);
+  color: var(--yw-text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Electron titlebar drag area */
+/* ============================================================================
+   YouWare Typography Utilities
+   ============================================================================ */
+
+@layer utilities {
+  .typo-title-hero {
+    font-size: 72px;
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  .typo-title-page {
+    font-size: 48px;
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+
+  .typo-h1 {
+    font-size: 32px;
+    font-weight: 500;
+    line-height: 1.25;
+  }
+
+  .typo-h2 {
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .typo-h3 {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .typo-large {
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  .typo-large-strong {
+    font-size: 16px;
+    font-weight: 560;
+    line-height: 1.5;
+  }
+
+  .typo-body {
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  .typo-body-strong {
+    font-size: 14px;
+    font-weight: 580;
+    line-height: 1.5;
+  }
+
+  .typo-small {
+    font-size: 12px;
+    font-weight: 420;
+    line-height: 1.4;
+  }
+
+  .typo-small-strong {
+    font-size: 12px;
+    font-weight: 580;
+    line-height: 1.4;
+  }
+
+  .typo-ex-small {
+    font-size: 10px;
+    font-weight: 420;
+    line-height: 1.4;
+  }
+
+  .typo-code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
+/* ============================================================================
+   Electron Titlebar
+   ============================================================================ */
+
 .titlebar-drag {
   -webkit-app-region: drag;
 }
@@ -35,78 +158,310 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* Custom scrollbar */
+/* ============================================================================
+   Custom Scrollbar (Light Theme)
+   ============================================================================ */
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--aura-bg);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--aura-border);
+  background: rgba(0, 0, 0, 0.15);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--aura-muted);
+  background: rgba(0, 0, 0, 0.25);
 }
 
-/* Monaco editor overrides */
+/* Dark scrollbar for editor areas */
+.dark-scrollbar::-webkit-scrollbar-track {
+  background: var(--editor-bg);
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--editor-border);
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--editor-muted);
+}
+
+/* ============================================================================
+   Monaco Editor Overrides (Keep Dark)
+   ============================================================================ */
+
 .monaco-editor {
-  background-color: var(--aura-surface) !important;
+  background-color: var(--editor-surface) !important;
 }
 
-/* Panel resizer */
-.resizer {
-  background: var(--aura-border);
-  cursor: col-resize;
-  transition: background 0.2s;
+.monaco-editor .margin {
+  background-color: var(--editor-surface) !important;
 }
 
-.resizer:hover {
-  background: var(--aura-accent);
-}
+/* ============================================================================
+   PDF Viewer
+   ============================================================================ */
 
-/* PDF viewer container */
 .pdf-container {
-  background-color: #525659;
+  background-color: #e8e6e3;
 }
 
-/* Agent message styles */
+/* ============================================================================
+   Agent Chat Styles (Light Theme)
+   ============================================================================ */
+
 .agent-message {
-  @apply bg-aura-surface rounded-lg p-3 mb-2;
+  border-radius: 16px;
+  padding: 12px;
 }
 
 .agent-message-user {
-  @apply bg-aura-accent/10 border border-aura-accent/20;
+  background-color: rgba(224, 231, 208, 0.5);
+  border: 1px solid rgba(85, 100, 74, 0.2);
 }
 
 .agent-message-assistant {
-  @apply bg-aura-surface border border-aura-border;
+  background-color: white;
+  border: 1px solid var(--yw-border-light);
 }
 
 .agent-tool-call {
-  @apply bg-aura-bg rounded p-2 my-1 font-mono text-sm;
+  background-color: var(--yw-fill-secondary);
+  border-radius: 10px;
+  padding: 8px;
+  margin: 4px 0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  border: 1px solid var(--yw-border-light);
 }
 
-/* File tree styles */
+/* ============================================================================
+   File Tree Styles (Light Theme)
+   ============================================================================ */
+
 .file-tree-item {
-  @apply flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-aura-surface;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 200ms;
+}
+
+.file-tree-item:hover {
+  background-color: var(--yw-hover-light);
 }
 
 .file-tree-item.selected {
-  @apply bg-aura-accent/20 text-aura-accent;
+  background-color: var(--yw-green3);
+  color: var(--yw-green1);
 }
 
-/* Toolbar button */
-.toolbar-btn {
-  @apply flex items-center gap-1 px-3 py-1.5 rounded text-sm font-medium transition-colors;
-  @apply hover:bg-aura-surface active:bg-aura-border;
+/* ============================================================================
+   Button Styles
+   ============================================================================ */
+
+.btn-primary {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  background-color: var(--yw-green1);
+  padding: 0 16px;
+  color: white;
+  font-size: 14px;
+  font-weight: 580;
+  transition: opacity 200ms;
 }
 
-.toolbar-btn-primary {
-  @apply bg-aura-accent text-aura-bg hover:bg-aura-accent/80;
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-secondary {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  background-color: var(--yw-bg-light);
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 580;
+  transition: background-color 200ms;
+}
+
+.btn-secondary:hover {
+  background-color: var(--yw-bg-medium);
+}
+
+.btn-ghost {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 400;
+  transition: background-color 200ms;
+}
+
+.btn-ghost:hover {
+  background-color: var(--yw-hover-light);
+}
+
+.btn-icon {
+  display: flex;
+  height: 32px;
+  width: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  transition: background-color 200ms;
+}
+
+.btn-icon:hover {
+  background-color: var(--yw-hover-light);
+}
+
+/* ============================================================================
+   Input Styles
+   ============================================================================ */
+
+.input-field {
+  height: 40px;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--yw-border-medium);
+  background-color: white;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 400;
+  transition: border-color 200ms;
+}
+
+.input-field::placeholder {
+  color: var(--yw-text-tertiary);
+}
+
+.input-field:focus {
+  border-color: var(--yw-green2);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(85, 100, 74, 0.2);
+}
+
+/* ============================================================================
+   Card Styles
+   ============================================================================ */
+
+.card {
+  border-radius: 16px;
+  background-color: white;
+  border: 1px solid var(--yw-border-light);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 300ms;
+}
+
+.card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* ============================================================================
+   Panel Styles
+   ============================================================================ */
+
+.panel {
+  background-color: white;
+  border-right: 1px solid var(--yw-border-light);
+}
+
+.panel-header {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--yw-border-light);
+}
+
+.panel-header-title {
+  font-size: 14px;
+  font-weight: 580;
+  color: var(--yw-text-primary);
+}
+
+/* ============================================================================
+   Status Badge
+   ============================================================================ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 580;
+}
+
+.badge-success {
+  background-color: var(--yw-green3);
+  color: var(--yw-green1);
+}
+
+.badge-warning {
+  background-color: rgba(255, 209, 93, 0.3);
+  color: var(--yw-orange1);
+}
+
+.badge-error {
+  background-color: rgba(212, 39, 39, 0.1);
+  color: #d42727;
+}
+
+/* ============================================================================
+   Animations
+   ============================================================================ */
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.2s ease-out;
+}
+
+.animate-fade-in-down {
+  animation: fadeInDown 0.2s ease-out;
 }

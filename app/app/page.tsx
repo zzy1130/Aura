@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import Toolbar from '@/components/Toolbar';
 import FileTree from '@/components/FileTree';
-import Editor from '@/components/Editor';
+import Editor, { PendingEdit } from '@/components/Editor';
 import PDFViewer from '@/components/PDFViewer';
 import AgentPanel from '@/components/AgentPanel';
 import NewProjectModal from '@/components/NewProjectModal';
+import ResizeHandle from '@/components/ResizeHandle';
 import { api } from '@/lib/api';
+import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 
 // =============================================================================
 // Types
@@ -51,6 +53,23 @@ export default function Home() {
   // Modal state
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
 
+  // Pending edit state (for HITL approval in Editor)
+  const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
+
+  // Panel layout state
+  const [fileTreeWidth, setFileTreeWidth] = useState(200);
+  const [pdfViewerWidth, setPdfViewerWidth] = useState(400);
+  const [agentPanelWidth, setAgentPanelWidth] = useState(350);
+  const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Panel resize constraints
+  const MIN_FILE_TREE = 150;
+  const MAX_FILE_TREE = 400;
+  const MIN_PDF_VIEWER = 300;
+  const MIN_AGENT_PANEL = 280;
+  const MAX_AGENT_PANEL = 600;
+
   // Initialize API client on mount
   useEffect(() => {
     api.init().catch(console.error);
@@ -60,9 +79,10 @@ export default function Home() {
   // File List Fetching
   // =============================================================================
 
-  const fetchFileList = useCallback(async (_projectPath: string, projectName: string) => {
+  const fetchFileList = useCallback(async (projectPath: string) => {
     try {
-      const files = await api.getProjectFiles(projectName);
+      console.log('[Page] Fetching files for path:', projectPath);
+      const files = await api.listFiles(projectPath);
 
       // Extract paths from file objects (backend returns {name, path, type, size})
       const filePaths = files.map((f) => f.path);
@@ -71,16 +91,11 @@ export default function Home() {
         ...prev,
         files: filePaths,
       }));
+      setError(null);
     } catch (err) {
       console.error('Failed to fetch file list:', err);
-      // If project not found in backend, it might be opened from a different location
-      // Try to show a helpful message
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      if (errorMsg.includes('not found')) {
-        setError(`Project not found in ~/aura-projects/. Please create a new project or open one from the projects directory.`);
-      } else {
-        setError(`Failed to load files: ${errorMsg}`);
-      }
+      setError(`Failed to load files: ${errorMsg}`);
     }
   }, []);
 
@@ -91,8 +106,14 @@ export default function Home() {
   const handleOpenProject = useCallback(async () => {
     if (typeof window !== 'undefined' && window.aura) {
       const projectPath = await window.aura.openProject();
+      console.log('[Page] Open project path:', projectPath);
+
       if (projectPath) {
-        const name = projectPath.split('/').pop() || 'Project';
+        // Extract project name - filter out empty strings to handle trailing slashes
+        const pathParts = projectPath.split('/').filter((p: string) => p.length > 0);
+        const name = pathParts[pathParts.length - 1] || 'Project';
+        console.log('[Page] Extracted project name:', name);
+
         setProject({
           path: projectPath,
           name,
@@ -104,9 +125,10 @@ export default function Home() {
         setPdfUrl(null);
         setCompileStatus('idle');
         setError(null);
+        setPendingEdit(null);
 
-        // Fetch file list from backend
-        await fetchFileList(projectPath, name);
+        // Fetch file list using full path
+        await fetchFileList(projectPath);
       }
     }
   }, [fetchFileList]);
@@ -134,9 +156,10 @@ export default function Home() {
         setPdfUrl(null);
         setCompileStatus('idle');
         setError(null);
+        setPendingEdit(null);
 
-        // Fetch file list
-        await fetchFileList(projectPath, name);
+        // Fetch file list using full path
+        await fetchFileList(projectPath);
       }
     } catch (err) {
       console.error('Failed to create project:', err);
@@ -193,6 +216,22 @@ export default function Home() {
   const handleCompile = useCallback(async () => {
     if (!project.path) return;
 
+    // Determine which file to compile
+    let fileToCompile = project.currentFile;
+
+    // If current file is not a .tex file, try to find main.tex or any .tex file
+    if (!fileToCompile || !fileToCompile.endsWith('.tex')) {
+      const texFiles = project.files.filter(f => f.endsWith('.tex'));
+      if (texFiles.includes('main.tex')) {
+        fileToCompile = 'main.tex';
+      } else if (texFiles.length > 0) {
+        fileToCompile = texFiles[0];
+      } else {
+        setError('No .tex file found to compile');
+        return;
+      }
+    }
+
     // Save current file first if dirty
     if (isDirty && project.currentFile) {
       await handleSave();
@@ -203,14 +242,26 @@ export default function Home() {
     setCompileLog('');
 
     try {
-      const result = await api.compile(project.path, 'main.tex');
+      const result = await api.compile(project.path, fileToCompile);
 
       setCompileLog(result.log_output || '');
 
       if (result.success) {
         setCompileStatus('success');
-        // Update PDF URL
-        setPdfUrl(api.getPdfUrl(project.name, 'main.pdf'));
+        // Fetch PDF as blob and create object URL
+        const pdfName = fileToCompile.replace(/\.tex$/, '.pdf');
+        try {
+          const pdfBlob = await api.fetchPdfBlob(project.path, pdfName);
+          // Revoke old URL to prevent memory leaks
+          if (pdfUrl) {
+            URL.revokeObjectURL(pdfUrl);
+          }
+          const newPdfUrl = URL.createObjectURL(pdfBlob);
+          setPdfUrl(newPdfUrl);
+        } catch (pdfErr) {
+          console.error('Failed to load PDF:', pdfErr);
+          setError(`Compilation succeeded but failed to load PDF: ${pdfErr instanceof Error ? pdfErr.message : 'Unknown error'}`);
+        }
       } else {
         setCompileStatus('error');
         setError(result.error_summary || 'Compilation failed');
@@ -222,26 +273,131 @@ export default function Home() {
     } finally {
       setIsCompiling(false);
     }
-  }, [project.path, project.name, project.currentFile, isDirty, handleSave]);
+  }, [project.path, project.currentFile, project.files, isDirty, handleSave, pdfUrl]);
 
   // =============================================================================
   // Refresh File List
   // =============================================================================
 
   const handleRefreshFiles = useCallback(async () => {
-    if (project.path && project.name) {
-      await fetchFileList(project.path, project.name);
+    if (project.path) {
+      await fetchFileList(project.path);
     }
-  }, [project.path, project.name, fetchFileList]);
+  }, [project.path, fetchFileList]);
+
+  // =============================================================================
+  // HITL Approval Handlers
+  // =============================================================================
+
+  const handleApprovalRequest = useCallback((edit: PendingEdit) => {
+    console.log('[Page] Approval request received:', edit);
+    console.log('[Page] Setting pendingEdit - old_string length:', edit.old_string?.length);
+    console.log('[Page] Setting pendingEdit - new_string length:', edit.new_string?.length);
+    setPendingEdit(edit);
+
+    // If the edit is for a different file, switch to it
+    if (project.path && edit.filepath) {
+      const editFilename = edit.filepath.split('/').pop();
+      const currentFilename = project.currentFile?.split('/').pop();
+
+      if (editFilename !== currentFilename) {
+        // Load the file being edited
+        handleFileSelect(edit.filepath);
+      }
+    }
+  }, [project.path, project.currentFile, handleFileSelect]);
+
+  const handleApproveEdit = useCallback(async (requestId: string) => {
+    console.log('[Page] Approving edit:', requestId);
+
+    try {
+      let backendUrl = 'http://127.0.0.1:8000';
+      if (typeof window !== 'undefined' && window.aura) {
+        backendUrl = await window.aura.getBackendUrl();
+      }
+
+      await fetch(`${backendUrl}/api/hitl/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: requestId }),
+      });
+
+      setPendingEdit(null);
+
+      // Reload the file to show the changes, then auto-compile
+      if (project.path && project.currentFile) {
+        setTimeout(async () => {
+          await handleFileSelect(project.currentFile!);
+          // Auto-compile after edit is applied
+          setTimeout(() => {
+            console.log('[Page] Auto-compiling after edit...');
+            handleCompile();
+          }, 300);
+        }, 500);
+      }
+    } catch (error) {
+      console.error('Failed to approve:', error);
+      setError(`Failed to approve edit: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [project.path, project.currentFile, handleFileSelect, handleCompile]);
+
+  const handleRejectEdit = useCallback(async (requestId: string) => {
+    console.log('[Page] Rejecting edit:', requestId);
+
+    try {
+      let backendUrl = 'http://127.0.0.1:8000';
+      if (typeof window !== 'undefined' && window.aura) {
+        backendUrl = await window.aura.getBackendUrl();
+      }
+
+      await fetch(`${backendUrl}/api/hitl/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id: requestId,
+          reason: 'User rejected',
+        }),
+      });
+
+      setPendingEdit(null);
+    } catch (error) {
+      console.error('Failed to reject:', error);
+      setError(`Failed to reject edit: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, []);
+
+  const handleApprovalResolved = useCallback(() => {
+    setPendingEdit(null);
+  }, []);
+
+  // =============================================================================
+  // Panel Resize Handlers
+  // =============================================================================
+
+  const handleFileTreeResize = useCallback((delta: number) => {
+    setFileTreeWidth((prev) => Math.max(MIN_FILE_TREE, Math.min(MAX_FILE_TREE, prev + delta)));
+  }, []);
+
+  const handlePdfViewerResize = useCallback((delta: number) => {
+    setPdfViewerWidth((prev) => Math.max(MIN_PDF_VIEWER, prev - delta));
+  }, []);
+
+  const handleAgentPanelResize = useCallback((delta: number) => {
+    setAgentPanelWidth((prev) => Math.max(MIN_AGENT_PANEL, Math.min(MAX_AGENT_PANEL, prev - delta)));
+  }, []);
+
+  const toggleAgentPanel = useCallback(() => {
+    setIsAgentPanelOpen((prev) => !prev);
+  }, []);
 
   // =============================================================================
   // Render
   // =============================================================================
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden bg-fill-secondary">
       {/* Titlebar drag area for macOS */}
-      <div className="h-7 bg-aura-bg titlebar-drag" />
+      <div className="h-7 bg-sidebar-bg titlebar-drag border-b border-black/6" />
 
       {/* Toolbar */}
       <Toolbar
@@ -257,21 +413,27 @@ export default function Home() {
 
       {/* Error Banner */}
       {error && (
-        <div className="bg-aura-error/20 border-b border-aura-error px-4 py-2 text-sm text-aura-error flex items-center justify-between">
-          <span>{error}</span>
+        <div className="bg-error/10 border-b border-error/20 px-4 py-2.5 flex items-center justify-between animate-fade-in-down">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-error" />
+            <span className="typo-small text-error">{error}</span>
+          </div>
           <button
             onClick={() => setError(null)}
-            className="text-aura-error hover:text-aura-text"
+            className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-error/10 transition-colors"
           >
-            ×
+            <span className="text-error text-lg leading-none">×</span>
           </button>
         </div>
       )}
 
       {/* Main Content - 4 Panel Layout */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* File Tree - 200px */}
-        <div className="w-[200px] flex-shrink-0 border-r border-aura-border overflow-hidden">
+      <div ref={containerRef} className="flex-1 flex overflow-hidden relative">
+        {/* File Tree */}
+        <div
+          style={{ width: fileTreeWidth }}
+          className="flex-shrink-0 overflow-hidden bg-sidebar-bg"
+        >
           <FileTree
             projectPath={project.path}
             files={project.files}
@@ -281,50 +443,112 @@ export default function Home() {
           />
         </div>
 
+        {/* Resize Handle: File Tree | Editor */}
+        <ResizeHandle onResize={handleFileTreeResize} />
+
         {/* Editor - Flexible */}
-        <div className="flex-1 min-w-[300px] border-r border-aura-border overflow-hidden">
+        <div className="flex-1 min-w-[300px] overflow-hidden">
           <Editor
             content={editorContent}
             filePath={project.currentFile}
             onChange={handleEditorChange}
             onSave={handleSave}
+            pendingEdit={pendingEdit}
+            onApproveEdit={handleApproveEdit}
+            onRejectEdit={handleRejectEdit}
           />
         </div>
 
-        {/* PDF Viewer - 35% */}
-        <div className="w-[35%] min-w-[300px] border-r border-aura-border overflow-hidden">
+        {/* Resize Handle: Editor | PDF Viewer */}
+        <ResizeHandle onResize={handlePdfViewerResize} />
+
+        {/* PDF Viewer */}
+        <div
+          style={{ width: pdfViewerWidth }}
+          className="flex-shrink-0 overflow-hidden"
+        >
           <PDFViewer
             pdfUrl={pdfUrl}
             isCompiling={isCompiling}
           />
         </div>
 
-        {/* Agent Panel - 350px */}
-        <div className="w-[350px] flex-shrink-0 overflow-hidden">
+        {/* Resize Handle: PDF Viewer | Agent Panel (only if open) */}
+        {isAgentPanelOpen && (
+          <ResizeHandle onResize={handleAgentPanelResize} />
+        )}
+
+        {/* Agent Panel (Collapsible) */}
+        <div
+          style={{ width: isAgentPanelOpen ? agentPanelWidth : 0 }}
+          className={`flex-shrink-0 overflow-hidden transition-all duration-300 ${
+            isAgentPanelOpen ? 'opacity-100' : 'opacity-0 w-0'
+          }`}
+        >
           <AgentPanel
             projectPath={project.path}
+            onApprovalRequest={handleApprovalRequest}
+            onApprovalResolved={handleApprovalResolved}
           />
         </div>
+
+        {/* Toggle Button for Agent Panel */}
+        <button
+          onClick={toggleAgentPanel}
+          style={{ right: isAgentPanelOpen ? agentPanelWidth + 8 : 8 }}
+          className={`absolute z-10 top-3 flex h-8 w-8 items-center justify-center rounded-yw-lg shadow-card transition-all duration-300 ${
+            isAgentPanelOpen
+              ? 'bg-white border border-black/6 hover:bg-black/3'
+              : 'bg-green1 hover:opacity-90'
+          }`}
+          title={isAgentPanelOpen ? 'Close AI Panel' : 'Open AI Panel'}
+        >
+          {isAgentPanelOpen ? (
+            <PanelRightClose size={16} className="text-secondary" />
+          ) : (
+            <PanelRightOpen size={16} className="text-white" />
+          )}
+        </button>
       </div>
 
       {/* Status Bar */}
-      <div className="h-6 bg-aura-surface border-t border-aura-border flex items-center px-4 text-xs text-aura-muted">
-        <span className="flex-1">
+      <div className="h-7 bg-white border-t border-black/6 flex items-center px-4 gap-4">
+        <span className="flex-1 typo-small text-secondary truncate">
           {project.currentFile || 'No file selected'}
-          {isDirty && ' •'}
+          {isDirty && <span className="text-warn ml-1">•</span>}
         </span>
-        <span className="mr-4">
-          {compileStatus === 'success' && '✓ Compiled'}
-          {compileStatus === 'error' && '✗ Error'}
-          {isCompiling && '⟳ Compiling...'}
+        {pendingEdit && (
+          <span className="badge badge-warning">
+            Pending approval
+          </span>
+        )}
+        <span className="typo-small">
+          {compileStatus === 'success' && (
+            <span className="text-success flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-success" />
+              Compiled
+            </span>
+          )}
+          {compileStatus === 'error' && (
+            <span className="text-error flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-error" />
+              Error
+            </span>
+          )}
+          {isCompiling && (
+            <span className="text-secondary flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
+              Compiling...
+            </span>
+          )}
         </span>
         {compileLog && (
           <button
             onClick={() => console.log(compileLog)}
-            className="hover:text-aura-text"
+            className="typo-small text-link hover:underline"
             title="View compilation log"
           >
-            Log
+            View Log
           </button>
         )}
       </div>

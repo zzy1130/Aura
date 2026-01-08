@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import {
   Send,
-  Bot,
   User,
   Loader2,
   Code,
@@ -11,18 +11,15 @@ import {
   XCircle,
   ChevronDown,
   ChevronRight,
+  AlertCircle,
+  Sparkles,
 } from 'lucide-react';
+import { PendingEdit } from './Editor';
 
 interface AgentPanelProps {
   projectPath: string | null;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-  toolCalls?: ToolCall[];
+  onApprovalRequest?: (edit: PendingEdit) => void;
+  onApprovalResolved?: () => void;
 }
 
 interface ToolCall {
@@ -30,7 +27,20 @@ interface ToolCall {
   name: string;
   args: Record<string, unknown>;
   result?: string;
-  status: 'pending' | 'running' | 'success' | 'error';
+  status: 'pending' | 'running' | 'success' | 'error' | 'waiting_approval';
+}
+
+interface MessagePart {
+  type: 'text' | 'tool';
+  content?: string;
+  toolCall?: ToolCall;
+}
+
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  parts: MessagePart[];
+  timestamp: Date;
 }
 
 // Tool call display component
@@ -38,42 +48,71 @@ function ToolCallDisplay({ toolCall }: { toolCall: ToolCall }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const statusIcon = {
-    pending: <Loader2 size={14} className="text-aura-muted" />,
-    running: <Loader2 size={14} className="text-aura-accent animate-spin" />,
-    success: <CheckCircle size={14} className="text-aura-success" />,
-    error: <XCircle size={14} className="text-aura-error" />,
+    pending: <Loader2 size={14} className="text-tertiary" />,
+    running: <Loader2 size={14} className="text-green2 animate-spin" />,
+    waiting_approval: <AlertCircle size={14} className="text-orange1" />,
+    success: <CheckCircle size={14} className="text-success" />,
+    error: <XCircle size={14} className="text-error" />,
+  }[toolCall.status];
+
+  const statusLabel = {
+    pending: '',
+    running: '',
+    waiting_approval: 'awaiting approval',
+    success: '',
+    error: '',
   }[toolCall.status];
 
   return (
-    <div className="agent-tool-call">
+    <div className="bg-fill-secondary rounded-yw-lg p-2.5 my-2 border border-black/6">
       <div
         className="flex items-center gap-2 cursor-pointer"
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <Code size={14} className="text-aura-accent" />
-        <span className="text-aura-accent">{toolCall.name}</span>
+        {isExpanded ? (
+          <ChevronDown size={14} className="text-tertiary" />
+        ) : (
+          <ChevronRight size={14} className="text-tertiary" />
+        )}
+        <Code size={14} className="text-green2" />
+        <span className="typo-small-strong text-green1">{toolCall.name}</span>
+        {statusLabel && (
+          <span className="badge badge-warning typo-ex-small">{statusLabel}</span>
+        )}
         <span className="flex-1" />
         {statusIcon}
       </div>
 
       {isExpanded && (
-        <div className="mt-2 text-xs">
-          <div className="text-aura-muted mb-1">Arguments:</div>
-          <pre className="bg-aura-bg p-2 rounded overflow-x-auto">
-            {JSON.stringify(toolCall.args, null, 2)}
-          </pre>
+        <div className="mt-3 space-y-2">
+          <div>
+            <div className="typo-ex-small text-tertiary mb-1">Arguments</div>
+            <pre className="bg-white p-2.5 rounded-yw-md text-xs overflow-x-auto border border-black/6 font-mono">
+              {JSON.stringify(toolCall.args, null, 2)}
+            </pre>
+          </div>
 
           {toolCall.result && (
-            <>
-              <div className="text-aura-muted mt-2 mb-1">Result:</div>
-              <pre className="bg-aura-bg p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">
+            <div>
+              <div className="typo-ex-small text-tertiary mb-1">Result</div>
+              <pre className="bg-white p-2.5 rounded-yw-md text-xs overflow-x-auto max-h-32 overflow-y-auto border border-black/6 font-mono">
                 {toolCall.result}
               </pre>
-            </>
+            </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Text part display
+function TextPartDisplay({ content }: { content: string }) {
+  if (!content.trim()) return null;
+
+  return (
+    <div className="typo-body prose prose-sm max-w-none prose-headings:text-primary prose-p:text-primary prose-strong:text-primary prose-code:text-green1 prose-code:bg-green3/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-fill-secondary prose-pre:border prose-pre:border-black/6 prose-ul:text-primary prose-ol:text-primary prose-li:text-primary my-1">
+      <ReactMarkdown>{content}</ReactMarkdown>
     </div>
   );
 }
@@ -83,25 +122,41 @@ function MessageDisplay({ message }: { message: Message }) {
   const isUser = message.role === 'user';
 
   return (
-    <div className={`agent-message ${isUser ? 'agent-message-user' : 'agent-message-assistant'}`}>
-      <div className="flex items-start gap-2">
-        <div className={`p-1 rounded ${isUser ? 'bg-aura-accent/20' : 'bg-aura-surface'}`}>
+    <div
+      className={`
+        rounded-yw-xl p-3 animate-fade-in-up
+        ${isUser
+          ? 'bg-green3/50 border border-green2/20 ml-8'
+          : 'bg-white border border-black/6'
+        }
+      `}
+    >
+      <div className="flex items-start gap-2.5">
+        <div
+          className={`
+            w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0
+            ${isUser ? 'bg-green2' : 'bg-green3'}
+          `}
+        >
           {isUser ? (
-            <User size={14} className="text-aura-accent" />
+            <User size={14} className="text-white" />
           ) : (
-            <Bot size={14} className="text-aura-success" />
+            <Sparkles size={14} className="text-green1" />
           )}
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm whitespace-pre-wrap break-words">
-            {message.content}
-          </div>
-
-          {/* Tool calls */}
-          {message.toolCalls && message.toolCalls.length > 0 && (
-            <div className="mt-2 space-y-1">
-              {message.toolCalls.map((tc) => (
-                <ToolCallDisplay key={tc.id} toolCall={tc} />
+        <div className="flex-1 min-w-0 pt-0.5">
+          {isUser ? (
+            <div className="typo-body whitespace-pre-wrap break-words">
+              {message.parts[0]?.content || ''}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {message.parts.map((part, index) => (
+                part.type === 'text' ? (
+                  <TextPartDisplay key={index} content={part.content || ''} />
+                ) : part.toolCall ? (
+                  <ToolCallDisplay key={index} toolCall={part.toolCall} />
+                ) : null
               ))}
             </div>
           )}
@@ -111,7 +166,11 @@ function MessageDisplay({ message }: { message: Message }) {
   );
 }
 
-export default function AgentPanel({ projectPath }: AgentPanelProps) {
+export default function AgentPanel({
+  projectPath,
+  onApprovalRequest,
+  onApprovalResolved,
+}: AgentPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -130,7 +189,7 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: input.trim(),
+      parts: [{ type: 'text', content: input.trim() }],
       timestamp: new Date(),
     };
 
@@ -138,35 +197,32 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
     setInput('');
     setIsStreaming(true);
 
-    // Create assistant message placeholder
     const assistantMessage: Message = {
       id: crypto.randomUUID(),
       role: 'assistant',
-      content: '',
+      parts: [],
       timestamp: new Date(),
-      toolCalls: [],
     };
     setMessages((prev) => [...prev, assistantMessage]);
 
     try {
-      // Get backend URL
       let backendUrl = 'http://127.0.0.1:8000';
       if (typeof window !== 'undefined' && window.aura) {
         backendUrl = await window.aura.getBackendUrl();
       }
 
-      // Start SSE stream
       const response = await fetch(`${backendUrl}/api/chat/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMessage.content,
+          message: userMessage.parts[0]?.content || '',
           project_path: projectPath,
           history: messages.map((m) => ({
             role: m.role,
-            content: m.content,
+            content: m.parts
+              .filter((p) => p.type === 'text')
+              .map((p) => p.content)
+              .join('\n'),
           })),
         }),
       });
@@ -182,7 +238,6 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
         throw new Error('No response body');
       }
 
-      // Process SSE stream
       let buffer = '';
       while (true) {
         const { done, value } = await reader.read();
@@ -193,65 +248,138 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('event:')) {
-            // Event type is part of SSE protocol, we handle data separately
-            continue;
-          }
+          if (line.startsWith('event:')) continue;
 
           if (line.startsWith('data:')) {
             try {
               const data = JSON.parse(line.slice(5).trim());
 
-              // Handle different event types
-              if (data.type === 'text' && data.content) {
+              if (data.type === 'text_delta' && data.content) {
                 setMessages((prev) => {
                   const updated = [...prev];
-                  const last = updated[updated.length - 1];
+                  const lastIndex = updated.length - 1;
+                  const last = updated[lastIndex];
                   if (last.role === 'assistant') {
-                    last.content += data.content;
+                    const parts = [...last.parts];
+                    const lastPart = parts[parts.length - 1];
+
+                    if (lastPart && lastPart.type === 'text') {
+                      parts[parts.length - 1] = {
+                        ...lastPart,
+                        content: (lastPart.content || '') + data.content,
+                      };
+                    } else {
+                      parts.push({ type: 'text', content: data.content });
+                    }
+
+                    updated[lastIndex] = { ...last, parts };
                   }
                   return updated;
                 });
-              } else if (data.type === 'tool_call' && data.content) {
+              } else if (data.type === 'tool_call') {
                 const toolCall: ToolCall = {
-                  id: data.content.id || crypto.randomUUID(),
-                  name: data.content.name,
-                  args: data.content.args || {},
+                  id: data.tool_call_id || crypto.randomUUID(),
+                  name: data.tool_name,
+                  args: data.args || {},
                   status: 'running',
                 };
                 setMessages((prev) => {
                   const updated = [...prev];
-                  const last = updated[updated.length - 1];
+                  const lastIndex = updated.length - 1;
+                  const last = updated[lastIndex];
                   if (last.role === 'assistant') {
-                    last.toolCalls = [...(last.toolCalls || []), toolCall];
+                    const parts = [...last.parts, { type: 'tool' as const, toolCall }];
+                    updated[lastIndex] = { ...last, parts };
                   }
                   return updated;
                 });
-              } else if (data.type === 'tool_result' && data.content) {
+              } else if (data.type === 'tool_result') {
                 setMessages((prev) => {
                   const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last.role === 'assistant' && last.toolCalls) {
-                    const tc = last.toolCalls.find((t) => t.id === data.content.id);
-                    if (tc) {
-                      tc.result = data.content.output;
-                      tc.status = 'success';
+                  const lastIndex = updated.length - 1;
+                  const last = updated[lastIndex];
+                  if (last.role === 'assistant') {
+                    const parts = [...last.parts];
+                    for (let i = parts.length - 1; i >= 0; i--) {
+                      const part = parts[i];
+                      if (part.type === 'tool' && part.toolCall) {
+                        const tc = part.toolCall;
+                        const matchById = data.tool_call_id && tc.id === data.tool_call_id;
+                        const matchByName = tc.name === data.tool_name &&
+                          (tc.status === 'running' || tc.status === 'waiting_approval');
+
+                        if (matchById || matchByName) {
+                          parts[i] = {
+                            ...part,
+                            toolCall: { ...tc, result: data.result, status: 'success' },
+                          };
+                          break;
+                        }
+                      }
                     }
+                    updated[lastIndex] = { ...last, parts };
                   }
                   return updated;
                 });
               } else if (data.type === 'error') {
                 setMessages((prev) => {
                   const updated = [...prev];
-                  const last = updated[updated.length - 1];
+                  const lastIndex = updated.length - 1;
+                  const last = updated[lastIndex];
                   if (last.role === 'assistant') {
-                    last.content += `\n\nError: ${data.content}`;
+                    const parts = [...last.parts];
+                    parts.push({
+                      type: 'text',
+                      content: `\n\n**Error:** ${data.message || 'Unknown error'}`
+                    });
+                    updated[lastIndex] = { ...last, parts };
                   }
                   return updated;
                 });
+              } else if (data.type === 'approval_required') {
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  const last = updated[lastIndex];
+                  if (last.role === 'assistant') {
+                    const parts = [...last.parts];
+                    for (let i = parts.length - 1; i >= 0; i--) {
+                      const part = parts[i];
+                      if (part.type === 'tool' && part.toolCall &&
+                          part.toolCall.name === data.tool_name &&
+                          part.toolCall.status === 'running') {
+                        parts[i] = {
+                          ...part,
+                          toolCall: { ...part.toolCall, status: 'waiting_approval' },
+                        };
+                        break;
+                      }
+                    }
+                    updated[lastIndex] = { ...last, parts };
+                  }
+                  return updated;
+                });
+
+                if (onApprovalRequest && data.tool_name === 'edit_file') {
+                  onApprovalRequest({
+                    request_id: data.request_id,
+                    filepath: data.tool_args?.filepath || '',
+                    old_string: data.tool_args?.old_string || '',
+                    new_string: data.tool_args?.new_string || '',
+                  });
+                } else if (onApprovalRequest && data.tool_name === 'write_file') {
+                  onApprovalRequest({
+                    request_id: data.request_id,
+                    filepath: data.tool_args?.filepath || '',
+                    old_string: '',
+                    new_string: data.tool_args?.content || '',
+                  });
+                }
+              } else if (data.type === 'approval_resolved') {
+                onApprovalResolved?.();
               }
             } catch (e) {
-              // Ignore JSON parse errors
+              console.error('[Agent] JSON parse error:', e);
             }
           }
         }
@@ -260,18 +388,23 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
       console.error('Agent stream error:', error);
       setMessages((prev) => {
         const updated = [...prev];
-        const last = updated[updated.length - 1];
+        const lastIndex = updated.length - 1;
+        const last = updated[lastIndex];
         if (last.role === 'assistant') {
-          last.content = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          const parts = [...last.parts];
+          parts.push({
+            type: 'text',
+            content: `**Error:** ${error instanceof Error ? error.message : 'Unknown error'}`
+          });
+          updated[lastIndex] = { ...last, parts };
         }
         return updated;
       });
     } finally {
       setIsStreaming(false);
     }
-  }, [input, isStreaming, projectPath, messages]);
+  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved]);
 
-  // Handle key press
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -283,22 +416,28 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
   );
 
   return (
-    <div className="h-full flex flex-col bg-aura-bg">
+    <div className="h-full flex flex-col bg-fill-secondary">
       {/* Header */}
-      <div className="h-10 border-b border-aura-border flex items-center px-3">
-        <Bot size={16} className="text-aura-accent mr-2" />
-        <span className="text-sm font-medium">Agent</span>
+      <div className="panel-header bg-white">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-full bg-green3 flex items-center justify-center">
+            <Sparkles size={12} className="text-green1" />
+          </div>
+          <span className="typo-body-strong">AI Assistant</span>
+        </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-auto p-3 space-y-2">
+      <div className="flex-1 overflow-auto p-3 space-y-3">
         {messages.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-aura-muted">
-            <div className="text-center">
-              <Bot size={32} className="mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Ask the agent anything about your paper</p>
-              <p className="text-xs mt-1 opacity-70">
-                Research, write, fix errors, and more
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center px-6">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green3 flex items-center justify-center">
+                <Sparkles size={28} className="text-green1" />
+              </div>
+              <h3 className="typo-h3 mb-2">Ask the AI Assistant</h3>
+              <p className="typo-small text-secondary">
+                Research papers, write LaTeX, fix errors, and more
               </p>
             </div>
           </div>
@@ -313,27 +452,36 @@ export default function AgentPanel({ projectPath }: AgentPanelProps) {
       </div>
 
       {/* Input */}
-      <div className="border-t border-aura-border p-3">
-        <div className="flex gap-2">
+      <div className="border-t border-black/6 p-3 bg-white">
+        <div className="relative">
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              // Auto-resize textarea
+              e.target.style.height = 'auto';
+              e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+            }}
             onKeyDown={handleKeyDown}
-            placeholder={projectPath ? "Ask the agent..." : "Open a project first"}
+            placeholder={projectPath ? "Ask the assistant..." : "Open a project first"}
             disabled={!projectPath || isStreaming}
-            className="flex-1 bg-aura-surface border border-aura-border rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-aura-accent disabled:opacity-50"
-            rows={2}
+            className="w-full min-h-[44px] max-h-[200px] rounded-yw-lg border border-black/12 bg-white pl-3 pr-12 py-2.5 typo-body placeholder:text-tertiary focus:border-green2 focus:outline-none focus:ring-1 focus:ring-green2/20 transition-colors resize-none overflow-y-auto"
+            rows={1}
           />
           <button
             onClick={sendMessage}
             disabled={!input.trim() || !projectPath || isStreaming}
-            className="px-3 py-2 bg-aura-accent text-aura-bg rounded hover:bg-aura-accent/80 disabled:opacity-30 disabled:cursor-not-allowed"
+            className={`absolute right-2 bottom-2 flex h-7 w-7 items-center justify-center rounded-yw-md transition-all ${
+              (!input.trim() || !projectPath || isStreaming)
+                ? 'bg-black/6 text-tertiary cursor-not-allowed'
+                : 'bg-green1 text-white hover:opacity-90'
+            }`}
           >
             {isStreaming ? (
-              <Loader2 size={18} className="animate-spin" />
+              <Loader2 size={14} className="animate-spin" />
             ) : (
-              <Send size={18} />
+              <Send size={14} />
             )}
           </button>
         </div>

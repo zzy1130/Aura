@@ -1,14 +1,13 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import {
-  ChevronLeft,
-  ChevronRight,
   ZoomIn,
   ZoomOut,
-  Maximize2,
   Loader2,
+  RotateCw,
+  FileText,
 } from 'lucide-react';
 
 // Set up PDF.js worker
@@ -21,15 +20,17 @@ interface PDFViewerProps {
 
 export default function PDFViewer({ pdfUrl, isCompiling }: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
-  const [currentPage, setCurrentPage] = useState<number>(1);
   const [scale, setScale] = useState<number>(1.0);
   const [_isLoading, setIsLoading] = useState<boolean>(false);
+  const [currentVisiblePage, setCurrentVisiblePage] = useState<number>(1);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // Handle document load
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
-    setCurrentPage(1);
     setIsLoading(false);
+    setCurrentVisiblePage(1);
   }, []);
 
   const onDocumentLoadError = useCallback((error: Error) => {
@@ -37,90 +38,146 @@ export default function PDFViewer({ pdfUrl, isCompiling }: PDFViewerProps) {
     setIsLoading(false);
   }, []);
 
-  // Navigation
-  const goToPrevPage = useCallback(() => {
-    setCurrentPage((prev) => Math.max(1, prev - 1));
-  }, []);
-
-  const goToNextPage = useCallback(() => {
-    setCurrentPage((prev) => Math.min(numPages, prev + 1));
-  }, [numPages]);
-
-  // Zoom
+  // Zoom controls
   const zoomIn = useCallback(() => {
-    setScale((prev) => Math.min(2.0, prev + 0.1));
+    setScale((prev) => Math.min(3.0, prev + 0.2));
   }, []);
 
   const zoomOut = useCallback(() => {
-    setScale((prev) => Math.max(0.5, prev - 0.1));
+    setScale((prev) => Math.max(0.3, prev - 0.2));
   }, []);
 
-  const fitToWidth = useCallback(() => {
+  const resetZoom = useCallback(() => {
     setScale(1.0);
   }, []);
 
+  // Mouse wheel zoom (Ctrl/Cmd + scroll)
+  const handleWheel = useCallback((e: WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.03 : 0.03;
+      setScale((prev) => Math.max(0.3, Math.min(3.0, prev + delta)));
+    }
+  }, []);
+
+  // Attach wheel listener with passive: false for preventDefault
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
+
+  // Track visible page on scroll
+  const handleScroll = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || numPages === 0) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const containerMiddle = containerRect.top + containerRect.height / 2;
+
+    let closestPage = 1;
+    let closestDistance = Infinity;
+
+    pageRefs.current.forEach((pageEl, pageNum) => {
+      const rect = pageEl.getBoundingClientRect();
+      const pageMiddle = rect.top + rect.height / 2;
+      const distance = Math.abs(pageMiddle - containerMiddle);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPage = pageNum;
+      }
+    });
+
+    setCurrentVisiblePage(closestPage);
+  }, [numPages]);
+
+  // Store page ref
+  const setPageRef = useCallback((pageNum: number, el: HTMLDivElement | null) => {
+    if (el) {
+      pageRefs.current.set(pageNum, el);
+    } else {
+      pageRefs.current.delete(pageNum);
+    }
+  }, []);
+
+  // Scroll to specific page
+  const scrollToPage = useCallback((pageNum: number) => {
+    const pageEl = pageRefs.current.get(pageNum);
+    if (pageEl) {
+      pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
+
+  // Generate array of page numbers
+  const pageNumbers = Array.from({ length: numPages }, (_, i) => i + 1);
+
   return (
-    <div className="h-full flex flex-col bg-[#525659]">
+    <div className="h-full flex flex-col bg-fill-secondary">
       {/* Toolbar */}
-      <div className="h-10 bg-aura-surface border-b border-aura-border flex items-center justify-between px-2">
-        {/* Page navigation */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={goToPrevPage}
-            disabled={currentPage <= 1}
-            className="p-1.5 hover:bg-aura-bg rounded disabled:opacity-30"
-            title="Previous page"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <span className="text-sm min-w-[80px] text-center">
-            {numPages > 0 ? `${currentPage} / ${numPages}` : '—'}
+      <div className="panel-header">
+        {/* Page indicator */}
+        <div className="flex items-center gap-2">
+          <span className="typo-small text-secondary min-w-[60px]">
+            {numPages > 0 ? `${currentVisiblePage} / ${numPages}` : 'No PDF'}
           </span>
-          <button
-            onClick={goToNextPage}
-            disabled={currentPage >= numPages}
-            className="p-1.5 hover:bg-aura-bg rounded disabled:opacity-30"
-            title="Next page"
-          >
-            <ChevronRight size={16} />
-          </button>
+          {numPages > 1 && (
+            <input
+              type="range"
+              min={1}
+              max={numPages}
+              value={currentVisiblePage}
+              onChange={(e) => scrollToPage(Number(e.target.value))}
+              className="w-16 h-1 bg-black/12 rounded-full appearance-none cursor-pointer accent-green2"
+            />
+          )}
         </div>
 
         {/* Zoom controls */}
         <div className="flex items-center gap-1">
           <button
             onClick={zoomOut}
-            className="p-1.5 hover:bg-aura-bg rounded"
+            className="btn-icon w-7 h-7"
             title="Zoom out"
           >
-            <ZoomOut size={16} />
+            <ZoomOut size={14} className="text-secondary" />
           </button>
-          <span className="text-sm min-w-[50px] text-center">
+          <span className="typo-small text-secondary min-w-[40px] text-center">
             {Math.round(scale * 100)}%
           </span>
           <button
             onClick={zoomIn}
-            className="p-1.5 hover:bg-aura-bg rounded"
+            className="btn-icon w-7 h-7"
             title="Zoom in"
           >
-            <ZoomIn size={16} />
+            <ZoomIn size={14} className="text-secondary" />
           </button>
           <button
-            onClick={fitToWidth}
-            className="p-1.5 hover:bg-aura-bg rounded ml-1"
-            title="Fit to width"
+            onClick={resetZoom}
+            className="btn-icon w-7 h-7 ml-1"
+            title="Reset zoom"
           >
-            <Maximize2 size={16} />
+            <RotateCw size={14} className="text-secondary" />
           </button>
         </div>
       </div>
 
-      {/* PDF Content */}
-      <div className="flex-1 overflow-auto flex items-start justify-center p-4">
+      {/* PDF Content - Scrollable */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-auto bg-[#e8e6e3]"
+      >
         {isCompiling ? (
-          <div className="flex flex-col items-center justify-center h-full text-aura-text">
-            <Loader2 size={32} className="animate-spin mb-2" />
-            <span className="text-sm">Compiling...</span>
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="w-16 h-16 rounded-full bg-white/80 flex items-center justify-center mb-3 shadow-card">
+              <Loader2 size={28} className="animate-spin text-green2" />
+            </div>
+            <span className="typo-body text-secondary">Compiling...</span>
           </div>
         ) : pdfUrl ? (
           <Document
@@ -129,35 +186,51 @@ export default function PDFViewer({ pdfUrl, isCompiling }: PDFViewerProps) {
             onLoadError={onDocumentLoadError}
             loading={
               <div className="flex items-center justify-center h-full">
-                <Loader2 size={32} className="animate-spin text-aura-text" />
+                <div className="w-16 h-16 rounded-full bg-white/80 flex items-center justify-center shadow-card">
+                  <Loader2 size={28} className="animate-spin text-green2" />
+                </div>
               </div>
             }
             error={
-              <div className="flex flex-col items-center justify-center h-full text-aura-error">
-                <span className="text-lg mb-2">Failed to load PDF</span>
-                <span className="text-sm text-aura-muted">
+              <div className="flex flex-col items-center justify-center h-full">
+                <div className="w-16 h-16 rounded-full bg-error/10 flex items-center justify-center mb-3">
+                  <FileText size={28} className="text-error" />
+                </div>
+                <span className="typo-body text-error mb-1">Failed to load PDF</span>
+                <span className="typo-small text-secondary">
                   Check if the file exists and is valid
                 </span>
               </div>
             }
+            className="py-6 min-w-max"
           >
-            <Page
-              pageNumber={currentPage}
-              scale={scale}
-              renderTextLayer={false}
-              renderAnnotationLayer={false}
-              className="shadow-lg"
-            />
+            {/* Render all pages for continuous scrolling */}
+            <div className="flex flex-col items-center">
+              {pageNumbers.map((pageNum) => (
+                <div
+                  key={pageNum}
+                  ref={(el) => setPageRef(pageNum, el)}
+                  className="mb-4 last:mb-0 shadow-card rounded-sm overflow-hidden"
+                >
+                  <Page
+                    pageNumber={pageNum}
+                    scale={scale}
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
+                  />
+                </div>
+              ))}
+            </div>
           </Document>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-aura-muted">
-            <div className="text-center">
-              <div className="text-6xl mb-4 opacity-20">📄</div>
-              <p className="text-lg mb-2">No PDF to display</p>
-              <p className="text-sm">
-                Compile your LaTeX project to see the output
-              </p>
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="w-20 h-20 rounded-full bg-black/3 flex items-center justify-center mb-4">
+              <FileText size={36} className="text-tertiary" />
             </div>
+            <p className="typo-large text-secondary mb-1">No PDF to display</p>
+            <p className="typo-small text-tertiary">
+              Compile your LaTeX project to see the output
+            </p>
           </div>
         )}
       </div>
