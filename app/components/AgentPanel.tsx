@@ -175,28 +175,63 @@ export default function AgentPanel({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pendingMessageRef = useRef<string | null>(null);
+
+  // Keep ref in sync with state for use in callbacks
+  useEffect(() => {
+    pendingMessageRef.current = pendingMessage;
+  }, [pendingMessage]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Auto-scroll to pending message when it changes
+  useEffect(() => {
+    if (pendingMessage) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [pendingMessage]);
+
+  // Reference to sendMessage for use in effect
+  const sendMessageRef = useRef<(content?: string) => Promise<void>>();
+
+  // Track previous streaming state to detect when it ends
+  const wasStreamingRef = useRef(false);
+  useEffect(() => {
+    // When streaming ends and there's a pending message, send it
+    if (wasStreamingRef.current && !isStreaming && pendingMessageRef.current) {
+      const pending = pendingMessageRef.current;
+      setPendingMessage(null);
+      // Use setTimeout to ensure state updates have propagated
+      setTimeout(() => {
+        sendMessageRef.current?.(pending);
+      }, 100);
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
   // Send message to agent
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isStreaming || !projectPath) return;
+  const sendMessage = useCallback(async (messageContent?: string) => {
+    const content = messageContent || input.trim();
+    if (!content || isStreaming || !projectPath) return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      parts: [{ type: 'text', content: input.trim() }],
+      parts: [{ type: 'text', content }],
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setInput('');
+    if (!messageContent) {
+      setInput('');
+    }
     setIsStreaming(true);
 
     // Create abort controller for this request
@@ -220,7 +255,7 @@ export default function AgentPanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMessage.parts[0]?.content || '',
+          message: content,
           project_path: projectPath,
           history: messages.map((m) => ({
             role: m.role,
@@ -431,6 +466,11 @@ export default function AgentPanel({
     }
   }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved]);
 
+  // Keep sendMessageRef in sync
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
+
   // Stop the current generation
   const stopGeneration = useCallback(() => {
     if (abortControllerRef.current) {
@@ -453,17 +493,34 @@ export default function AgentPanel({
     });
   }, []);
 
+  // Queue a message to be sent after current generation
+  const queuePendingMessage = useCallback(() => {
+    if (!input.trim()) return;
+    setPendingMessage(input.trim());
+    setInput('');
+    // Reset textarea height
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
+  }, [input]);
+
+  // Clear pending message
+  const clearPendingMessage = useCallback(() => {
+    setPendingMessage(null);
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (!isStreaming) {
+        if (isStreaming) {
+          queuePendingMessage();
+        } else {
           sendMessage();
         }
-        // When streaming, Enter does nothing - user must click Stop first
       }
     },
-    [sendMessage, isStreaming]
+    [sendMessage, queuePendingMessage, isStreaming]
   );
 
   return (
@@ -497,6 +554,24 @@ export default function AgentPanel({
             {messages.map((msg) => (
               <MessageDisplay key={msg.id} message={msg} />
             ))}
+            {/* Pending message box */}
+            {pendingMessage && (
+              <div className="flex justify-end">
+                <div className="max-w-[85%] rounded-yw-lg bg-orange2/30 border border-orange1/30 p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Loader2 size={12} className="text-orange1 animate-spin" />
+                    <span className="typo-ex-small text-orange1">Pending - will send when current generation ends</span>
+                  </div>
+                  <div className="typo-body text-primary">{pendingMessage}</div>
+                  <button
+                    onClick={clearPendingMessage}
+                    className="mt-2 typo-ex-small text-tertiary hover:text-error transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </>
         )}
@@ -519,28 +594,41 @@ export default function AgentPanel({
               !projectPath
                 ? "Open a project first"
                 : isStreaming
-                ? "Type next message (pending)..."
+                ? "Queue next message..."
                 : "Ask the assistant..."
             }
-            disabled={!projectPath}
+            disabled={!projectPath || !!pendingMessage}
             className={`flex-1 min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-3 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
               isStreaming
-                ? 'border-black/6 bg-fill-secondary'
+                ? 'border-orange1/20 focus:border-orange1 focus:ring-orange1/20'
                 : 'border-black/12 focus:border-green2 focus:ring-green2/20'
             }`}
             rows={1}
           />
           {isStreaming ? (
-            <button
-              onClick={stopGeneration}
-              className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-error text-white hover:opacity-90 transition-all flex-shrink-0"
-              title="Stop generation"
-            >
-              <Square size={14} fill="currentColor" />
-            </button>
+            <>
+              {/* Queue button - only show when there's input and no pending message */}
+              {input.trim() && !pendingMessage && (
+                <button
+                  onClick={queuePendingMessage}
+                  className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-orange1 text-white hover:opacity-90 transition-all flex-shrink-0"
+                  title="Queue message"
+                >
+                  <Send size={14} />
+                </button>
+              )}
+              {/* Stop button */}
+              <button
+                onClick={stopGeneration}
+                className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-error text-white hover:opacity-90 transition-all flex-shrink-0"
+                title="Stop generation"
+              >
+                <Square size={14} fill="currentColor" />
+              </button>
+            </>
           ) : (
             <button
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={!input.trim() || !projectPath}
               className={`flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg transition-all flex-shrink-0 ${
                 !input.trim() || !projectPath
@@ -552,11 +640,6 @@ export default function AgentPanel({
             </button>
           )}
         </div>
-        {isStreaming && input.trim() && (
-          <div className="mt-2 typo-ex-small text-tertiary">
-            Press Stop to send your pending message
-          </div>
-        )}
       </div>
     </div>
   );
