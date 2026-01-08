@@ -720,7 +720,15 @@ async def plan_task(
         )
 
         if not plan:
-            return "Error: Failed to create plan. Please try again with more details."
+            return f"""Error: Failed to create plan.
+
+This can happen if:
+1. The project path doesn't exist or has no files
+2. The task description is unclear
+
+Project path: {ctx.deps.project_path}
+
+Try providing more specific details about what you want to accomplish, or proceed without a formal plan by breaking down the task yourself."""
 
         # Store the plan in the manager
         plan_manager = ctx.deps.plan_manager or get_plan_manager()
