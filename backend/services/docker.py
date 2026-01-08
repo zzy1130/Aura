@@ -273,3 +273,15 @@ class DockerLatex:
             return True
         except:
             return False
+
+
+# Singleton instance
+_docker_latex: DockerLatex | None = None
+
+
+def get_docker_latex() -> DockerLatex:
+    """Get or create the singleton DockerLatex instance."""
+    global _docker_latex
+    if _docker_latex is None:
+        _docker_latex = DockerLatex()
+    return _docker_latex

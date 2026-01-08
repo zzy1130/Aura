@@ -54,11 +54,19 @@ async def _check_hitl(
         (should_proceed, rejection_message, modified_args)
     """
     hitl_manager = ctx.deps.hitl_manager
+
+    # Debug logging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"HITL check for {tool_name}: manager={hitl_manager}, needs_approval={hitl_manager.needs_approval(tool_name) if hitl_manager else 'N/A'}")
+
     if not hitl_manager or not hitl_manager.needs_approval(tool_name):
         return True, None, None
 
     from agent.hitl import ApprovalStatus
     import uuid
+
+    logger.info(f"Requesting approval for {tool_name}")
 
     # Request approval
     approval = await hitl_manager.request_approval(
@@ -66,6 +74,8 @@ async def _check_hitl(
         tool_args=tool_args,
         tool_call_id=str(uuid.uuid4()),
     )
+
+    logger.info(f"Approval result: {approval.status}")
 
     if approval.status == ApprovalStatus.REJECTED:
         return False, f"Operation cancelled: {approval.rejection_reason}", None
@@ -148,7 +158,7 @@ async def edit_file(
     # HITL check - wait for approval if enabled
     should_proceed, rejection_msg, modified_args = await _check_hitl(
         ctx, "edit_file",
-        {"filepath": filepath, "old_string": old_string[:200], "new_string": new_string[:200]}
+        {"filepath": filepath, "old_string": old_string, "new_string": new_string}
     )
     if not should_proceed:
         return rejection_msg
@@ -208,7 +218,7 @@ async def write_file(
     # HITL check - wait for approval if enabled
     should_proceed, rejection_msg, modified_args = await _check_hitl(
         ctx, "write_file",
-        {"filepath": filepath, "content_preview": content[:500] + "..." if len(content) > 500 else content}
+        {"filepath": filepath, "content": content}
     )
     if not should_proceed:
         return rejection_msg
@@ -295,6 +305,139 @@ async def find_files(ctx: RunContext[AuraDeps], pattern: str) -> str:
         return f"Found {len(relative)} files matching '{pattern}':\n" + "\n".join(f"  {f}" for f in relative[:50])
     except Exception as e:
         return f"Error searching files: {e}"
+
+
+@aura_agent.tool
+async def search_in_file(
+    ctx: RunContext[AuraDeps],
+    filepath: str,
+    pattern: str,
+    context_lines: int = 2,
+) -> str:
+    """
+    Search for a pattern within a file and return matching lines with context.
+
+    This is like grep - use it to find specific content without reading the entire file.
+    ALWAYS use this tool first when looking for specific content in a file.
+
+    Args:
+        filepath: Path relative to project root (e.g., "main.tex")
+        pattern: Text or regex pattern to search for (case-insensitive)
+        context_lines: Number of lines to show before/after each match (default: 2)
+
+    Returns:
+        Matching lines with line numbers and context
+    """
+    import re
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    if not full_path.exists():
+        return f"Error: File not found: {filepath}"
+
+    # Security: ensure path is within project
+    try:
+        full_path.resolve().relative_to(Path(project_path).resolve())
+    except ValueError:
+        return f"Error: Path escapes project directory: {filepath}"
+
+    try:
+        content = full_path.read_text()
+        lines = content.split('\n')
+
+        # Compile pattern (case-insensitive)
+        try:
+            regex = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            # If invalid regex, treat as literal string
+            regex = re.compile(re.escape(pattern), re.IGNORECASE)
+
+        # Find matching lines
+        matches = []
+        for i, line in enumerate(lines):
+            if regex.search(line):
+                matches.append(i)
+
+        if not matches:
+            return f"No matches found for '{pattern}' in {filepath}"
+
+        # Build output with context
+        output = [f"Found {len(matches)} matches for '{pattern}' in {filepath}:\n"]
+
+        shown_lines = set()
+        for match_idx in matches:
+            start = max(0, match_idx - context_lines)
+            end = min(len(lines), match_idx + context_lines + 1)
+
+            # Add separator if there's a gap
+            if shown_lines and start > max(shown_lines) + 1:
+                output.append("  ---")
+
+            for i in range(start, end):
+                if i not in shown_lines:
+                    marker = ">>>" if i == match_idx else "   "
+                    output.append(f"{marker} {i+1:4}│ {lines[i]}")
+                    shown_lines.add(i)
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error searching file: {e}"
+
+
+@aura_agent.tool
+async def read_file_lines(
+    ctx: RunContext[AuraDeps],
+    filepath: str,
+    start_line: int,
+    end_line: int,
+) -> str:
+    """
+    Read specific lines from a file.
+
+    Use this when you know which lines you need, to avoid reading the entire file.
+
+    Args:
+        filepath: Path relative to project root
+        start_line: First line to read (1-indexed)
+        end_line: Last line to read (inclusive)
+
+    Returns:
+        Requested lines with line numbers
+    """
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    if not full_path.exists():
+        return f"Error: File not found: {filepath}"
+
+    # Security: ensure path is within project
+    try:
+        full_path.resolve().relative_to(Path(project_path).resolve())
+    except ValueError:
+        return f"Error: Path escapes project directory: {filepath}"
+
+    try:
+        content = full_path.read_text()
+        lines = content.split('\n')
+
+        # Validate line numbers
+        if start_line < 1:
+            start_line = 1
+        if end_line > len(lines):
+            end_line = len(lines)
+        if start_line > end_line:
+            return f"Error: start_line ({start_line}) > end_line ({end_line})"
+
+        # Extract lines (convert to 0-indexed)
+        selected = lines[start_line - 1:end_line]
+        numbered = [f"{i:4}│ {line}" for i, line in enumerate(selected, start=start_line)]
+
+        return f"File: {filepath} (lines {start_line}-{end_line} of {len(lines)}):\n" + "\n".join(numbered)
+
+    except Exception as e:
+        return f"Error reading file: {e}"
 
 
 # =============================================================================
@@ -392,11 +535,15 @@ async def think(ctx: RunContext[AuraDeps], thought: str) -> str:
     """
     Think through a complex problem step-by-step.
 
-    Use this for internal reasoning before taking action. Good for:
+    Use this for internal reasoning AFTER gathering information. Good for:
     - Planning multi-file edits
     - Debugging compilation errors
     - Considering mathematical proofs
     - Weighing different approaches
+
+    IMPORTANT: Only use this tool to reason about information you have ALREADY
+    retrieved via read_file or other tools. NEVER use this to imagine or guess
+    what files might contain - always read files first.
 
     The thought content helps you reason but is not shown to the user.
 

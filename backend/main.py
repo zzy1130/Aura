@@ -296,12 +296,16 @@ async def chat_stream(request: ChatRequest):
     """
     from agent.streaming import stream_agent_sse
 
+    # Use project_path as session_id for conversation continuity
+    session_id = request.project_path or "default"
+
     async def event_generator():
         try:
             async for sse_data in stream_agent_sse(
                 message=request.message,
                 project_path=request.project_path,
                 message_history=request.history,
+                session_id=session_id,
             ):
                 # SSE data is already formatted as "data: {...}\n\n"
                 # Parse it to get event type and content
@@ -331,11 +335,15 @@ async def chat_simple(request: ChatRequest) -> dict:
     """
     from agent.streaming import run_agent
 
+    # Use project_path as session_id for conversation continuity
+    session_id = request.project_path or "default"
+
     try:
         result = await run_agent(
             message=request.message,
             project_path=request.project_path,
             message_history=request.history,
+            session_id=session_id,
         )
         return {
             "response": result["output"],
@@ -344,6 +352,28 @@ async def chat_simple(request: ChatRequest) -> dict:
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ClearChatRequest(BaseModel):
+    project_path: str
+
+
+@app.post("/api/chat/clear")
+async def clear_chat_history(request: ClearChatRequest) -> dict:
+    """
+    Clear conversation history for a project.
+
+    Use this to start a fresh conversation.
+    """
+    from agent.streaming import clear_session_history
+
+    session_id = request.project_path or "default"
+    clear_session_history(session_id)
+
+    return {
+        "success": True,
+        "message": f"Cleared chat history for session: {session_id}",
+    }
 
 
 @app.get("/api/tools")

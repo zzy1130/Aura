@@ -117,12 +117,18 @@ def remove_thinking_tools(messages: Messages) -> Messages:
     The think tool is for internal reasoning and doesn't need to persist
     in history, saving context tokens.
 
+    IMPORTANT: This processor preserves message structure by keeping placeholder
+    parts when removing think tools would leave a message empty. This ensures
+    the alternating ModelRequest/ModelResponse pattern is maintained.
+
     Args:
         messages: List of ModelRequest/ModelResponse messages
 
     Returns:
-        Messages with thinking tool calls removed
+        Messages with thinking tool calls removed (or replaced with placeholders)
     """
+    from pydantic_ai.messages import ToolCallPart, TextPart, UserPromptPart
+
     result = []
 
     for msg in messages:
@@ -132,7 +138,13 @@ def remove_thinking_tools(messages: Messages) -> Messages:
                 part for part in msg.parts
                 if not (isinstance(part, ToolReturnPart) and part.tool_name == "think")
             ]
-            if new_parts:
+
+            # If filtering removed all parts, keep the message with original parts
+            # to preserve message structure (alternating Request/Response pattern)
+            if not new_parts:
+                # Keep the original message to preserve structure
+                result.append(msg)
+            else:
                 # ModelRequest doesn't have timestamp in newer PydanticAI versions
                 msg = ModelRequest(
                     parts=new_parts,
@@ -141,16 +153,20 @@ def remove_thinking_tools(messages: Messages) -> Messages:
                     metadata=msg.metadata,
                 )
                 result.append(msg)
-            # Skip empty requests
+
         elif isinstance(msg, ModelResponse):
             # Filter out think tool call parts from response
-            from pydantic_ai.messages import ToolCallPart
-
             new_parts = [
                 part for part in msg.parts
                 if not (isinstance(part, ToolCallPart) and part.tool_name == "think")
             ]
-            if new_parts:
+
+            # If filtering removed all parts, keep the original message
+            # to preserve message structure
+            if not new_parts:
+                # Keep the original message to preserve structure
+                result.append(msg)
+            else:
                 msg = ModelResponse(
                     parts=new_parts,
                     usage=msg.usage,
@@ -176,22 +192,19 @@ def remove_empty_messages(messages: Messages) -> Messages:
     """
     Remove messages with no meaningful content.
 
+    NOTE: This is now a no-op to preserve message structure. Removing messages
+    can break the alternating ModelRequest/ModelResponse pattern that PydanticAI
+    requires. Empty messages are harmless and will be handled by the LLM.
+
     Args:
         messages: List of messages
 
     Returns:
-        Messages with empty ones removed
+        Same messages (no filtering applied)
     """
-    result = []
-
-    for msg in messages:
-        if isinstance(msg, (ModelRequest, ModelResponse)):
-            if msg.parts:
-                result.append(msg)
-        else:
-            result.append(msg)
-
-    return result
+    # Don't remove messages - it can break the alternating pattern
+    # that PydanticAI requires for proper operation
+    return messages
 
 
 # =============================================================================
@@ -200,14 +213,14 @@ def remove_empty_messages(messages: Messages) -> Messages:
 
 def create_history_processor(
     max_tool_result_chars: int = 4000,
-    remove_thinking: bool = True,
+    remove_thinking: bool = False,  # Disabled by default - breaks tool_use/tool_result pairing
 ) -> callable:
     """
     Create a combined history processor with configurable options.
 
     Args:
         max_tool_result_chars: Maximum chars for tool results
-        remove_thinking: Whether to remove think tool calls
+        remove_thinking: Whether to remove think tool calls (disabled by default)
 
     Returns:
         History processor function
@@ -215,13 +228,16 @@ def create_history_processor(
     def process(messages: Messages) -> Messages:
         # Apply processors in sequence
         messages = truncate_tool_results(messages, max_chars=max_tool_result_chars)
+        # NOTE: remove_thinking is disabled by default because it can break
+        # the tool_use/tool_result pairing that Claude API requires
         if remove_thinking:
             messages = remove_thinking_tools(messages)
-        messages = remove_empty_messages(messages)
+        # NOTE: remove_empty_messages is disabled - it breaks message alternation
+        # messages = remove_empty_messages(messages)
         return messages
 
     return process
 
 
-# Default processor
+# Default processor - only truncates long tool results
 default_history_processor = create_history_processor()
