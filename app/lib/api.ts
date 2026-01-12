@@ -30,6 +30,90 @@ export interface Project {
   last_modified: string;
 }
 
+export interface SyncStatus {
+  status: 'not_initialized' | 'clean' | 'local_changes' | 'ahead' | 'behind' | 'diverged' | 'conflict' | 'error';
+  is_git_repo: boolean;
+  has_remote: boolean;
+  remote_url: string | null;
+  branch: string;
+  commits_ahead: number;
+  commits_behind: number;
+  uncommitted_files: string[];
+  last_sync: string | null;
+  error_message: string | null;
+}
+
+export interface SyncResult {
+  success: boolean;
+  operation: 'pull' | 'push' | 'sync' | 'setup' | 'resolve' | 'abort';
+  message: string;
+  files_changed: string[];
+  conflicts: string[];
+}
+
+// =============================================================================
+// Memory Types
+// =============================================================================
+
+export interface PaperEntry {
+  id: string;
+  title: string;
+  authors: string[];
+  arxiv_id: string;
+  summary: string;
+  tags: string[];
+  created_at: string;
+}
+
+export interface CitationEntry {
+  id: string;
+  bibtex_key: string;
+  paper_id: string | null;
+  reason: string;
+  created_at: string;
+}
+
+export interface ConventionEntry {
+  id: string;
+  rule: string;
+  example: string;
+  created_at: string;
+}
+
+export interface TodoEntry {
+  id: string;
+  task: string;
+  priority: 'low' | 'medium' | 'high';
+  status: 'pending' | 'in_progress' | 'completed';
+  created_at: string;
+}
+
+export interface NoteEntry {
+  id: string;
+  content: string;
+  tags: string[];
+  created_at: string;
+}
+
+export interface MemoryStats {
+  token_count: number;
+  warning: boolean;
+  threshold: number;
+}
+
+export interface MemoryData {
+  entries: {
+    papers: PaperEntry[];
+    citations: CitationEntry[];
+    conventions: ConventionEntry[];
+    todos: TodoEntry[];
+    notes: NoteEntry[];
+  };
+  stats: MemoryStats;
+}
+
+export type MemoryEntryType = 'papers' | 'citations' | 'conventions' | 'todos' | 'notes';
+
 // =============================================================================
 // API Client
 // =============================================================================
@@ -317,6 +401,331 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  // ===========================================================================
+  // Git/Overleaf Sync
+  // ===========================================================================
+
+  /**
+   * Get sync status for a project
+   */
+  async getSyncStatus(projectPath: string): Promise<SyncStatus> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/sync/status`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Set up Overleaf sync for a project
+   */
+  async setupSync(
+    projectPath: string,
+    overleafUrl: string,
+    username?: string,
+    password?: string,
+  ): Promise<SyncResult> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/sync/setup`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        overleaf_url: overleafUrl,
+        username,
+        password,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Sync project with Overleaf (pull then push)
+   */
+  async syncProject(projectPath: string, commitMessage?: string): Promise<SyncResult> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/sync`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        commit_message: commitMessage,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Pull changes from Overleaf
+   */
+  async pullFromOverleaf(projectPath: string): Promise<SyncResult> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/sync/pull`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Push changes to Overleaf
+   */
+  async pushToOverleaf(projectPath: string, commitMessage?: string): Promise<SyncResult> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/sync/push`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        commit_message: commitMessage,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  // ===========================================================================
+  // Memory Operations
+  // ===========================================================================
+
+  /**
+   * Get all memory entries for a project
+   */
+  async getMemory(projectPath: string): Promise<MemoryData> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/memory?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] getMemory:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get memory stats (token count)
+   */
+  async getMemoryStats(projectPath: string): Promise<MemoryStats> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/memory/stats?project_path=${encodeURIComponent(projectPath)}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Add a paper entry
+   */
+  async addPaper(
+    projectPath: string,
+    paper: { title: string; authors: string[]; arxiv_id?: string; summary?: string; tags?: string[] }
+  ): Promise<PaperEntry> {
+    await this.ensureInitialized();
+
+    const response = await fetch(`${this.baseUrl}/api/memory/papers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath, ...paper }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Add a citation entry
+   */
+  async addCitation(
+    projectPath: string,
+    citation: { bibtex_key: string; reason: string; paper_id?: string }
+  ): Promise<CitationEntry> {
+    await this.ensureInitialized();
+
+    const response = await fetch(`${this.baseUrl}/api/memory/citations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath, ...citation }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Add a convention entry
+   */
+  async addConvention(
+    projectPath: string,
+    convention: { rule: string; example?: string }
+  ): Promise<ConventionEntry> {
+    await this.ensureInitialized();
+
+    const response = await fetch(`${this.baseUrl}/api/memory/conventions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath, ...convention }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Add a todo entry
+   */
+  async addTodo(
+    projectPath: string,
+    todo: { task: string; priority?: string; status?: string }
+  ): Promise<TodoEntry> {
+    await this.ensureInitialized();
+
+    const response = await fetch(`${this.baseUrl}/api/memory/todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath, ...todo }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Add a note entry
+   */
+  async addNote(
+    projectPath: string,
+    note: { content: string; tags?: string[] }
+  ): Promise<NoteEntry> {
+    await this.ensureInitialized();
+
+    const response = await fetch(`${this.baseUrl}/api/memory/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath, ...note }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Update a memory entry
+   */
+  async updateMemoryEntry(
+    projectPath: string,
+    entryType: MemoryEntryType,
+    entryId: string,
+    data: Record<string, unknown>
+  ): Promise<unknown> {
+    await this.ensureInitialized();
+
+    const response = await fetch(`${this.baseUrl}/api/memory/${entryType}/${entryId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath, data }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Delete a memory entry
+   */
+  async deleteMemoryEntry(
+    projectPath: string,
+    entryType: MemoryEntryType,
+    entryId: string
+  ): Promise<void> {
+    await this.ensureInitialized();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/memory/${entryType}/${entryId}?project_path=${encodeURIComponent(projectPath)}`,
+      { method: 'DELETE' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
   }
 
   // ===========================================================================
