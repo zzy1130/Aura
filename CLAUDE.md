@@ -4,7 +4,7 @@
 
 Aura is a **local-first macOS desktop LaTeX IDE** with an embedded AI agent. Think "Overleaf + Claude Code" as a native app.
 
-**Current Status**: Phase 3.5 complete (backend agent feature-complete), Phase 4 (Electron UI) next.
+**Current Status**: Phase 6 complete (Project memory system), Phase 7 (Deep Research Engine) next.
 
 ## Architecture Summary
 
@@ -23,7 +23,7 @@ Electron (.app) → Next.js UI → FastAPI Backend → Pydantic AI Agent
 | FastAPI Backend | `backend/` | `main.py` |
 | Main Agent | `backend/agent/` | `pydantic_agent.py` |
 | Subagents | `backend/agent/subagents/` | `research.py`, `compiler.py`, `planner.py` |
-| Services | `backend/services/` | `docker.py`, `project.py` |
+| Services | `backend/services/` | `docker.py`, `project.py`, `memory.py` |
 | Tools | `backend/agent/tools/` | `pdf_reader.py` |
 
 ## Colorist API Configuration
@@ -215,8 +215,10 @@ Research subagent:
 | 2 | ✅ | Colorist client + Pydantic AI agent + tools |
 | 3A-3F | ✅ | Advanced agent (compression, HITL, steering, subagents, planning) |
 | 3.5 | ✅ | PDF reader tool |
-| 4 | **IN PROGRESS** | Electron shell + UI components (scaffolding complete) |
-| 5 | Pending | Git/Overleaf sync + packaging |
+| 4 | ✅ | Electron shell + UI components |
+| 5 | ✅ | Git/Overleaf sync + packaging |
+| 6 | ✅ | Project memory system |
+| 7 | **NEXT** | Deep Research Engine |
 
 ## Git Workflow
 

@@ -149,10 +149,23 @@ def get_system_prompt(ctx: "RunContext[AuraDeps]") -> str:
     Returns:
         Formatted system prompt string
     """
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    from services.memory import MemoryService
+
+    base_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         project_name=ctx.deps.project_name,
         project_path=ctx.deps.project_path,
     )
+
+    # Load and append project memory
+    try:
+        memory_service = MemoryService(ctx.deps.project_path)
+        memory_text = memory_service.format_for_prompt()
+        if memory_text:
+            base_prompt += "\n\n" + memory_text
+    except Exception:
+        pass  # If memory loading fails, continue without it
+
+    return base_prompt
 
 
 def get_system_prompt_static(project_name: str, project_path: str) -> str:
@@ -166,10 +179,23 @@ def get_system_prompt_static(project_name: str, project_path: str) -> str:
     Returns:
         Formatted system prompt string
     """
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    from services.memory import MemoryService
+
+    base_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         project_name=project_name,
         project_path=project_path,
     )
+
+    # Load and append project memory
+    try:
+        memory_service = MemoryService(project_path)
+        memory_text = memory_service.format_for_prompt()
+        if memory_text:
+            base_prompt += "\n\n" + memory_text
+    except Exception:
+        pass
+
+    return base_prompt
 
 
 # Shorter prompt for quick interactions

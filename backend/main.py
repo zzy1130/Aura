@@ -19,6 +19,7 @@ import json
 
 from services.docker import DockerLatex, CompileResult
 from services.project import ProjectService, ProjectInfo
+from services.memory import MemoryService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +52,28 @@ project_service = ProjectService()
 async def health_check():
     """Health check endpoint for Electron app."""
     return {"status": "ok", "service": "aura-backend"}
+
+
+@app.get("/api/info")
+async def get_info():
+    """Get information about the Aura backend."""
+    from agent.subagents import list_subagents
+
+    return {
+        "name": "Aura Backend",
+        "version": "0.1.0",
+        "description": "Local-first LaTeX IDE with AI agent",
+        "docker_available": docker_latex.is_available(),
+        "subagents": [s["name"] for s in list_subagents()],
+        "features": {
+            "compilation": True,
+            "streaming": True,
+            "hitl": True,
+            "planning": True,
+            "steering": True,
+            "compression": True,
+        },
+    }
 
 
 # ============ Request/Response Models ============
@@ -91,6 +114,52 @@ class ChatRequest(BaseModel):
     message: str
     project_path: str
     history: Optional[list] = None
+
+
+# ============ Memory Models ============
+
+class MemoryEntryRequest(BaseModel):
+    project_path: str
+
+
+class AddPaperRequest(BaseModel):
+    project_path: str
+    title: str
+    authors: list[str]
+    arxiv_id: str = ""
+    summary: str = ""
+    tags: list[str] = []
+
+
+class AddCitationRequest(BaseModel):
+    project_path: str
+    bibtex_key: str
+    reason: str
+    paper_id: Optional[str] = None
+
+
+class AddConventionRequest(BaseModel):
+    project_path: str
+    rule: str
+    example: str = ""
+
+
+class AddTodoRequest(BaseModel):
+    project_path: str
+    task: str
+    priority: str = "medium"
+    status: str = "pending"
+
+
+class AddNoteRequest(BaseModel):
+    project_path: str
+    content: str
+    tags: list[str] = []
+
+
+class UpdateEntryRequest(BaseModel):
+    project_path: str
+    data: dict
 
 
 # ============ Health Check ============
@@ -1034,6 +1103,297 @@ async def get_plan_history_endpoint(
             for p in history
         ],
     }
+
+
+# ============ Memory Endpoints ============
+
+@app.get("/api/memory")
+async def get_memory(project_path: str):
+    """Get all memory entries for a project."""
+    service = MemoryService(project_path)
+    memory = service.load()
+    stats = service.get_stats()
+
+    return {
+        "entries": {
+            "papers": memory.papers,
+            "citations": memory.citations,
+            "conventions": memory.conventions,
+            "todos": memory.todos,
+            "notes": memory.notes,
+        },
+        "stats": stats,
+    }
+
+
+@app.get("/api/memory/stats")
+async def get_memory_stats(project_path: str):
+    """Get memory token count and warning status."""
+    service = MemoryService(project_path)
+    return service.get_stats()
+
+
+@app.post("/api/memory/papers")
+async def add_paper(request: AddPaperRequest):
+    """Add a paper entry."""
+    service = MemoryService(request.project_path)
+    entry = service.add_entry("papers", {
+        "title": request.title,
+        "authors": request.authors,
+        "arxiv_id": request.arxiv_id,
+        "summary": request.summary,
+        "tags": request.tags,
+    })
+    return entry
+
+
+@app.post("/api/memory/citations")
+async def add_citation(request: AddCitationRequest):
+    """Add a citation entry."""
+    service = MemoryService(request.project_path)
+    entry = service.add_entry("citations", {
+        "bibtex_key": request.bibtex_key,
+        "reason": request.reason,
+        "paper_id": request.paper_id,
+    })
+    return entry
+
+
+@app.post("/api/memory/conventions")
+async def add_convention(request: AddConventionRequest):
+    """Add a convention entry."""
+    service = MemoryService(request.project_path)
+    entry = service.add_entry("conventions", {
+        "rule": request.rule,
+        "example": request.example,
+    })
+    return entry
+
+
+@app.post("/api/memory/todos")
+async def add_todo(request: AddTodoRequest):
+    """Add a todo entry."""
+    service = MemoryService(request.project_path)
+    entry = service.add_entry("todos", {
+        "task": request.task,
+        "priority": request.priority,
+        "status": request.status,
+    })
+    return entry
+
+
+@app.post("/api/memory/notes")
+async def add_note(request: AddNoteRequest):
+    """Add a note entry."""
+    service = MemoryService(request.project_path)
+    entry = service.add_entry("notes", {
+        "content": request.content,
+        "tags": request.tags,
+    })
+    return entry
+
+
+@app.put("/api/memory/{entry_type}/{entry_id}")
+async def update_memory_entry(
+    entry_type: str,
+    entry_id: str,
+    request: UpdateEntryRequest,
+):
+    """Update a memory entry."""
+    if entry_type not in ["papers", "citations", "conventions", "todos", "notes"]:
+        raise HTTPException(status_code=400, detail=f"Invalid entry type: {entry_type}")
+
+    service = MemoryService(request.project_path)
+    entry = service.update_entry(entry_type, entry_id, request.data)
+
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    return entry
+
+
+@app.delete("/api/memory/{entry_type}/{entry_id}")
+async def delete_memory_entry(
+    entry_type: str,
+    entry_id: str,
+    project_path: str,
+):
+    """Delete a memory entry."""
+    if entry_type not in ["papers", "citations", "conventions", "todos", "notes"]:
+        raise HTTPException(status_code=400, detail=f"Invalid entry type: {entry_type}")
+
+    service = MemoryService(project_path)
+    success = service.delete_entry(entry_type, entry_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    return {"success": True}
+
+
+# ============ Git/Overleaf Sync Endpoints ============
+
+class SyncSetupRequest(BaseModel):
+    project_path: str
+    overleaf_url: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+class SyncRequest(BaseModel):
+    project_path: str
+    commit_message: Optional[str] = None
+
+
+class SyncStatusRequest(BaseModel):
+    project_path: str
+
+
+@app.post("/api/sync/status")
+async def get_sync_status(request: SyncStatusRequest) -> dict:
+    """
+    Get synchronization status for a project.
+
+    Returns information about git state, remote connection,
+    and pending changes.
+    """
+    from services.git_sync import GitSyncService
+
+    sync = GitSyncService(request.project_path)
+    status = await sync.get_status()
+
+    return status.to_dict()
+
+
+@app.post("/api/sync/setup")
+async def setup_sync(request: SyncSetupRequest) -> dict:
+    """
+    Set up Git/Overleaf synchronization for a project.
+
+    Args:
+        project_path: Path to the LaTeX project
+        overleaf_url: Overleaf git URL (https://git.overleaf.com/<project_id>)
+        username: Overleaf email (optional)
+        password: Overleaf password or token (optional)
+
+    The Overleaf git URL can be found in:
+    Project Settings > Git Integration > Clone URL
+    """
+    from services.git_sync import GitSyncService
+
+    sync = GitSyncService(request.project_path)
+    result = await sync.setup(
+        overleaf_url=request.overleaf_url,
+        username=request.username,
+        password=request.password,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result.to_dict()
+
+
+@app.post("/api/sync/pull")
+async def sync_pull(request: SyncRequest) -> dict:
+    """
+    Pull changes from Overleaf.
+
+    Downloads new changes from the Overleaf server and merges
+    them with local files. Local uncommitted changes are stashed
+    and reapplied after the pull.
+    """
+    from services.git_sync import GitSyncService
+
+    sync = GitSyncService(request.project_path)
+    result = await sync.pull()
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result.to_dict()
+
+
+@app.post("/api/sync/push")
+async def sync_push(request: SyncRequest) -> dict:
+    """
+    Push local changes to Overleaf.
+
+    Commits any uncommitted changes and pushes them to Overleaf.
+    If the remote has new changes, you'll need to pull first.
+    """
+    from services.git_sync import GitSyncService
+
+    sync = GitSyncService(request.project_path)
+    result = await sync.push(commit_message=request.commit_message)
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result.to_dict()
+
+
+@app.post("/api/sync")
+async def sync_project(request: SyncRequest) -> dict:
+    """
+    Full sync: pull then push.
+
+    This is the recommended sync operation as it handles
+    both incoming and outgoing changes in one operation.
+    """
+    from services.git_sync import GitSyncService
+
+    sync = GitSyncService(request.project_path)
+    result = await sync.sync(commit_message=request.commit_message)
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result.to_dict()
+
+
+class ResolveConflictRequest(BaseModel):
+    project_path: str
+    filepath: str
+    keep: str = "ours"  # "ours" or "theirs"
+
+
+@app.post("/api/sync/resolve")
+async def resolve_conflict(request: ResolveConflictRequest) -> dict:
+    """
+    Resolve a merge conflict by choosing a version.
+
+    Args:
+        filepath: Path to the conflicted file
+        keep: "ours" (local version) or "theirs" (remote version)
+    """
+    from services.git_sync import GitSyncService
+
+    if request.keep not in ("ours", "theirs"):
+        raise HTTPException(
+            status_code=400,
+            detail="keep must be 'ours' or 'theirs'"
+        )
+
+    sync = GitSyncService(request.project_path)
+    result = await sync.resolve_conflict(request.filepath, keep=request.keep)
+
+    return result.to_dict()
+
+
+@app.post("/api/sync/abort")
+async def abort_merge(request: SyncRequest) -> dict:
+    """
+    Abort an in-progress merge.
+
+    Use this to cancel a merge that has conflicts and start fresh.
+    """
+    from services.git_sync import GitSyncService
+
+    sync = GitSyncService(request.project_path)
+    result = await sync.abort_merge()
+
+    return result.to_dict()
 
 
 # ============ Run Server ============
