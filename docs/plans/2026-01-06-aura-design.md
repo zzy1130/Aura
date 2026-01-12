@@ -523,7 +523,7 @@ python-multipart>=0.0.6
 **Files created:**
 - `backend/agent/tools/pdf_reader.py` - PDF extraction module
 
-### Phase 4: Electron App (IN PROGRESS)
+### Phase 4: Electron App ✅ COMPLETED
 
 8. **Electron shell** ✅
     - Main process with Python backend spawning
@@ -549,32 +549,244 @@ python-multipart>=0.0.6
     - SSE streaming consumer
     - Message display (user/assistant)
     - Tool call visualization with expandable details
+    - Plan execution display with progress tracking
+    - Pending message queue and stop button
 
-12. **Backend API wiring** ✅
+13. **Backend API wiring** ✅
     - API client utility (app/lib/api.ts)
     - File operations (read, write, list)
     - Compilation with PDF display
     - Error handling with dismissible banners
 
-**Remaining:**
-- Test full Electron app flow end-to-end
-- Polish and error handling
+14. **Polish & Testing** ✅
+    - Compile keyboard shortcut (⌘B)
+    - HITL approval flow with inline diff
+    - End-to-end testing completed
+    - /api/info endpoint added
 
-### Phase 5: Git & Polish
+### Phase 5: Git & Polish ✅ COMPLETED
 
-13. **Git/Overleaf sync**
-    - Setup, pull, push
-    - Conflict detection
+15. **Git/Overleaf sync** ✅
+    - GitSyncService with setup, pull, push, full sync
+    - Conflict detection and resolution
+    - Stashing local changes during pull
+    - Token authentication (olp_xxx format with "git" username)
+    - Branch mapping (local main/master → remote master)
 
-14. **Toolbar & settings**
-    - Compile button
-    - Sync button
-    - Overleaf URL config
+16. **Toolbar & settings** ✅
+    - Sync button with status indicators (cloud icons)
+    - Settings modal for Overleaf URL configuration
+    - Compile keyboard shortcut (⌘B)
 
-15. **Packaging**
-    - electron-builder config
-    - Bundle Python backend
-    - Create .dmg for macOS
+17. **Packaging** ✅
+    - electron-builder config with dmg/AppImage/nsis targets
+    - Bundle Python backend as extraResources
+    - macOS entitlements for hardened runtime
+    - Universal binary support (x64 + arm64)
+
+**Files created:**
+- `backend/services/git_sync.py` - Git sync service
+- `app/components/SettingsModal.tsx` - Settings UI
+- `app/entitlements.mac.plist` - macOS code signing entitlements
+
+**API Endpoints:**
+- POST `/api/sync/status` - Get sync status
+- POST `/api/sync/setup` - Configure Overleaf connection
+- POST `/api/sync/pull` - Pull from Overleaf
+- POST `/api/sync/push` - Push to Overleaf
+- POST `/api/sync` - Full sync (pull + push)
+- POST `/api/sync/resolve` - Resolve merge conflict
+- POST `/api/sync/abort` - Abort merge
+
+### Phase 6: Project Memory System ✅ COMPLETED
+
+**Problem**: Sessions are independent, but users need a way to persist important project context.
+
+**Solution**: User-controlled JSON-based memory system (like Claude Code's CLAUDE.md).
+
+**Architecture**:
+- Storage: `.aura/memory.json` (git-friendly, human-readable)
+- Memory injected into agent system prompt at session start
+- User explicitly manages memories through dedicated UI modal
+- Soft warning at 4000 tokens
+
+**Files created:**
+- `backend/services/memory.py` - MemoryService with CRUD operations
+- `app/components/MemoryModal.tsx` - Tabbed modal UI for memory management
+
+**Files modified:**
+- `backend/main.py` - Added 9 memory API endpoints
+- `backend/agent/prompts.py` - Memory injection into system prompt
+- `app/lib/api.ts` - Memory API client functions
+- `app/components/Toolbar.tsx` - Memory button (Brain icon)
+- `app/app/page.tsx` - MemoryModal integration
+
+**Memory Entry Types**:
+| Type | Purpose |
+|------|---------|
+| Papers | Track papers you've read (title, authors, arXiv ID, summary, tags) |
+| Citations | Remember why you cited something (bibtex key, reason) |
+| Conventions | Project-specific writing rules (rule, example) |
+| Todos | Research tasks to remember (task, priority, status) |
+| Notes | Free-form notes (content, tags) |
+
+**API Endpoints:**
+- GET `/api/memory` - Get all memory entries
+- GET `/api/memory/stats` - Get token count and warning status
+- POST `/api/memory/{type}` - Add entry (papers, citations, conventions, todos, notes)
+- PUT `/api/memory/{type}/{id}` - Update specific entry
+- DELETE `/api/memory/{type}/{id}` - Delete specific entry
+
+### Phase 7: Deep Research Engine
+
+**Problem**: Current research is shallow - search → read one paper → done. Real research requires following citation trails, synthesizing across papers, and identifying gaps.
+
+19. **Citation Graph Crawler**
+    - `explore_citation_graph(paper_id, direction, depth)` - Traverse citation network
+    - Uses Semantic Scholar API (free, 100 req/sec)
+    - Finds seminal papers and recent follow-ups
+    - Caches results in memory layer
+
+20. **Multi-Paper Synthesizer**
+    - `synthesize_papers(paper_ids, focus)` - Read and synthesize multiple papers
+    - Extract common themes and methods
+    - Identify contradictions between papers
+    - Track evolution of ideas over time
+    - Output stored as literature note in memory
+
+21. **Research Gap Detector**
+    - `find_research_gaps(topic, papers_to_review)` - Automated literature review
+    - Cluster papers by methodology/approach
+    - Identify underexplored combinations
+    - Return gaps with confidence levels
+
+22. **Research Viability Assessor**
+    - `assess_research_idea(idea, depth)` - Evaluate idea against literature
+    - Novelty scoring
+    - Similar work identification
+    - Suggested differentiators
+
+**The 0→1 Research Flow**:
+```
+User: "I want to research efficient attention for long sequences"
+
+Agent:
+1. search_arxiv + search_semantic_scholar → Find 30 papers
+2. explore_citation_graph(seeds, depth=2) → Discover seminal + recent
+3. synthesize_papers(top_20) → Extract themes
+4. find_research_gaps(topic) → Identify opportunities
+5. remember(findings) → Store for future
+6. Present 3 promising directions with novelty scores
+```
+
+### Phase 8: Writing Intelligence
+
+**Problem**: Current editing is text replacement. Agent doesn't understand LaTeX structure, section purposes, or academic writing conventions.
+
+23. **Document Structure Analyzer**
+    - `analyze_document_structure(filepath)` - Parse LaTeX structure
+    - Section hierarchy with line numbers
+    - Figure/table inventory
+    - Citation usage analysis
+    - Missing element detection
+
+24. **Section-Aware Editing**
+    - `edit_section(section, instruction)` - Edit with purpose awareness
+    - Knows section conventions (intro = hook→gap→contribution)
+    - Preserves citations and structure
+    - Section-specific writing guidance
+
+25. **LaTeX-Native Operations**
+    - `add_citation(paper_id, context, style)` - Proper citation insertion + .bib update
+    - `create_figure(description, type, data)` - Generate TikZ/pgfplots
+    - `create_table(data, caption, style)` - Format as booktabs table
+    - `refactor_document(operation)` - Split/merge/reorder sections
+    - `ensure_consistency()` - Check notation, terminology, tense
+
+26. **Writing Style Adaptation**
+    - `analyze_writing_style(reference_file)` - Extract style patterns
+    - `apply_writing_style(section)` - Match reference style
+    - `improve_clarity(section)` - Simplify and strengthen prose
+    - Style stored in memory as user preference
+
+27. **Bibliography Management**
+    - `manage_bibliography(operation)` - Add, remove unused, deduplicate
+    - `suggest_citations(text)` - Find claims needing citations
+    - Auto-format for consistency
+
+---
+
+## Breakthrough Features Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AURA RESEARCH STACK                       │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 4: Writing Intelligence (Phase 8)                    │
+│  - Section-aware editing (knows intro vs methods vs results) │
+│  - LaTeX semantic understanding (not just text replacement)  │
+│  - Figure/table generation from data                         │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 3: Research Engine (Phase 7)                          │
+│  - Citation graph crawler (Semantic Scholar API)             │
+│  - Multi-paper synthesis (read 10+ papers, extract themes)   │
+│  - Gap detector (find what's missing in literature)          │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 2: Project Memory (Phase 6)                           │
+│  - Research notes database (SQLite + embeddings)             │
+│  - Cross-session conversation continuity                     │
+│  - Paper annotations & highlights                            │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 1: Current Foundation (Phases 1-3.5)                  │
+│  - File ops, LaTeX compile, basic research, planning         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Build Order**: Phase 6 (Memory) → Phase 7 (Research) → Phase 8 (Writing)
+
+Memory unlocks everything else - can't do deep research without remembering what you've read.
+
+---
+
+## New Files to Create
+
+```
+backend/
+├── agent/
+│   ├── memory.py              # Phase 6: Memory tools
+│   ├── research_engine.py     # Phase 7: Research logic
+│   ├── writing_intelligence.py # Phase 8: Writing tools
+│   └── tools/
+│       ├── latex_tools.py     # Phase 8: LaTeX operations
+│       └── bibliography.py    # Phase 8: Bib management
+└── services/
+    ├── memory_db.py           # Phase 6: SQLite operations
+    ├── embeddings.py          # Phase 6: Embedding generation
+    ├── semantic_scholar.py    # Phase 7: Enhanced API client
+    └── latex_parser.py        # Phase 8: Structure parsing
+```
+
+---
+
+## New Dependencies
+
+```
+sentence-transformers>=2.2.0  # Local embeddings (Phase 6)
+numpy>=1.24.0                 # Embedding storage (Phase 6)
+```
+
+---
+
+## Breakthrough Success Criteria
+
+| Feature | Success Metric |
+|---------|----------------|
+| Memory | Agent remembers context across 10+ sessions |
+| Citation Graph | Traverse 3 levels deep in <30 seconds |
+| Paper Synthesis | Synthesize 20 papers with accurate themes |
+| Gap Detection | Identify gaps validated by domain expert |
+| Section Editing | Edits preserve structure and citations |
+| Bibliography | Zero orphaned or duplicate entries |
 
 ---
 
