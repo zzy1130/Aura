@@ -7,8 +7,10 @@ import Editor, { PendingEdit } from '@/components/Editor';
 import PDFViewer from '@/components/PDFViewer';
 import AgentPanel from '@/components/AgentPanel';
 import NewProjectModal from '@/components/NewProjectModal';
+import SettingsModal from '@/components/SettingsModal';
+import MemoryModal from '@/components/MemoryModal';
 import ResizeHandle from '@/components/ResizeHandle';
-import { api } from '@/lib/api';
+import { api, SyncStatus } from '@/lib/api';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 
 // =============================================================================
@@ -52,6 +54,12 @@ export default function Home() {
 
   // Modal state
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
+
+  // Sync state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus['status'] | null>(null);
 
   // Pending edit state (for HITL approval in Editor)
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
@@ -74,6 +82,28 @@ export default function Home() {
   useEffect(() => {
     api.init().catch(console.error);
   }, []);
+
+  // Load sync status when project changes
+  const loadSyncStatus = useCallback(async () => {
+    if (!project.path) {
+      setSyncStatus(null);
+      return;
+    }
+    try {
+      const status = await api.getSyncStatus(project.path);
+      setSyncStatus(status.status);
+    } catch (e) {
+      console.error('Failed to load sync status:', e);
+      setSyncStatus(null);
+    }
+  }, [project.path]);
+
+  useEffect(() => {
+    loadSyncStatus();
+  }, [loadSyncStatus]);
+
+  // Compile keyboard shortcut ref (to access handleCompile in useEffect)
+  const handleCompileRef = useRef<() => void>(() => {});
 
   // =============================================================================
   // File List Fetching
@@ -275,6 +305,24 @@ export default function Home() {
     }
   }, [project.path, project.currentFile, project.files, isDirty, handleSave, pdfUrl]);
 
+  // Keep handleCompileRef in sync and set up global keyboard shortcut
+  useEffect(() => {
+    handleCompileRef.current = handleCompile;
+  }, [handleCompile]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // ⌘B or Ctrl+B to compile
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        handleCompileRef.current();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // =============================================================================
   // Refresh File List
   // =============================================================================
@@ -284,6 +332,54 @@ export default function Home() {
       await fetchFileList(project.path);
     }
   }, [project.path, fetchFileList]);
+
+  // =============================================================================
+  // Sync Handlers
+  // =============================================================================
+
+  const handleSync = useCallback(async () => {
+    if (!project.path) return;
+
+    setIsSyncing(true);
+    setError(null);
+
+    try {
+      // Save any unsaved changes first
+      if (isDirty && project.currentFile) {
+        await handleSave();
+      }
+
+      const result = await api.syncProject(project.path);
+
+      if (result.success) {
+        // Refresh file list after sync
+        await fetchFileList(project.path);
+        // Reload sync status
+        await loadSyncStatus();
+        // Show success message briefly
+        setError(null);
+      } else {
+        setError(result.message);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Sync failed');
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [project.path, project.currentFile, isDirty, handleSave, fetchFileList, loadSyncStatus]);
+
+  const handleOpenSettings = useCallback(() => {
+    setIsSettingsModalOpen(true);
+  }, []);
+
+  const handleCloseSettings = useCallback(() => {
+    setIsSettingsModalOpen(false);
+  }, []);
+
+  const handleSyncSetup = useCallback(() => {
+    // Refresh sync status after setup
+    loadSyncStatus();
+  }, [loadSyncStatus]);
 
   // =============================================================================
   // HITL Approval Handlers
@@ -402,13 +498,19 @@ export default function Home() {
       {/* Toolbar */}
       <Toolbar
         projectName={project.name}
+        projectPath={project.path}
         isDirty={isDirty}
         isCompiling={isCompiling}
         compileStatus={compileStatus}
+        isSyncing={isSyncing}
+        syncStatus={syncStatus}
         onOpenProject={handleOpenProject}
         onNewProject={handleNewProject}
         onSave={handleSave}
         onCompile={handleCompile}
+        onSync={handleSync}
+        onSettings={handleOpenSettings}
+        onMemory={() => setShowMemory(true)}
       />
 
       {/* Error Banner */}
@@ -496,7 +598,7 @@ export default function Home() {
         <button
           onClick={toggleAgentPanel}
           style={{ right: isAgentPanelOpen ? agentPanelWidth + 8 : 8 }}
-          className={`absolute z-10 top-3 flex h-8 w-8 items-center justify-center rounded-yw-lg shadow-card transition-all duration-300 ${
+          className={`absolute z-10 top-14 flex h-8 w-8 items-center justify-center rounded-yw-lg shadow-card transition-all duration-300 ${
             isAgentPanelOpen
               ? 'bg-white border border-black/6 hover:bg-black/3'
               : 'bg-green1 hover:opacity-90'
@@ -558,6 +660,21 @@ export default function Home() {
         isOpen={isNewProjectModalOpen}
         onClose={() => setIsNewProjectModalOpen(false)}
         onSubmit={handleCreateProject}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={handleCloseSettings}
+        projectPath={project.path}
+        onSyncSetup={handleSyncSetup}
+      />
+
+      {/* Memory Modal */}
+      <MemoryModal
+        isOpen={showMemory}
+        onClose={() => setShowMemory(false)}
+        projectPath={project.path}
       />
     </div>
   );
