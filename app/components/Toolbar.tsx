@@ -10,29 +10,91 @@ import {
   Loader2,
   Check,
   X,
+  AlertCircle,
+  Cloud,
+  CloudOff,
+  Brain,
 } from 'lucide-react';
+
+type SyncStatusType = 'not_initialized' | 'clean' | 'local_changes' | 'ahead' | 'behind' | 'diverged' | 'conflict' | 'error';
 
 interface ToolbarProps {
   projectName: string;
+  projectPath: string | null;
   isDirty: boolean;
   isCompiling: boolean;
   compileStatus: 'idle' | 'success' | 'error';
+  isSyncing: boolean;
+  syncStatus: SyncStatusType | null;
   onOpenProject: () => void;
   onNewProject: () => void;
   onSave: () => void;
   onCompile: () => void;
+  onSync: () => void;
+  onSettings: () => void;
+  onMemory: () => void;
 }
 
 export default function Toolbar({
   projectName,
+  projectPath,
   isDirty,
   isCompiling,
   compileStatus,
+  isSyncing,
+  syncStatus,
   onOpenProject,
   onNewProject,
   onSave,
   onCompile,
+  onSync,
+  onSettings,
+  onMemory,
 }: ToolbarProps) {
+  // Determine sync button state
+  const canSync = projectPath && syncStatus && syncStatus !== 'not_initialized';
+  const hasSyncIssue = syncStatus === 'conflict' || syncStatus === 'diverged' || syncStatus === 'error';
+
+  // Get sync icon
+  const getSyncIcon = () => {
+    if (isSyncing) {
+      return <Loader2 size={14} className="animate-spin" />;
+    }
+    if (!syncStatus || syncStatus === 'not_initialized') {
+      return <CloudOff size={14} />;
+    }
+    if (hasSyncIssue) {
+      return <AlertCircle size={14} />;
+    }
+    if (syncStatus === 'clean') {
+      return <Cloud size={14} />;
+    }
+    return <RefreshCw size={14} />;
+  };
+
+  // Get sync button style
+  const getSyncButtonClass = () => {
+    const base = 'btn-ghost';
+    if (!canSync) return `${base} opacity-40 cursor-not-allowed`;
+    if (hasSyncIssue) return `${base} text-warn`;
+    if (syncStatus === 'clean') return `${base} text-success`;
+    return base;
+  };
+
+  // Get sync tooltip
+  const getSyncTooltip = () => {
+    if (isSyncing) return 'Syncing...';
+    if (!syncStatus || syncStatus === 'not_initialized') return 'Not connected to Overleaf. Open Settings to configure.';
+    if (syncStatus === 'clean') return 'Synced with Overleaf';
+    if (syncStatus === 'local_changes') return 'Local changes to sync';
+    if (syncStatus === 'ahead') return 'Changes to push';
+    if (syncStatus === 'behind') return 'Changes to pull';
+    if (syncStatus === 'diverged') return 'Local and remote have diverged';
+    if (syncStatus === 'conflict') return 'Merge conflicts detected';
+    if (syncStatus === 'error') return 'Sync error';
+    return 'Sync with Overleaf';
+  };
+
   return (
     <div className="h-11 bg-white border-b border-black/6 flex items-center px-3 gap-2 titlebar-no-drag">
       {/* Project name */}
@@ -99,21 +161,34 @@ export default function Toolbar({
         <span>Compile</span>
       </button>
 
-      {/* Sync placeholder */}
+      {/* Sync */}
       <button
-        className="btn-ghost opacity-40 cursor-not-allowed"
-        title="Sync with Overleaf (Coming soon)"
-        disabled
+        onClick={canSync ? onSync : onSettings}
+        className={getSyncButtonClass()}
+        title={getSyncTooltip()}
+        disabled={isSyncing}
       >
-        <RefreshCw size={16} className="text-secondary" />
-        <span className="hidden sm:inline text-secondary">Sync</span>
+        {getSyncIcon()}
+        <span className="hidden sm:inline">
+          {canSync ? 'Sync' : 'Sync'}
+        </span>
       </button>
 
       {/* Spacer */}
       <div className="flex-1" />
 
+      {/* Memory */}
+      <button
+        onClick={onMemory}
+        className="btn-icon"
+        title="Project Memory"
+      >
+        <Brain size={16} className="text-secondary" />
+      </button>
+
       {/* Settings */}
       <button
+        onClick={onSettings}
         className="btn-icon"
         title="Settings"
       >
