@@ -190,7 +190,7 @@ export default function MemoryModal({
     }
   };
 
-  const startEdit = (entry: Record<string, unknown>) => {
+  const startEdit = (entry: PaperEntry | CitationEntry | ConventionEntry | TodoEntry | NoteEntry) => {
     setEditingId(entry.id as string);
     const data: Record<string, string> = {};
 
@@ -212,7 +212,7 @@ export default function MemoryModal({
   };
 
   const renderEntryCard = (
-    entry: Record<string, unknown>,
+    entry: PaperEntry | CitationEntry | ConventionEntry | TodoEntry | NoteEntry,
     entryType: MemoryEntryType
   ) => {
     const isEditing = editingId === entry.id;
