@@ -265,6 +265,11 @@ class PlanCreatedEvent(StreamEvent):
     goal: str = ""
     steps_count: int = 0
     complexity: int = 1
+    steps: list = None  # List of step dicts with step_number, title, description, status
+
+    def __post_init__(self):
+        if self.steps is None:
+            self.steps = []
 
     def to_dict(self) -> dict:
         return {
@@ -273,6 +278,7 @@ class PlanCreatedEvent(StreamEvent):
             "goal": self.goal,
             "steps_count": self.steps_count,
             "complexity": self.complexity,
+            "steps": self.steps,
         }
 
 
@@ -405,6 +411,70 @@ async def stream_agent_response(
     if enable_planning:
         from agent.planning import get_plan_manager
         plan_manager = get_plan_manager()
+
+        # Set up callbacks to emit plan events if we have an event queue
+        if event_queue:
+            async def on_plan_created(plan):
+                logger.info(f"Plan created: {plan.plan_id} with {len(plan.steps)} steps")
+                # Include step data for UI rendering
+                steps_data = [
+                    {
+                        "step_number": s.step_number,
+                        "title": s.title,
+                        "description": s.description,
+                        "status": s.status.value,
+                        "files": s.files,
+                    }
+                    for s in plan.steps
+                ]
+                await event_queue.put(PlanCreatedEvent(
+                    plan_id=plan.plan_id,
+                    goal=plan.goal,
+                    steps_count=len(plan.steps),
+                    complexity=plan.complexity,
+                    steps=steps_data,
+                ))
+
+            async def on_step_started(plan, step):
+                logger.info(f"Step started: {step.step_number}. {step.title}")
+                progress = plan.progress
+                await event_queue.put(PlanStepEvent(
+                    plan_id=plan.plan_id,
+                    step_number=step.step_number,
+                    step_title=step.title,
+                    status="started",
+                    progress_percent=progress["percent"],
+                ))
+
+            async def on_step_completed(plan, step):
+                status = "completed" if step.status.value == "completed" else step.status.value
+                logger.info(f"Step {status}: {step.step_number}. {step.title}")
+                progress = plan.progress
+                await event_queue.put(PlanStepEvent(
+                    plan_id=plan.plan_id,
+                    step_number=step.step_number,
+                    step_title=step.title,
+                    status=status,
+                    progress_percent=progress["percent"],
+                ))
+
+            async def on_plan_completed(plan):
+                progress = plan.progress
+                logger.info(f"Plan completed: {plan.plan_id}")
+                await event_queue.put(PlanCompletedEvent(
+                    plan_id=plan.plan_id,
+                    goal=plan.goal,
+                    total_steps=progress["total"],
+                    completed_steps=progress["completed"],
+                    failed_steps=progress["failed"],
+                ))
+
+            plan_manager.set_callbacks(
+                on_plan_created=on_plan_created,
+                on_step_started=on_step_started,
+                on_step_completed=on_step_completed,
+                on_plan_completed=on_plan_completed,
+            )
 
     deps = AuraDeps(
         project_path=project_path,

@@ -35,7 +35,8 @@ let pythonProcess: ChildProcess | null = null;
 function getBackendPath(): string {
   if (isDev) {
     // Development: backend is in sibling directory
-    return path.join(__dirname, '../../backend');
+    // __dirname is app/main/dist, so go up 3 levels to project root
+    return path.join(__dirname, '../../../backend');
   } else {
     // Production: backend is bundled in resources
     return path.join(process.resourcesPath, 'backend');
@@ -66,7 +67,28 @@ function getPythonExecutable(): string {
   return 'python3'; // Default fallback
 }
 
+async function checkBackendHealth(): Promise<boolean> {
+  const http = require('http');
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${BACKEND_PORT}/api/health`, (res: any) => {
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(1000, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
 async function startPythonBackend(): Promise<void> {
+  // First check if backend is already running (started by start.sh or another process)
+  const isAlreadyRunning = await checkBackendHealth();
+  if (isAlreadyRunning) {
+    console.log('Backend is already running, skipping spawn');
+    return;
+  }
+
   const backendPath = getBackendPath();
   const pythonExe = getPythonExecutable();
 

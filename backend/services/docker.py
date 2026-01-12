@@ -88,16 +88,25 @@ class DockerLatex:
         # Build compilation command (run multiple times for references)
         # Use ; instead of && because pdflatex returns non-zero on warnings
         # but still generates the PDF
-        base_name = filename.rsplit(".", 1)[0]
+        base_name = Path(filename).stem  # Just the filename without extension or path
+        tex_dir = str(Path(filename).parent) if "/" in filename else "."
+
         commands = []
         for i in range(runs):
-            commands.append(f"pdflatex -interaction=nonstopmode {filename}")
+            # Use -output-directory to put PDF in same dir as source
+            if tex_dir != ".":
+                commands.append(f"pdflatex -interaction=nonstopmode -output-directory={tex_dir} {filename}")
+            else:
+                commands.append(f"pdflatex -interaction=nonstopmode {filename}")
 
         # Check for bibliography
-        bib_files = list(project_path.glob("*.bib"))
+        bib_files = list(project_path.glob("**/*.bib"))
         if bib_files:
-            # Insert biber/bibtex after first pdflatex
-            commands.insert(1, f"biber {base_name} || bibtex {base_name} || true")
+            # Insert biber/bibtex after first pdflatex (run from the tex directory)
+            if tex_dir != ".":
+                commands.insert(1, f"cd {tex_dir} && (biber {base_name} || bibtex {base_name} || true)")
+            else:
+                commands.insert(1, f"biber {base_name} || bibtex {base_name} || true")
 
         # Use ; to continue even if pdflatex has warnings
         full_command = " ; ".join(commands)
@@ -150,8 +159,11 @@ class DockerLatex:
                 error_summary=f"Compilation timed out after {timeout} seconds"
             )
 
-        # Check if PDF was generated
-        pdf_path = project_path / f"{base_name}.pdf"
+        # Check if PDF was generated (in same directory as the tex file)
+        if tex_dir != ".":
+            pdf_path = project_path / tex_dir / f"{base_name}.pdf"
+        else:
+            pdf_path = project_path / f"{base_name}.pdf"
 
         if pdf_path.exists():
             # PDF generated - check for warnings in the log

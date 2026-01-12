@@ -16,6 +16,7 @@ import {
   Square,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
+import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
 
 interface AgentPanelProps {
   projectPath: string | null;
@@ -176,6 +177,7 @@ export default function AgentPanel({
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -437,6 +439,38 @@ export default function AgentPanel({
                 }
               } else if (data.type === 'approval_resolved') {
                 onApprovalResolved?.();
+              } else if (data.type === 'plan_created') {
+                // A new plan was created
+                console.log('[Agent] Plan created event:', data);
+                setCurrentPlan({
+                  plan_id: data.plan_id,
+                  goal: data.goal,
+                  complexity: data.complexity,
+                  steps: (data.steps || []).map((s: { step_number: number; title: string; description?: string; status?: string; files?: string[] }) => ({
+                    step_number: s.step_number,
+                    title: s.title,
+                    description: s.description || '',
+                    status: (s.status || 'pending') as PlanStep['status'],
+                    files: s.files || [],
+                  })),
+                });
+              } else if (data.type === 'plan_step') {
+                // A plan step status changed
+                console.log('[Agent] Plan step event:', data);
+                setCurrentPlan((prev) => {
+                  if (!prev || prev.plan_id !== data.plan_id) return prev;
+                  return {
+                    ...prev,
+                    steps: prev.steps.map((step) =>
+                      step.step_number === data.step_number
+                        ? { ...step, status: data.status as PlanStep['status'] }
+                        : step
+                    ),
+                  };
+                });
+              } else if (data.type === 'plan_completed') {
+                // Plan finished - mark all steps as their final status
+                // Keep the plan visible so user can see completion
               }
             } catch (e) {
               console.error('[Agent] JSON parse error:', e);
@@ -537,7 +571,7 @@ export default function AgentPanel({
 
       {/* Messages */}
       <div className="flex-1 overflow-auto p-3 space-y-3">
-        {messages.length === 0 ? (
+        {messages.length === 0 && !currentPlan ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center px-6">
               <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green3 flex items-center justify-center">
@@ -571,6 +605,13 @@ export default function AgentPanel({
                   </button>
                 </div>
               </div>
+            )}
+            {/* Active Plan Display - appears inline after messages */}
+            {currentPlan && (
+              <PlanDisplay
+                plan={currentPlan}
+                onClear={() => setCurrentPlan(null)}
+              />
             )}
             <div ref={messagesEndRef} />
           </>
