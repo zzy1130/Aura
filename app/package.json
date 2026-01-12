@@ -13,6 +13,7 @@
     "start": "electron .",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
     "lint": "next lint",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -53,7 +54,7 @@
     },
     "files": [
       "main/dist/**/*",
-      ".next/**/*",
+      "out/**/*",
       "public/**/*",
       "node_modules/**/*",
       "package.json"
@@ -63,16 +64,63 @@
         "from": "../backend",
         "to": "backend",
         "filter": [
-          "**/*",
-          "!__pycache__/**",
-          "!*.pyc"
+          "**/*.py",
+          "requirements.txt",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo",
+          "!**/.pytest_cache/**",
+          "!**/tests/**",
+          "!**/.git/**"
+        ]
+      },
+      {
+        "from": "../sandbox",
+        "to": "sandbox",
+        "filter": [
+          "Dockerfile"
         ]
       }
     ],
     "mac": {
-      "target": "dmg",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
       "icon": "public/icon.icns",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 400
+      }
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Office"
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "public/icon.ico"
     }
   }
 }
