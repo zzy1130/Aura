@@ -92,7 +92,8 @@ class CompileResponse(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     name: str
-    template: str = "article"
+    path: Optional[str] = None  # Custom path, if None uses ~/aura-projects/
+    template: Optional[str] = None  # If None, creates empty project
 
 
 class FileReadRequest(BaseModel):
@@ -289,7 +290,11 @@ async def list_projects() -> list[dict]:
 async def create_project(request: CreateProjectRequest) -> dict:
     """Create a new project."""
     try:
-        project = project_service.create(name=request.name, template=request.template)
+        project = project_service.create(
+            name=request.name,
+            path=request.path,
+            template=request.template,
+        )
         return {
             "name": project.name,
             "path": project.path,

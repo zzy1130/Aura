@@ -169,8 +169,19 @@ export default function Home() {
 
   const handleCreateProject = useCallback(async (name: string) => {
     try {
-      // Create project via backend API
-      const newProject = await api.createProject(name);
+      // First, open folder picker to choose location
+      if (!window.aura) {
+        throw new Error('Electron API not available');
+      }
+      const selectedPath = await window.aura.newProject(name);
+
+      if (!selectedPath) {
+        // User cancelled the folder picker
+        return;
+      }
+
+      // Create project at selected path (empty, no template)
+      const newProject = await api.createProject(name, selectedPath);
 
       // Use the path from the response
       const projectPath = newProject.path;

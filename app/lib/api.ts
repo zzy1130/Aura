@@ -291,17 +291,20 @@ class ApiClient {
 
   /**
    * Create a new project
+   * @param name Project name
+   * @param path Optional custom path. If not provided, creates in ~/aura-projects/
+   * @param template Optional template ('article', 'minimal'). If not provided, creates empty project
    */
-  async createProject(name: string, template: string = 'article'): Promise<Project> {
+  async createProject(name: string, path?: string, template?: string): Promise<Project> {
     await this.ensureInitialized();
 
     const url = `${this.baseUrl}/api/projects`;
-    console.log('[API] createProject:', url, { name, template });
+    console.log('[API] createProject:', url, { name, path, template });
 
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, template }),
+      body: JSON.stringify({ name, path, template }),
     });
 
     if (!response.ok) {
