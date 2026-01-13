@@ -95,15 +95,11 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 | Requirement | Version | Purpose |
 |-------------|---------|---------|
 | **macOS** | 14+ | Primary platform (tested) |
-| **Python** | 3.11+ | Backend server |
-| **uv** | Latest | Python package manager (recommended) |
-| **Node.js** | 18+ | Frontend & Electron |
-| **npm** | 9+ | Package management |
 | **Docker Desktop** | Latest | LaTeX compilation sandbox |
 
-> **Note**: Docker is only required for LaTeX compilation. You can use the app for research without Docker, but compilation features won't work.
+> **Note**: The DMG includes a bundled Python backend - no Python installation required for end users.
 
-> **Installing uv**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+> **For developers**: Python 3.11+, Node.js 18+, and uv are needed for development.
 
 ### Setup
 
@@ -209,19 +205,29 @@ npm run dev  # Electron + Next.js
 
 ### Production Build (DMG)
 
-Build a distributable DMG file:
+Build a distributable DMG file with bundled Python backend:
 
 ```bash
 cd app
 npm run dist:mac
 ```
 
-The DMG will be created at `app/dist/Aura-<version>-arm64.dmg` (~185MB).
+The build process:
+1. Compiles Python backend into standalone executable (PyInstaller)
+2. Builds Next.js frontend
+3. Packages everything into Electron app
+4. Creates DMG installer
+
+**Output:** `app/dist/Aura-<version>-arm64.dmg` (~230MB)
 
 **What's included in the DMG:**
 - Electron app with bundled Next.js frontend
-- Python backend code (bundled as resources)
+- Bundled Python backend (standalone executable, no Python required)
 - Dockerfile for LaTeX sandbox
+
+**User requirements after install:**
+- Docker Desktop (for LaTeX compilation only)
+- That's it! No Python, no Node.js
 
 **Note:** The DMG is not code-signed by default. On first launch, users may need to:
 1. Right-click the app → Open
@@ -229,11 +235,14 @@ The DMG will be created at `app/dist/Aura-<version>-arm64.dmg` (~185MB).
 
 **Building for distribution:**
 ```bash
-# Build for current architecture
+# Build full DMG (includes backend compilation)
 npm run dist:mac
 
 # Build unpacked directory (for testing)
 npm run pack
+
+# Build frontend only (dev backend already running)
+npm run build
 ```
 
 ---

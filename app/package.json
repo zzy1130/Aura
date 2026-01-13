@@ -10,10 +10,12 @@
     "next:dev": "next dev -p 3000",
     "electron:dev": "wait-on http://localhost:3000 && tsc -p main/tsconfig.json && electron .",
     "build": "next build && tsc -p main/tsconfig.json",
+    "build:backend": "cd ../backend && uv run pyinstaller aura-backend.spec --noconfirm",
+    "build:all": "npm run build:backend && npm run build",
     "start": "electron .",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "pack": "npm run build:all && electron-builder --dir",
+    "dist": "npm run build:all && electron-builder",
+    "dist:mac": "npm run build:all && electron-builder --mac",
     "lint": "next lint",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -61,18 +63,8 @@
     ],
     "extraResources": [
       {
-        "from": "../backend",
-        "to": "backend",
-        "filter": [
-          "**/*.py",
-          "requirements.txt",
-          "!**/__pycache__/**",
-          "!**/*.pyc",
-          "!**/*.pyo",
-          "!**/.pytest_cache/**",
-          "!**/tests/**",
-          "!**/.git/**"
-        ]
+        "from": "../backend/dist/aura-backend",
+        "to": "backend/aura-backend"
       },
       {
         "from": "../sandbox",
