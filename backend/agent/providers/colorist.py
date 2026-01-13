@@ -22,6 +22,9 @@ DEFAULT_API_KEY = "vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308
 DEFAULT_GATEWAY_URL = "https://colorist-gateway-staging.arco.ai"
 DEFAULT_MODEL = "claude-4-5-sonnet-by-all"
 
+# Gemini model for vibe research (cheaper, higher rate limits)
+GEMINI_FLASH_MODEL = "gemini-3-flash-preview"
+
 
 @cache
 def _cached_http_client(
@@ -77,7 +80,7 @@ def gateway_provider(provider_name: str) -> Provider[Any]:
     else:
         raise KeyError(
             f"Unsupported provider: {provider_name}. "
-            f"Aura currently only supports 'anthropic' provider."
+            f"Aura uses 'anthropic' provider for all models via Colorist gateway."
         )
 
 
@@ -127,3 +130,9 @@ def get_haiku_model() -> Model:
 def get_opus_model() -> Model:
     """Get Claude Opus 4.5 model (most capable)."""
     return infer_model("anthropic:claude-4-5-opus-by-all")
+
+
+def get_gemini_flash_model() -> Model:
+    """Get Gemini 3 Flash model via Colorist (cheaper, higher rate limits, good for vibe research)."""
+    # Colorist routes all models through the same Anthropic-style API
+    return infer_model(f"anthropic:{GEMINI_FLASH_MODEL}")

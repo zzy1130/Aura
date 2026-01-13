@@ -14,14 +14,23 @@ import {
   AlertCircle,
   Sparkles,
   Square,
+  MessageSquare,
+  Microscope,
+  Plus,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
+import VibeResearchView from './VibeResearchView';
+import { api, VibeSessionSummary } from '../lib/api';
+
+// Mode types
+type AgentMode = 'chat' | 'vibe';
 
 interface AgentPanelProps {
   projectPath: string | null;
   onApprovalRequest?: (edit: PendingEdit) => void;
   onApprovalResolved?: () => void;
+  onOpenFile?: (filePath: string) => void;
 }
 
 interface ToolCall {
@@ -172,7 +181,9 @@ export default function AgentPanel({
   projectPath,
   onApprovalRequest,
   onApprovalResolved,
+  onOpenFile,
 }: AgentPanelProps) {
+  // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -182,6 +193,58 @@ export default function AgentPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const pendingMessageRef = useRef<string | null>(null);
+
+  // Mode state
+  const [mode, setMode] = useState<AgentMode>('chat');
+  const [vibeSessions, setVibeSessions] = useState<VibeSessionSummary[]>([]);
+  const [selectedVibeSession, setSelectedVibeSession] = useState<string | null>(null);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [showNewResearchInput, setShowNewResearchInput] = useState(false);
+  const [newResearchTopic, setNewResearchTopic] = useState('');
+  const [isStartingResearch, setIsStartingResearch] = useState(false);
+
+  const loadVibeSessions = useCallback(async () => {
+    if (!projectPath) return;
+    setIsLoadingSessions(true);
+    try {
+      const result = await api.listVibeSessions(projectPath);
+      setVibeSessions(result.sessions);
+      // Auto-select first incomplete session if none selected
+      if (result.sessions.length > 0) {
+        const incomplete = result.sessions.find(s => !s.is_complete);
+        if (incomplete) {
+          setSelectedVibeSession(incomplete.session_id);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load vibe sessions:', e);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, [projectPath]);
+
+  // Load vibe sessions when mode changes or project changes
+  useEffect(() => {
+    if (mode === 'vibe' && projectPath) {
+      loadVibeSessions();
+    }
+  }, [mode, projectPath, loadVibeSessions]);
+
+  const startNewResearch = async () => {
+    if (!projectPath || !newResearchTopic.trim()) return;
+    setIsStartingResearch(true);
+    try {
+      const session = await api.startVibeResearch(projectPath, newResearchTopic.trim());
+      setSelectedVibeSession(session.session_id);
+      setShowNewResearchInput(false);
+      setNewResearchTopic('');
+      await loadVibeSessions();
+    } catch (e) {
+      console.error('Failed to start research:', e);
+    } finally {
+      setIsStartingResearch(false);
+    }
+  };
 
   // Keep ref in sync with state for use in callbacks
   useEffect(() => {
@@ -559,18 +622,44 @@ export default function AgentPanel({
 
   return (
     <div className="h-full flex flex-col bg-fill-secondary">
-      {/* Header */}
+      {/* Header with Mode Toggle */}
       <div className="panel-header bg-white">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-full bg-green3 flex items-center justify-center">
-            <Sparkles size={12} className="text-green1" />
+        <div className="flex items-center gap-2 w-full">
+          {/* Mode toggle buttons */}
+          <div className="flex items-center bg-fill-secondary rounded-yw-lg p-0.5">
+            <button
+              onClick={() => setMode('chat')}
+              disabled={isStreaming}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-yw-md typo-small transition-all ${
+                mode === 'chat'
+                  ? 'bg-white text-green1 shadow-sm'
+                  : 'text-secondary hover:text-primary'
+              } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <MessageSquare size={14} />
+              Chat
+            </button>
+            <button
+              onClick={() => setMode('vibe')}
+              disabled={isStreaming}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-yw-md typo-small transition-all ${
+                mode === 'vibe'
+                  ? 'bg-white text-green1 shadow-sm'
+                  : 'text-secondary hover:text-primary'
+              } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <Microscope size={14} />
+              Vibe Research
+            </button>
           </div>
-          <span className="typo-body-strong">AI Assistant</span>
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-auto p-3 space-y-3">
+      {/* Content based on mode */}
+      {mode === 'chat' ? (
+        <>
+          {/* Chat Messages */}
+          <div className="flex-1 overflow-auto p-3 space-y-3">
         {messages.length === 0 && !currentPlan ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center px-6">
@@ -618,70 +707,172 @@ export default function AgentPanel({
         )}
       </div>
 
-      {/* Input */}
-      <div className="border-t border-black/6 p-3 bg-white">
-        <div className="relative flex gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              // Auto-resize textarea
-              e.target.style.height = 'auto';
-              e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              !projectPath
-                ? "Open a project first"
-                : isStreaming
-                ? "Queue next message..."
-                : "Ask the assistant..."
-            }
-            disabled={!projectPath || !!pendingMessage}
-            className={`flex-1 min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-3 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
-              isStreaming
-                ? 'border-orange1/20 focus:border-orange1 focus:ring-orange1/20'
-                : 'border-black/12 focus:border-green2 focus:ring-green2/20'
-            }`}
-            rows={1}
-          />
-          {isStreaming ? (
-            <>
-              {/* Queue button - only show when there's input and no pending message */}
-              {input.trim() && !pendingMessage && (
+          {/* Chat Input */}
+          <div className="border-t border-black/6 p-3 bg-white">
+            <div className="relative flex gap-2">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  // Auto-resize textarea
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  !projectPath
+                    ? "Open a project first"
+                    : isStreaming
+                    ? "Queue next message..."
+                    : "Ask the assistant..."
+                }
+                disabled={!projectPath || !!pendingMessage}
+                className={`flex-1 min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-3 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
+                  isStreaming
+                    ? 'border-orange1/20 focus:border-orange1 focus:ring-orange1/20'
+                    : 'border-black/12 focus:border-green2 focus:ring-green2/20'
+                }`}
+                rows={1}
+              />
+              {isStreaming ? (
+                <>
+                  {/* Queue button - only show when there's input and no pending message */}
+                  {input.trim() && !pendingMessage && (
+                    <button
+                      onClick={queuePendingMessage}
+                      className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-orange1 text-white hover:opacity-90 transition-all flex-shrink-0"
+                      title="Queue message"
+                    >
+                      <Send size={14} />
+                    </button>
+                  )}
+                  {/* Stop button */}
+                  <button
+                    onClick={stopGeneration}
+                    className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-error text-white hover:opacity-90 transition-all flex-shrink-0"
+                    title="Stop generation"
+                  >
+                    <Square size={14} fill="currentColor" />
+                  </button>
+                </>
+              ) : (
                 <button
-                  onClick={queuePendingMessage}
-                  className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-orange1 text-white hover:opacity-90 transition-all flex-shrink-0"
-                  title="Queue message"
+                  onClick={() => sendMessage()}
+                  disabled={!input.trim() || !projectPath}
+                  className={`flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg transition-all flex-shrink-0 ${
+                    !input.trim() || !projectPath
+                      ? 'bg-black/6 text-tertiary cursor-not-allowed'
+                      : 'bg-green1 text-white hover:opacity-90'
+                  }`}
                 >
                   <Send size={14} />
                 </button>
               )}
-              {/* Stop button */}
-              <button
-                onClick={stopGeneration}
-                className="flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg bg-error text-white hover:opacity-90 transition-all flex-shrink-0"
-                title="Stop generation"
+            </div>
+          </div>
+        </>
+      ) : (
+        /* Vibe Research Mode */
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Session selector */}
+          <div className="p-3 border-b border-black/6 bg-white">
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedVibeSession || ''}
+                onChange={(e) => setSelectedVibeSession(e.target.value || null)}
+                className="flex-1 rounded-yw-md border border-black/12 bg-white px-3 py-2 typo-small focus:outline-none focus:ring-1 focus:ring-green2/20"
+                disabled={isLoadingSessions}
               >
-                <Square size={14} fill="currentColor" />
+                <option value="">Select a research session...</option>
+                {vibeSessions.map((session) => (
+                  <option key={session.session_id} value={session.session_id}>
+                    {session.topic.slice(0, 40)}{session.topic.length > 40 ? '...' : ''}
+                    ({session.current_phase}{session.is_complete ? ' - Complete' : ''})
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => setShowNewResearchInput(true)}
+                className="flex h-[36px] w-[36px] items-center justify-center rounded-yw-md bg-green1 text-white hover:opacity-90 transition-all flex-shrink-0"
+                title="New research"
+              >
+                <Plus size={14} />
               </button>
-            </>
+            </div>
+
+            {/* New research input */}
+            {showNewResearchInput && (
+              <div className="mt-3 p-3 bg-fill-secondary rounded-yw-lg">
+                <div className="typo-small-strong mb-2">Start New Research</div>
+                <textarea
+                  value={newResearchTopic}
+                  onChange={(e) => setNewResearchTopic(e.target.value)}
+                  placeholder="Enter your research topic or question..."
+                  className="w-full rounded-yw-md border border-black/12 bg-white px-3 py-2 typo-small focus:outline-none focus:ring-1 focus:ring-green2/20 resize-none"
+                  rows={2}
+                />
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={startNewResearch}
+                    disabled={!newResearchTopic.trim() || isStartingResearch}
+                    className="btn-primary typo-small flex items-center gap-1"
+                  >
+                    {isStartingResearch ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Microscope size={12} />
+                    )}
+                    Start Research
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowNewResearchInput(false);
+                      setNewResearchTopic('');
+                    }}
+                    className="btn-ghost typo-small"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Vibe Research View */}
+          {selectedVibeSession && projectPath ? (
+            <VibeResearchView
+              projectPath={projectPath}
+              sessionId={selectedVibeSession}
+              onComplete={loadVibeSessions}
+              onDelete={() => {
+                setSelectedVibeSession(null);
+                loadVibeSessions();
+              }}
+              onOpenFile={onOpenFile}
+            />
           ) : (
-            <button
-              onClick={() => sendMessage()}
-              disabled={!input.trim() || !projectPath}
-              className={`flex h-[44px] w-[44px] items-center justify-center rounded-yw-lg transition-all flex-shrink-0 ${
-                !input.trim() || !projectPath
-                  ? 'bg-black/6 text-tertiary cursor-not-allowed'
-                  : 'bg-green1 text-white hover:opacity-90'
-              }`}
-            >
-              <Send size={14} />
-            </button>
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center px-6">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-purple-100 flex items-center justify-center">
+                  <Microscope size={28} className="text-purple-600" />
+                </div>
+                <h3 className="typo-h3 mb-2">Vibe Research</h3>
+                <p className="typo-small text-secondary mb-4">
+                  AI-led autonomous research that discovers papers, identifies gaps, and generates novel hypotheses
+                </p>
+                <button
+                  onClick={() => setShowNewResearchInput(true)}
+                  className="btn-primary flex items-center gap-2 mx-auto"
+                >
+                  <Plus size={14} />
+                  Start New Research
+                </button>
+              </div>
+            </div>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }

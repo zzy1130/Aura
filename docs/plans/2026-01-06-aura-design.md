@@ -637,46 +637,103 @@ python-multipart>=0.0.6
 - PUT `/api/memory/{type}/{id}` - Update specific entry
 - DELETE `/api/memory/{type}/{id}` - Delete specific entry
 
-### Phase 7: Deep Research Engine
+### Phase 7: Vibe Research Engine ✅ COMPLETE
 
-**Problem**: Current research is shallow - search → read one paper → done. Real research requires following citation trails, synthesizing across papers, and identifying gaps.
+**Problem**: Current research is shallow - search → read one paper → done. Real research requires following citation trails, synthesizing across papers, and identifying gaps. We want to enable "vibe research" - AI-led autonomous research with human oversight.
 
-19. **Citation Graph Crawler**
-    - `explore_citation_graph(paper_id, direction, depth)` - Traverse citation network
-    - Uses Semantic Scholar API (free, 100 req/sec)
-    - Finds seminal papers and recent follow-ups
-    - Caches results in memory layer
+**Design**: Extend `ResearchAgent` with a mode toggle (CHAT vs VIBE) and dual-ledger state tracking inspired by [Magentic-One](https://www.microsoft.com/en-us/research/articles/magentic-one-a-generalist-multi-agent-system-for-solving-complex-tasks/).
 
-20. **Multi-Paper Synthesizer**
-    - `synthesize_papers(paper_ids, focus)` - Read and synthesize multiple papers
-    - Extract common themes and methods
-    - Identify contradictions between papers
-    - Track evolution of ideas over time
-    - Output stored as literature note in memory
+**Implementation Plan**: See `docs/plans/2026-01-13-vibe-research-implementation.md`
 
-21. **Research Gap Detector**
-    - `find_research_gaps(topic, papers_to_review)` - Automated literature review
-    - Cluster papers by methodology/approach
-    - Identify underexplored combinations
-    - Return gaps with confidence levels
+#### New Components
 
-22. **Research Viability Assessor**
-    - `assess_research_idea(idea, depth)` - Evaluate idea against literature
-    - Novelty scoring
-    - Similar work identification
-    - Suggested differentiators
+19. **VibeResearchState** (`backend/agent/vibe_state.py`)
+    - Dual-ledger pattern: Task Ledger (facts, gaps, hypotheses) + Progress Ledger (phase, stall detection)
+    - Phases: SCOPING → DISCOVERY → SYNTHESIS → IDEATION → EVALUATION → COMPLETE
+    - Persistent state saved to `.aura/vibe_research_<session_id>.json`
 
-**The 0→1 Research Flow**:
+20. **Enhanced Semantic Scholar Client** (`backend/services/semantic_scholar.py`)
+    - `search()` - Paper search with year filtering
+    - `get_citations()` / `get_references()` - Citation graph traversal
+    - `explore_citation_graph()` - Multi-level traversal with deduplication
+    - Rate limiting and error handling
+
+21. **Vibe Research Tools** (added to `ResearchAgent`)
+    - `define_scope` - Clarify research parameters
+    - `explore_citations` - Follow citation trails
+    - `record_theme` - Track identified themes
+    - `record_gap` - Document research gaps
+    - `generate_hypothesis` - Propose novel ideas
+    - `score_hypothesis` - Evaluate novelty/feasibility/impact
+    - `update_progress` - Track progress with stall detection
+    - `advance_phase` - Move through workflow
+    - `generate_report` - Synthesize final report
+    - `save_to_memory` - Persist findings
+
+22. **API Endpoints** (added to `main.py`)
+    - POST `/api/vibe-research/start` - Start new session
+    - GET `/api/vibe-research/status/{session_id}` - Get progress
+    - GET `/api/vibe-research/report/{session_id}` - Get final report
+    - GET `/api/vibe-research/sessions` - List sessions
+
+**The Vibe Research Flow**:
 ```
 User: "I want to research efficient attention for long sequences"
+       │
+       ▼
+┌─────────────────────────────────────────────────┐
+│ Phase 1: SCOPING                                │
+│ - Clarify: domain, constraints, goal           │
+│ - Output: Scoped research parameters           │
+└─────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────┐
+│ Phase 2: DISCOVERY                              │
+│ - Search arXiv + Semantic Scholar              │
+│ - Explore citation graphs                      │
+│ - Find 50-100+ relevant papers                 │
+└─────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────┐
+│ Phase 3: SYNTHESIS                              │
+│ - Read top 20-30 papers                        │
+│ - Identify themes and clusters                 │
+│ - Track agreements/contradictions              │
+└─────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────┐
+│ Phase 4: IDEATION                               │
+│ - Identify research gaps                       │
+│ - Generate novel hypotheses                    │
+│ - Link to building blocks                      │
+└─────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────┐
+│ Phase 5: EVALUATION                             │
+│ - Score: novelty, feasibility, impact          │
+│ - Rank hypotheses                              │
+│ - Generate structured report                   │
+└─────────────────────────────────────────────────┘
+       │
+       ▼
+Output: Markdown report with:
+- Literature landscape (themes, key papers)
+- Identified gaps with confidence levels
+- Ranked hypothesis proposals with scores
+- Suggested experiments
+```
 
-Agent:
-1. search_arxiv + search_semantic_scholar → Find 30 papers
-2. explore_citation_graph(seeds, depth=2) → Discover seminal + recent
-3. synthesize_papers(top_20) → Extract themes
-4. find_research_gaps(topic) → Identify opportunities
-5. remember(findings) → Store for future
-6. Present 3 promising directions with novelty scores
+**UI Mode Toggle**:
+```
+┌─────────────────────────────────────────────────┐
+│ ┌────────────┐  ┌─────────────────┐            │
+│ │  💬 Chat   │  │  🔬 Vibe Research │           │
+│ └────────────┘  └─────────────────┘            │
+└─────────────────────────────────────────────────┘
 ```
 
 ### Phase 8: Writing Intelligence
@@ -727,10 +784,11 @@ Agent:
 │  - LaTeX semantic understanding (not just text replacement)  │
 │  - Figure/table generation from data                         │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 3: Research Engine (Phase 7)                          │
+│  Layer 3: Vibe Research Engine (Phase 7)                      │
 │  - Citation graph crawler (Semantic Scholar API)             │
-│  - Multi-paper synthesis (read 10+ papers, extract themes)   │
-│  - Gap detector (find what's missing in literature)          │
+│  - Mode toggle: Chat (quick) vs Vibe (autonomous deep)       │
+│  - Gap detector + hypothesis generator                       │
+│  - Dual-ledger state: Task Ledger + Progress Ledger          │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: Project Memory (Phase 6)                           │
 │  - Research notes database (SQLite + embeddings)             │
@@ -742,7 +800,7 @@ Agent:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Build Order**: Phase 6 (Memory) → Phase 7 (Research) → Phase 8 (Writing)
+**Build Order**: Phase 6 (Memory) ✅ → Phase 7 (Research) ✅ → Phase 8 (Writing) **NEXT**
 
 Memory unlocks everything else - can't do deep research without remembering what you've read.
 
@@ -753,16 +811,16 @@ Memory unlocks everything else - can't do deep research without remembering what
 ```
 backend/
 ├── agent/
-│   ├── memory.py              # Phase 6: Memory tools
-│   ├── research_engine.py     # Phase 7: Research logic
+│   ├── vibe_state.py          # Phase 7: Vibe research state tracking
 │   ├── writing_intelligence.py # Phase 8: Writing tools
+│   ├── subagents/
+│   │   └── research.py        # Phase 7: Enhanced with VIBE mode
 │   └── tools/
 │       ├── latex_tools.py     # Phase 8: LaTeX operations
 │       └── bibliography.py    # Phase 8: Bib management
 └── services/
-    ├── memory_db.py           # Phase 6: SQLite operations
-    ├── embeddings.py          # Phase 6: Embedding generation
-    ├── semantic_scholar.py    # Phase 7: Enhanced API client
+    ├── memory.py              # Phase 6: Memory service
+    ├── semantic_scholar.py    # Phase 7: Enhanced S2 API client
     └── latex_parser.py        # Phase 8: Structure parsing
 ```
 

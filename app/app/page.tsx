@@ -602,6 +602,7 @@ export default function Home() {
             projectPath={project.path}
             onApprovalRequest={handleApprovalRequest}
             onApprovalResolved={handleApprovalResolved}
+            onOpenFile={handleFileSelect}
           />
         </div>
 

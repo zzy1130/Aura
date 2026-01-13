@@ -222,56 +222,83 @@ class Subagent(ABC, Generic[DepsT]):
 
         logger.info(f"Subagent '{self.config.name}' starting task: {task[:100]}...")
 
-        try:
-            # Apply timeout
-            async with asyncio.timeout(self.config.timeout):
-                deps = self._create_deps(context)
-                result = await self.agent.run(task, deps=deps)
+        # Retry logic for rate limits
+        max_retries = 3
+        retry_delay = 5.0  # Start with 5 seconds
 
-            completed_at = datetime.now(timezone.utc)
-            duration = (completed_at - started_at).total_seconds()
+        for attempt in range(max_retries + 1):
+            try:
+                # Apply timeout
+                async with asyncio.timeout(self.config.timeout):
+                    deps = self._create_deps(context)
+                    result = await self.agent.run(task, deps=deps)
 
-            # Extract usage
-            usage = result.usage()
+                completed_at = datetime.now(timezone.utc)
+                duration = (completed_at - started_at).total_seconds()
 
-            logger.info(
-                f"Subagent '{self.config.name}' completed in {duration:.1f}s "
-                f"({usage.input_tokens}in/{usage.output_tokens}out tokens)"
-            )
+                # Extract usage
+                usage = result.usage()
 
-            return SubagentResult(
-                output=result.output or "",
-                subagent_name=self.config.name,
-                task=task,
-                success=True,
-                started_at=started_at,
-                completed_at=completed_at,
-                duration_seconds=duration,
-                input_tokens=usage.input_tokens if usage else 0,
-                output_tokens=usage.output_tokens if usage else 0,
-            )
+                logger.info(
+                    f"Subagent '{self.config.name}' completed in {duration:.1f}s "
+                    f"({usage.input_tokens}in/{usage.output_tokens}out tokens)"
+                )
 
-        except asyncio.TimeoutError:
-            logger.error(f"Subagent '{self.config.name}' timed out after {self.config.timeout}s")
-            return SubagentResult(
-                output=f"Error: Task timed out after {self.config.timeout} seconds",
-                subagent_name=self.config.name,
-                task=task,
-                success=False,
-                error="timeout",
-                started_at=started_at,
-            )
+                return SubagentResult(
+                    output=result.output or "",
+                    subagent_name=self.config.name,
+                    task=task,
+                    success=True,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    duration_seconds=duration,
+                    input_tokens=usage.input_tokens if usage else 0,
+                    output_tokens=usage.output_tokens if usage else 0,
+                )
 
-        except Exception as e:
-            logger.error(f"Subagent '{self.config.name}' failed: {e}")
-            return SubagentResult(
-                output=f"Error: {str(e)}",
-                subagent_name=self.config.name,
-                task=task,
-                success=False,
-                error=str(e),
-                started_at=started_at,
-            )
+            except asyncio.TimeoutError:
+                logger.error(f"Subagent '{self.config.name}' timed out after {self.config.timeout}s")
+                return SubagentResult(
+                    output=f"Error: Task timed out after {self.config.timeout} seconds",
+                    subagent_name=self.config.name,
+                    task=task,
+                    success=False,
+                    error="timeout",
+                    started_at=started_at,
+                )
+
+            except Exception as e:
+                error_str = str(e)
+                # Check for rate limit error (429)
+                if "429" in error_str or "rate limit" in error_str.lower():
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"Subagent '{self.config.name}' hit rate limit, "
+                            f"retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})"
+                        )
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+
+                logger.error(f"Subagent '{self.config.name}' failed: {e}")
+                return SubagentResult(
+                    output=f"Error: {str(e)}",
+                    subagent_name=self.config.name,
+                    task=task,
+                    success=False,
+                    error=str(e),
+                    started_at=started_at,
+                )
+
+        # Should not reach here, but just in case
+        return SubagentResult(
+            output="Error: Max retries exceeded",
+            subagent_name=self.config.name,
+            task=task,
+            success=False,
+            error="max_retries",
+            started_at=started_at,
+        )
 
 
 # =============================================================================
