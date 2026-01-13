@@ -71,27 +71,36 @@ class ProjectService:
         projects.sort(key=lambda x: x.last_modified or "", reverse=True)
         return projects
 
-    def create(self, name: str, template: str = "article") -> ProjectInfo:
-        """Create a new project with starter template."""
-        project_path = PROJECTS_DIR / name
+    def create(self, name: str, path: Optional[str] = None, template: Optional[str] = None) -> ProjectInfo:
+        """
+        Create a new project.
 
-        if project_path.exists():
-            raise ValueError(f"Project '{name}' already exists")
-
-        project_path.mkdir(parents=True)
-        aura_dir = project_path / ".aura"
-        aura_dir.mkdir()
-
-        # Create starter main.tex
-        if template == "article":
-            starter_tex = self._article_template(name)
+        Args:
+            name: Project name
+            path: Optional custom path. If None, creates in ~/aura-projects/
+            template: Optional template ('article', 'minimal'). If None, creates empty project.
+        """
+        if path:
+            project_path = Path(path)
         else:
-            starter_tex = self._minimal_template(name)
+            project_path = PROJECTS_DIR / name
 
-        (project_path / "main.tex").write_text(starter_tex)
+        if project_path.exists() and any(project_path.iterdir()):
+            raise ValueError(f"Directory '{project_path}' already exists and is not empty")
 
-        # Create empty refs.bib
-        (project_path / "refs.bib").write_text("% Bibliography file\n")
+        project_path.mkdir(parents=True, exist_ok=True)
+        aura_dir = project_path / ".aura"
+        aura_dir.mkdir(exist_ok=True)
+
+        # Only create template files if template is specified
+        if template:
+            if template == "article":
+                starter_tex = self._article_template(name)
+            else:
+                starter_tex = self._minimal_template(name)
+
+            (project_path / "main.tex").write_text(starter_tex)
+            (project_path / "refs.bib").write_text("% Bibliography file\n")
 
         # Save config
         config = ProjectConfig(

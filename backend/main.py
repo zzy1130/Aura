@@ -92,7 +92,8 @@ class CompileResponse(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     name: str
-    template: str = "article"
+    path: Optional[str] = None  # Custom path, if None uses ~/aura-projects/
+    template: Optional[str] = None  # If None, creates empty project
 
 
 class FileReadRequest(BaseModel):
@@ -160,6 +161,24 @@ class AddNoteRequest(BaseModel):
 class UpdateEntryRequest(BaseModel):
     project_path: str
     data: dict
+
+
+# ============ Vibe Research Models ============
+
+class VibeResearchStartRequest(BaseModel):
+    project_path: str
+    topic: str
+    max_papers: int = 100
+    max_papers_to_read: int = 30
+    target_hypotheses: int = 5
+
+
+class VibeResearchRunRequest(BaseModel):
+    project_path: str
+
+
+class VibeResearchSessionRequest(BaseModel):
+    project_path: str
 
 
 # ============ Health Check ============
@@ -289,7 +308,11 @@ async def list_projects() -> list[dict]:
 async def create_project(request: CreateProjectRequest) -> dict:
     """Create a new project."""
     try:
-        project = project_service.create(name=request.name, template=request.template)
+        project = project_service.create(
+            name=request.name,
+            path=request.path,
+            template=request.template,
+        )
         return {
             "name": project.name,
             "path": project.path,
@@ -1394,6 +1417,412 @@ async def abort_merge(request: SyncRequest) -> dict:
     result = await sync.abort_merge()
 
     return result.to_dict()
+
+
+# ============ Vibe Research Endpoints ============
+
+@app.post("/api/vibe-research/start")
+async def start_vibe_research(request: VibeResearchStartRequest) -> dict:
+    """
+    Start a new vibe research session.
+
+    Vibe research is AI-led autonomous research that:
+    1. Clarifies scope with the user
+    2. Discovers relevant papers via arXiv and Semantic Scholar
+    3. Synthesizes themes from the literature
+    4. Identifies research gaps
+    5. Generates novel hypotheses
+    6. Evaluates and ranks hypotheses
+
+    Args:
+        project_path: Path to the LaTeX project
+        topic: Research topic or question
+        max_papers: Maximum papers to discover (default: 100)
+        max_papers_to_read: Maximum papers to read in full (default: 30)
+        target_hypotheses: Target number of hypotheses (default: 5)
+
+    Returns:
+        Session info including session_id
+    """
+    from agent.vibe_state import VibeResearchState
+
+    # Create new state
+    state = VibeResearchState(
+        topic=request.topic,
+        max_papers=request.max_papers,
+        max_papers_to_read=request.max_papers_to_read,
+        target_hypotheses=request.target_hypotheses,
+    )
+
+    # Save to project
+    state.save(request.project_path)
+
+    return {
+        "session_id": state.session_id,
+        "topic": state.topic,
+        "phase": state.current_phase.value,
+        "created_at": state.created_at,
+        "config": {
+            "max_papers": state.max_papers,
+            "max_papers_to_read": state.max_papers_to_read,
+            "target_hypotheses": state.target_hypotheses,
+        },
+    }
+
+
+@app.get("/api/vibe-research/sessions")
+async def list_vibe_sessions(project_path: str) -> dict:
+    """
+    List all vibe research sessions for a project.
+
+    Returns sessions sorted by creation date (newest first).
+    """
+    from agent.vibe_state import VibeResearchState
+
+    sessions = VibeResearchState.list_sessions(project_path)
+
+    return {
+        "count": len(sessions),
+        "sessions": sessions,
+    }
+
+
+@app.get("/api/vibe-research/status/{session_id}")
+async def get_vibe_status(session_id: str, project_path: str) -> dict:
+    """
+    Get status summary for a vibe research session.
+
+    Returns phase, progress, and counts.
+    """
+    from agent.vibe_state import VibeResearchState
+
+    state = VibeResearchState.load(project_path, session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    return {
+        "session_id": state.session_id,
+        "topic": state.topic,
+        "phase": state.current_phase.value,
+        "progress": state.phase_progress.get(state.current_phase.value, 0),
+        "is_complete": state.is_complete,
+        "stall_count": state.stall_count,
+        "papers_found": len(state.papers),
+        "papers_read": len(state.papers_read),
+        "themes_count": len(state.themes),
+        "gaps_count": len(state.gaps),
+        "hypotheses_count": len(state.hypotheses),
+    }
+
+
+@app.get("/api/vibe-research/state/{session_id}")
+async def get_vibe_state(session_id: str, project_path: str) -> dict:
+    """
+    Get full state for a vibe research session.
+
+    Returns complete state including papers, themes, gaps, and hypotheses.
+    """
+    from agent.vibe_state import VibeResearchState
+
+    state = VibeResearchState.load(project_path, session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    return state.to_dict()
+
+
+@app.get("/api/vibe-research/report/{session_id}")
+async def get_vibe_report(session_id: str, project_path: str) -> dict:
+    """
+    Get the final report for a completed vibe research session.
+
+    Returns the generated report and ranked hypotheses.
+    """
+    from agent.vibe_state import VibeResearchState
+    from pathlib import Path
+
+    state = VibeResearchState.load(project_path, session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    if not state.is_complete:
+        return {
+            "session_id": state.session_id,
+            "is_complete": False,
+            "phase": state.current_phase.value,
+            "message": "Research is still in progress",
+            "report": "",
+            "report_path": None,
+            "hypotheses": [],
+        }
+
+    # Check if report files exist
+    report_dir = Path(project_path) / "report"
+    tex_filename = f"vibe_research_{session_id}.tex"
+    bib_filename = f"vibe_research_{session_id}.bib"
+    tex_path = report_dir / tex_filename
+    bib_path = report_dir / bib_filename
+
+    return {
+        "session_id": state.session_id,
+        "is_complete": True,
+        "topic": state.topic,
+        "report": state.report,
+        "report_path": str(tex_path) if tex_path.exists() else None,
+        "report_filename": f"report/{tex_filename}",
+        "bib_path": str(bib_path) if bib_path.exists() else None,
+        "bib_filename": f"report/{bib_filename}",
+        "hypotheses": state.get_ranked_hypotheses(),
+        "papers_count": len(state.papers),
+        "themes_count": len(state.themes),
+        "gaps_count": len(state.gaps),
+    }
+
+
+@app.post("/api/vibe-research/run/{session_id}")
+async def run_vibe_iteration(session_id: str, request: VibeResearchRunRequest) -> dict:
+    """
+    Run one iteration of vibe research.
+
+    The research agent will perform one action based on current state.
+    Call this repeatedly until is_complete=True or use streaming endpoint.
+
+    Returns:
+        Updated status and the action taken
+    """
+    from agent.vibe_state import VibeResearchState, ResearchPhase
+    from agent.subagents.research import ResearchAgent, ResearchMode
+
+    state = VibeResearchState.load(request.project_path, session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    if state.is_complete:
+        return {
+            "session_id": state.session_id,
+            "is_complete": True,
+            "message": "Research already complete",
+            "phase": state.current_phase.value,
+        }
+
+    # Run one iteration via research agent in VIBE mode
+    try:
+        # Mark session as running
+        _running_vibe_sessions[session_id] = True
+
+        # Create agent in VIBE mode (uses longer timeout)
+        agent = ResearchAgent(mode=ResearchMode.VIBE)
+
+        # Determine task based on phase
+        phase_tasks = {
+            ResearchPhase.SCOPING: f"Clarify the scope for research on: {state.topic}",
+            ResearchPhase.DISCOVERY: f"Search for papers on: {state.topic}",
+            ResearchPhase.SYNTHESIS: "Analyze papers and identify themes",
+            ResearchPhase.IDEATION: "Identify gaps and generate hypotheses",
+            ResearchPhase.EVALUATION: "Score and rank hypotheses",
+        }
+        task = phase_tasks.get(state.current_phase, f"Continue research on: {state.topic}")
+
+        result = await agent.run(
+            task=task,
+            project_path=request.project_path,
+            mode=ResearchMode.VIBE,
+            vibe_state=state,
+        )
+
+        # Check if stopped
+        if not _running_vibe_sessions.get(session_id, True):
+            return {
+                "session_id": session_id,
+                "is_complete": False,
+                "stopped": True,
+                "message": "Research stopped by user",
+                "phase": state.current_phase.value,
+            }
+
+        # Reload state (agent may have modified it)
+        state = VibeResearchState.load(request.project_path, session_id)
+
+        return {
+            "session_id": state.session_id,
+            "is_complete": state.is_complete,
+            "phase": state.current_phase.value,
+            "progress": state.phase_progress.get(state.current_phase.value, 0),
+            "last_action": state.last_action,
+            "output": result.output if result else "",
+            "papers_found": len(state.papers),
+            "hypotheses_count": len(state.hypotheses),
+        }
+
+    except Exception as e:
+        logger.error(f"Vibe research error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up running state
+        _running_vibe_sessions.pop(session_id, None)
+
+
+@app.post("/api/vibe-research/stream/{session_id}")
+async def stream_vibe_research(session_id: str, request: VibeResearchRunRequest):
+    """
+    Stream vibe research progress via Server-Sent Events.
+
+    Runs the research agent continuously until completion or error,
+    streaming progress updates.
+    """
+    from agent.vibe_state import VibeResearchState, ResearchPhase
+    from agent.subagents.research import ResearchAgent, ResearchMode
+
+    state = VibeResearchState.load(request.project_path, session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    async def event_generator():
+        nonlocal state
+
+        try:
+            # Create agent in VIBE mode (uses longer timeout)
+            agent = ResearchAgent(mode=ResearchMode.VIBE)
+
+            while not state.is_complete:
+                # Yield current status
+                yield {
+                    "event": "status",
+                    "data": json.dumps({
+                        "type": "status",
+                        "phase": state.current_phase.value,
+                        "progress": state.phase_progress.get(state.current_phase.value, 0),
+                        "papers_found": len(state.papers),
+                        "hypotheses_count": len(state.hypotheses),
+                    }),
+                }
+
+                # Determine task
+                phase_tasks = {
+                    ResearchPhase.SCOPING: f"Clarify the scope for research on: {state.topic}",
+                    ResearchPhase.DISCOVERY: f"Search for papers on: {state.topic}",
+                    ResearchPhase.SYNTHESIS: "Analyze papers and identify themes",
+                    ResearchPhase.IDEATION: "Identify gaps and generate hypotheses",
+                    ResearchPhase.EVALUATION: "Score and rank hypotheses",
+                }
+                task = phase_tasks.get(state.current_phase, f"Continue research on: {state.topic}")
+
+                # Run iteration
+                result = await agent.run(
+                    task=task,
+                    project_path=request.project_path,
+                    mode=ResearchMode.VIBE,
+                    vibe_state=state,
+                )
+
+                # Reload state
+                state = VibeResearchState.load(request.project_path, session_id)
+
+                # Yield action
+                yield {
+                    "event": "action",
+                    "data": json.dumps({
+                        "type": "action",
+                        "action": state.last_action,
+                        "output": result.output[:500] if result else "",
+                    }),
+                }
+
+            # Complete
+            yield {
+                "event": "complete",
+                "data": json.dumps({
+                    "type": "complete",
+                    "session_id": state.session_id,
+                    "hypotheses_count": len(state.hypotheses),
+                }),
+            }
+
+        except Exception as e:
+            logger.error(f"Vibe research stream error: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "type": "error",
+                    "message": str(e),
+                }),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+# Track running vibe research sessions for cancellation
+_running_vibe_sessions: dict[str, bool] = {}
+
+
+@app.delete("/api/vibe-research/{session_id}")
+async def delete_vibe_session(session_id: str, project_path: str) -> dict:
+    """
+    Delete a vibe research session.
+
+    Args:
+        session_id: The session ID to delete
+        project_path: Path to the project
+
+    Returns:
+        Confirmation of deletion
+    """
+    from pathlib import Path
+
+    # Check if session exists
+    aura_dir = Path(project_path) / ".aura"
+    state_file = aura_dir / f"vibe_research_{session_id}.json"
+
+    if not state_file.exists():
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    # Mark as stopped if running
+    _running_vibe_sessions[session_id] = False
+
+    # Delete the file
+    state_file.unlink()
+
+    return {
+        "success": True,
+        "message": f"Session {session_id} deleted",
+    }
+
+
+@app.post("/api/vibe-research/stop/{session_id}")
+async def stop_vibe_session(session_id: str) -> dict:
+    """
+    Stop a running vibe research session.
+
+    This sets a flag that will be checked by the running agent.
+    The agent will stop after completing its current action.
+
+    Args:
+        session_id: The session ID to stop
+
+    Returns:
+        Confirmation that stop was requested
+    """
+    _running_vibe_sessions[session_id] = False
+
+    return {
+        "success": True,
+        "message": f"Stop requested for session {session_id}",
+    }
+
+
+def is_session_running(session_id: str) -> bool:
+    """Check if a session should continue running."""
+    return _running_vibe_sessions.get(session_id, True)
+
+
+def mark_session_running(session_id: str):
+    """Mark a session as running."""
+    _running_vibe_sessions[session_id] = True
+
+
+def mark_session_stopped(session_id: str):
+    """Mark a session as stopped."""
+    _running_vibe_sessions.pop(session_id, None)
 
 
 # ============ Run Server ============

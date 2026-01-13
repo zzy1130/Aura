@@ -169,6 +169,7 @@ class GitSyncService:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(self.project_path),
+                stdin=asyncio.subprocess.DEVNULL,  # Prevent stdin blocking
                 stdout=asyncio.subprocess.PIPE if capture_output else None,
                 stderr=asyncio.subprocess.PIPE if capture_output else None,
                 env=env,
@@ -244,8 +245,14 @@ class GitSyncService:
             return result.stdout.strip()
         return None
 
-    async def get_status(self) -> SyncInfo:
-        """Get comprehensive sync status."""
+    async def get_status(self, fetch: bool = True) -> SyncInfo:
+        """
+        Get comprehensive sync status.
+
+        Args:
+            fetch: If True, fetches from remote first (slower but accurate).
+                   If False, uses cached remote info (faster for local-only checks).
+        """
         info = SyncInfo(status=SyncStatus.NOT_INITIALIZED)
 
         # Check if git repo
@@ -277,8 +284,9 @@ class GitSyncService:
             info.status = SyncStatus.LOCAL_CHANGES
             return info
 
-        # Fetch to check remote status
-        await self._run_git("fetch", "origin", check=False)
+        # Fetch to check remote status (skip if fetch=False for speed)
+        if fetch:
+            await self._run_git("fetch", "origin", check=False, timeout=60)
 
         # Check ahead/behind
         result = await self._run_git(
@@ -552,8 +560,8 @@ class GitSyncService:
                 message="No remote configured. Run setup first.",
             )
 
-        # Check for uncommitted changes
-        status = await self.get_status()
+        # Check for uncommitted changes (no need to fetch for this)
+        status = await self.get_status(fetch=False)
 
         if status.uncommitted_files:
             # Stage all changes

@@ -115,6 +115,149 @@ export interface MemoryData {
 export type MemoryEntryType = 'papers' | 'citations' | 'conventions' | 'todos' | 'notes';
 
 // =============================================================================
+// Vibe Research Types
+// =============================================================================
+
+export type VibeResearchPhase =
+  | 'scoping'
+  | 'discovery'
+  | 'synthesis'
+  | 'ideation'
+  | 'evaluation'
+  | 'complete';
+
+export interface VibeSession {
+  session_id: string;
+  topic: string;
+  phase: VibeResearchPhase;
+  created_at: string;
+  config: {
+    max_papers: number;
+    max_papers_to_read: number;
+    target_hypotheses: number;
+  };
+}
+
+export interface VibeSessionSummary {
+  session_id: string;
+  topic: string;
+  current_phase: VibeResearchPhase;
+  is_complete: boolean;
+  created_at: string;
+  papers_count: number;
+  hypotheses_count: number;
+}
+
+export interface VibeSessionList {
+  count: number;
+  sessions: VibeSessionSummary[];
+}
+
+export interface VibeStatus {
+  session_id: string;
+  topic: string;
+  phase: VibeResearchPhase;
+  progress: number;
+  is_complete: boolean;
+  stall_count: number;
+  papers_found: number;
+  papers_read: number;
+  themes_count: number;
+  gaps_count: number;
+  hypotheses_count: number;
+}
+
+export interface VibePaper {
+  paper_id: string;
+  title: string;
+  authors: string[];
+  year?: number;
+  abstract: string;
+  citation_count: number;
+  url: string;
+  source: string;
+}
+
+export interface VibeTheme {
+  theme_id: string;
+  name: string;
+  description: string;
+  paper_ids: string[];
+}
+
+export interface VibeGap {
+  gap_id: string;
+  title: string;
+  evidence: string;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export interface VibeHypothesis {
+  hypothesis_id: string;
+  gap_id: string;
+  title: string;
+  description: string;
+  rationale: string;
+  building_blocks: string;
+  suggested_experiments: string;
+  novelty_score: number;
+  feasibility_score: number;
+  impact_score: number;
+  similar_work: string;
+  differentiation: string;
+}
+
+export interface VibeState {
+  session_id: string;
+  created_at: string;
+  topic: string;
+  scope: Record<string, unknown>;
+  papers: VibePaper[];
+  papers_read: string[];
+  themes: VibeTheme[];
+  gaps: VibeGap[];
+  hypotheses: VibeHypothesis[];
+  current_phase: VibeResearchPhase;
+  phase_progress: Record<string, number>;
+  last_action: string;
+  current_activity: string;
+  updated_at: string;
+  stall_count: number;
+  action_history: string[];
+  is_complete: boolean;
+  report: string;
+  max_papers: number;
+  max_papers_to_read: number;
+  target_hypotheses: number;
+}
+
+export interface VibeReport {
+  session_id: string;
+  is_complete: boolean;
+  topic?: string;
+  phase?: VibeResearchPhase;
+  message?: string;
+  report: string;
+  report_path?: string | null;
+  report_filename?: string;
+  hypotheses: VibeHypothesis[];
+  papers_count?: number;
+  themes_count?: number;
+  gaps_count?: number;
+}
+
+export interface VibeIterationResult {
+  session_id: string;
+  is_complete: boolean;
+  phase: VibeResearchPhase;
+  progress: number;
+  last_action: string;
+  output: string;
+  papers_found: number;
+  hypotheses_count: number;
+}
+
+// =============================================================================
 // API Client
 // =============================================================================
 
@@ -291,17 +434,20 @@ class ApiClient {
 
   /**
    * Create a new project
+   * @param name Project name
+   * @param path Optional custom path. If not provided, creates in ~/aura-projects/
+   * @param template Optional template ('article', 'minimal'). If not provided, creates empty project
    */
-  async createProject(name: string, template: string = 'article'): Promise<Project> {
+  async createProject(name: string, path?: string, template?: string): Promise<Project> {
     await this.ensureInitialized();
 
     const url = `${this.baseUrl}/api/projects`;
-    console.log('[API] createProject:', url, { name, template });
+    console.log('[API] createProject:', url, { name, path, template });
 
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, template }),
+      body: JSON.stringify({ name, path, template }),
     });
 
     if (!response.ok) {
@@ -726,6 +872,189 @@ class ApiClient {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new Error(error.detail || `HTTP ${response.status}`);
     }
+  }
+
+  // ===========================================================================
+  // Vibe Research Operations
+  // ===========================================================================
+
+  /**
+   * Start a new vibe research session
+   */
+  async startVibeResearch(
+    projectPath: string,
+    topic: string,
+    config?: {
+      maxPapers?: number;
+      maxPapersToRead?: number;
+      targetHypotheses?: number;
+    }
+  ): Promise<VibeSession> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/start`;
+    console.log('[API] startVibeResearch:', url, { projectPath, topic });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        topic,
+        max_papers: config?.maxPapers ?? 100,
+        max_papers_to_read: config?.maxPapersToRead ?? 30,
+        target_hypotheses: config?.targetHypotheses ?? 5,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * List all vibe research sessions for a project
+   */
+  async listVibeSessions(projectPath: string): Promise<VibeSessionList> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/sessions?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] listVibeSessions:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get status summary for a vibe research session
+   */
+  async getVibeStatus(projectPath: string, sessionId: string): Promise<VibeStatus> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/status/${sessionId}?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] getVibeStatus:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get full state for a vibe research session
+   */
+  async getVibeState(projectPath: string, sessionId: string): Promise<VibeState> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/state/${sessionId}?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] getVibeState:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get the final report for a vibe research session
+   */
+  async getVibeReport(projectPath: string, sessionId: string): Promise<VibeReport> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/report/${sessionId}?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] getVibeReport:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Run one iteration of vibe research
+   */
+  async runVibeIteration(projectPath: string, sessionId: string): Promise<VibeIterationResult> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/run/${sessionId}`;
+    console.log('[API] runVibeIteration:', url);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Stop a running vibe research session
+   */
+  async stopVibeResearch(sessionId: string): Promise<{ success: boolean; message: string }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/stop/${sessionId}`;
+    console.log('[API] stopVibeResearch:', url);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Delete a vibe research session
+   */
+  async deleteVibeSession(projectPath: string, sessionId: string): Promise<{ success: boolean; message: string }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/vibe-research/${sessionId}?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] deleteVibeSession:', url);
+
+    const response = await fetch(url, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
   }
 
   // ===========================================================================

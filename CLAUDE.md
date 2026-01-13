@@ -4,7 +4,7 @@
 
 Aura is a **local-first macOS desktop LaTeX IDE** with an embedded AI agent. Think "Overleaf + Claude Code" as a native app.
 
-**Current Status**: Phase 6 complete (Project memory system), Phase 7 (Deep Research Engine) next.
+**Current Status**: Phase 7 complete (Vibe Research Engine).
 
 ## Architecture Summary
 
@@ -14,6 +14,8 @@ Electron (.app) → Next.js UI → FastAPI Backend → Pydantic AI Agent
                               Tools (decorator-based)
                                       ↓
                     Docker (LaTeX) | arXiv API | PDF Reader | Git
+                                      ↓
+                         ResearchAgent (CHAT | VIBE mode)
 ```
 
 ## Quick Reference
@@ -218,7 +220,19 @@ Research subagent:
 | 4 | ✅ | Electron shell + UI components |
 | 5 | ✅ | Git/Overleaf sync + packaging |
 | 6 | ✅ | Project memory system |
-| 7 | **NEXT** | Deep Research Engine |
+| 7 | ✅ | Vibe Research Engine (see `docs/plans/2026-01-13-vibe-research-implementation.md`) |
+
+## Phase 7: Vibe Research (Complete)
+
+Extends ResearchAgent with two modes:
+- **CHAT mode**: Quick searches, paper summaries (current behavior)
+- **VIBE mode**: Autonomous deep research with hypothesis generation
+
+Key components:
+- `VibeResearchState` - Dual-ledger tracking (Task + Progress)
+- `SemanticScholarClient` - Citation graph traversal
+- New tools: `explore_citations`, `record_gap`, `generate_hypothesis`, `score_hypothesis`, etc.
+- 5-phase workflow: SCOPING → DISCOVERY → SYNTHESIS → IDEATION → EVALUATION
 
 ## Git Workflow
 
