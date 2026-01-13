@@ -2243,3 +2243,198 @@ git commit -m "feat(vibe): Complete Phase 7 vibe research implementation"
 - `save_to_memory` - Persist findings
 
 **Total commits**: 6
+
+---
+
+## Recent Improvements (Post-Initial Implementation)
+
+The following enhancements were made after the initial Phase 7 implementation to improve real-time feedback, citation accuracy, and research quality.
+
+### 1. Real-Time Activity Tracking
+
+**Problem**: UI only updated after the full research iteration completed, leaving users with no visibility into what the agent was doing.
+
+**Solution**: Added `current_activity` and `updated_at` fields to `VibeResearchState` for real-time status updates.
+
+**Files Modified**:
+- `backend/agent/vibe_state.py` - Added `current_activity: str` and `updated_at: str` fields
+- `backend/agent/subagents/research.py` - Update `current_activity` before each tool call
+- `app/components/VibeResearchView.tsx` - Display current activity with timestamp
+- `app/lib/api.ts` - Added `getVibeState()` method for full state retrieval
+
+**Key Code**:
+```python
+# In vibe_state.py
+current_activity: str = ""  # What the agent is currently doing
+updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+def set_activity(self, activity: str) -> None:
+    """Set current activity and update timestamp."""
+    self.current_activity = activity
+    self.updated_at = datetime.now().isoformat()
+```
+
+**Frontend Polling**: Changed from 3s to 1.5s for more responsive updates.
+
+### 2. Citation Mismatch Fix
+
+**Problem**: LaTeX reports had missing citations (only 2 out of 35 theme papers cited) due to paper ID version mismatch. Theme paper IDs stored without version (e.g., `'2512.13930'`) but papers stored with version (e.g., `'2512.13930v1'`).
+
+**Solution**: Added flexible paper ID matching with version stripping.
+
+**Files Modified**:
+- `backend/agent/subagents/research.py` - Added `strip_version()` helper and `cite_keys_by_base` mapping
+
+**Key Code**:
+```python
+# Helper to strip version number from paper ID
+def strip_version(paper_id: str) -> str:
+    import re
+    return re.sub(r'v\d+$', '', paper_id)
+
+# Build both exact and base-ID cite key mappings
+cite_keys = {}  # paper_id -> cite_key
+cite_keys_by_base = {}  # base_paper_id (no version) -> cite_key
+
+for paper in state.papers:
+    cite_keys[paper_id] = cite_key
+    base_id = strip_version(paper_id)
+    if base_id not in cite_keys_by_base:
+        cite_keys_by_base[base_id] = cite_key
+
+# Flexible citation lookup in theme section
+for pid in paper_ids:
+    cite_key = cite_keys.get(pid) or cite_keys_by_base.get(strip_version(pid))
+```
+
+### 3. Phase Transition Enforcement
+
+**Problem**: Agent was advancing through phases too quickly without reading enough papers (only 4 papers read out of 200+ found).
+
+**Solution**: Added minimum requirements before phase transitions in `advance_phase` tool.
+
+**Files Modified**:
+- `backend/agent/subagents/research.py` - Added phase transition checks
+
+**Key Code**:
+```python
+# In advance_phase tool
+if current == ResearchPhase.DISCOVERY and phase == ResearchPhase.SYNTHESIS:
+    if len(state.papers) < 30:
+        return f"Cannot advance: Need at least 30 papers found (currently have {len(state.papers)}). Keep searching!"
+
+if current == ResearchPhase.SYNTHESIS and phase == ResearchPhase.IDEATION:
+    papers_read = len(state.papers_read)
+    themes_count = len(state.themes)
+    issues = []
+    if papers_read < 10:
+        issues.append(f"read at least 10 papers (currently {papers_read})")
+    if themes_count < 3:
+        issues.append(f"record at least 3 themes (currently {themes_count})")
+    if issues:
+        return f"Cannot advance: You need to {' and '.join(issues)}. Use `read_arxiv_paper` to read more papers!"
+```
+
+**System Prompt Enhancement**:
+```python
+### Phase 3: SYNTHESIS
+**CRITICAL: You MUST read papers, not just abstracts!**
+
+Read and analyze key papers thoroughly:
+1. Call `read_arxiv_paper` for AT LEAST 15-20 papers (prioritize by citations)
+2. For each paper you read, extract key findings before moving to the next
+3. Call `record_theme` ONLY after reading multiple papers that share an approach
+4. Themes should be based on deep understanding, not just titles/abstracts
+
+**MINIMUM REQUIREMENT**: Do NOT advance to IDEATION until you have:
+- Read at least 15 papers with `read_arxiv_paper`
+- Recorded at least 5 themes with `record_theme`
+```
+
+### 4. Reports Saved in Subdirectory
+
+**Problem**: LaTeX reports were saved in the project root, cluttering the project.
+
+**Solution**: Reports now saved in `report/` subdirectory.
+
+**Files Modified**:
+- `backend/agent/subagents/research.py` - Create `report/` subdirectory for output
+
+**Key Code**:
+```python
+# Create report directory
+report_dir = Path(project_path) / "report"
+report_dir.mkdir(exist_ok=True)
+
+# Save files
+tex_path = report_dir / f"vibe_research_{state.session_id}.tex"
+bib_path = report_dir / f"vibe_research_{state.session_id}.bib"
+```
+
+### 5. Session Stop/Delete Functionality
+
+**Files Modified**:
+- `backend/main.py` - Added stop and delete endpoints
+- `app/lib/api.ts` - Added `stopVibeSession()` and `deleteVibeSession()` methods
+- `app/components/VibeResearchView.tsx` - Added stop/delete buttons
+
+**API Endpoints**:
+```python
+@app.post("/api/vibe-research/stop/{session_id}")
+async def stop_vibe_session(session_id: str, project_path: str):
+    """Stop a running vibe research session."""
+
+@app.delete("/api/vibe-research/{session_id}")
+async def delete_vibe_session(session_id: str, project_path: str):
+    """Delete a vibe research session and its files."""
+```
+
+### 6. Frontend VibeResearchView Component
+
+**Files Created**:
+- `app/components/VibeResearchView.tsx` - Full vibe research UI component
+
+**Features**:
+- Phase indicator with color-coded progress bar
+- Collapsible sections for Themes, Gaps, Hypotheses
+- Real-time activity display with timestamp
+- Paper count (found/read)
+- Run iteration and Generate Report buttons
+- Stop/Delete session controls
+- Stall warning display
+
+**Phase Colors**:
+| Phase | Color | Tailwind |
+|-------|-------|----------|
+| SCOPING | Purple | `bg-purple-100 text-purple-800` |
+| DISCOVERY | Blue | `bg-blue-100 text-blue-800` |
+| SYNTHESIS | Green | `bg-green-100 text-green-800` |
+| IDEATION | Yellow | `bg-yellow-100 text-yellow-800` |
+| EVALUATION | Orange | `bg-orange-100 text-orange-800` |
+| COMPLETE | Green | `bg-green3 text-green1` |
+
+---
+
+## Files Summary (Complete)
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `backend/services/semantic_scholar.py` | S2 API client with citation graph | ✅ |
+| `backend/agent/vibe_state.py` | Dual-ledger state tracking | ✅ |
+| `backend/agent/subagents/research.py` | Enhanced ResearchAgent | ✅ |
+| `backend/main.py` | API endpoints | ✅ |
+| `app/lib/api.ts` | Frontend API client | ✅ |
+| `app/components/AgentPanel.tsx` | Mode toggle UI | ✅ |
+| `app/components/VibeResearchView.tsx` | Vibe research display | ✅ |
+
+---
+
+## Known Limitations
+
+1. **Rate Limits**: Semantic Scholar API has rate limits (100 req/sec unauthenticated). The client has retry logic but heavy usage may hit limits.
+
+2. **PDF Reading**: arXiv PDF extraction works well, but some papers with complex layouts may have extraction issues.
+
+3. **Hypothesis Quality**: Hypothesis quality depends on the LLM's understanding. Users should review and refine generated hypotheses.
+
+4. **Session Recovery**: If the backend restarts mid-session, the agent can resume from saved state but loses in-memory context.
