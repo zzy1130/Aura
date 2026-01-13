@@ -83,12 +83,7 @@
       }
     ],
     "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": ["x64", "arm64"]
-        }
-      ],
+      "target": "dmg",
       "icon": "public/icon.icns",
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,

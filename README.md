@@ -207,15 +207,34 @@ npm run dev  # Electron + Next.js
 # Or: npm run next:dev  # Web only
 ```
 
-### Production Build
+### Production Build (DMG)
+
+Build a distributable DMG file:
 
 ```bash
 cd app
-npm run build
 npm run dist:mac
 ```
 
-The built `.app` will be in `app/dist/`.
+The DMG will be created at `app/dist/Aura-<version>-arm64.dmg` (~185MB).
+
+**What's included in the DMG:**
+- Electron app with bundled Next.js frontend
+- Python backend code (bundled as resources)
+- Dockerfile for LaTeX sandbox
+
+**Note:** The DMG is not code-signed by default. On first launch, users may need to:
+1. Right-click the app → Open
+2. Or: System Preferences → Security & Privacy → "Open Anyway"
+
+**Building for distribution:**
+```bash
+# Build for current architecture
+npm run dist:mac
+
+# Build unpacked directory (for testing)
+npm run pack
+```
 
 ---
 
