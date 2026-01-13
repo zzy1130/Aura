@@ -96,11 +96,14 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 |-------------|---------|---------|
 | **macOS** | 14+ | Primary platform (tested) |
 | **Python** | 3.11+ | Backend server |
+| **uv** | Latest | Python package manager (recommended) |
 | **Node.js** | 18+ | Frontend & Electron |
 | **npm** | 9+ | Package management |
 | **Docker Desktop** | Latest | LaTeX compilation sandbox |
 
 > **Note**: Docker is only required for LaTeX compilation. You can use the app for research without Docker, but compilation features won't work.
+
+> **Installing uv**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ### Setup
 
@@ -186,6 +189,12 @@ If you prefer manual control:
 **Terminal 1 - Backend:**
 ```bash
 cd backend
+
+# Using uv (recommended)
+uv sync
+uv run uvicorn main:app --reload --port 8000
+
+# Or using pip (fallback)
 pip install -r requirements.txt
 python3 -m uvicorn main:app --reload --port 8000
 ```

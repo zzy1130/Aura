@@ -22,6 +22,7 @@ BACKEND_DIR="$(dirname "$0")/../backend"
 FRONTEND_DIR="$(dirname "$0")/../app"
 BACKEND_PID=""
 FRONTEND_PID=""
+USE_UV=false
 
 # Resolve absolute paths
 BACKEND_DIR="$(cd "$BACKEND_DIR" && pwd)"
@@ -119,6 +120,15 @@ check_dependencies() {
     fi
     log_success "Python3 found: $(python3 --version)"
 
+    # Check for uv (preferred) or pip (fallback)
+    if command -v uv &> /dev/null; then
+        log_success "uv found: $(uv --version)"
+        USE_UV=true
+    else
+        log_warn "uv not found, falling back to pip"
+        USE_UV=false
+    fi
+
     # Check Node.js
     if ! command -v node &> /dev/null; then
         log_error "Node.js is not installed"
@@ -134,9 +144,17 @@ check_dependencies() {
     log_success "npm found: $(npm --version)"
 
     # Check if backend dependencies are installed
-    if ! python3 -c "import fastapi" 2>/dev/null; then
-        log_warn "FastAPI not installed. Installing backend dependencies..."
-        pip3 install -r "$BACKEND_DIR/requirements.txt"
+    if [ "$USE_UV" = true ]; then
+        # Check if uv.lock exists and sync if needed
+        if [ -f "$BACKEND_DIR/uv.lock" ]; then
+            log_info "Syncing backend dependencies with uv..."
+            (cd "$BACKEND_DIR" && uv sync --quiet)
+        fi
+    else
+        if ! python3 -c "import fastapi" 2>/dev/null; then
+            log_warn "FastAPI not installed. Installing backend dependencies..."
+            pip3 install -r "$BACKEND_DIR/requirements.txt"
+        fi
     fi
 
     # Check if frontend dependencies are installed
@@ -164,7 +182,12 @@ start_backend() {
     fi
 
     cd "$BACKEND_DIR"
-    python3 -m uvicorn main:app --host 127.0.0.1 --port $BACKEND_PORT --reload &
+
+    if [ "$USE_UV" = true ]; then
+        uv run uvicorn main:app --host 127.0.0.1 --port $BACKEND_PORT --reload &
+    else
+        python3 -m uvicorn main:app --host 127.0.0.1 --port $BACKEND_PORT --reload &
+    fi
     BACKEND_PID=$!
 
     if ! wait_for_backend; then
