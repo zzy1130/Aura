@@ -51,6 +51,7 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 - **Docker Sandbox**: Isolated TexLive environment
 - **Error Fixing**: AI-powered compilation error resolution
 - **Syntax Checking**: Pre-compilation validation
+- **Docker Guide**: Friendly setup instructions if Docker is not installed
 
 ---
 
@@ -90,16 +91,35 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 
 ## Installation
 
-### Prerequisites
+### For End Users (DMG)
+
+**Requirements:**
+- **macOS 14+** (Apple Silicon recommended)
+- **Docker Desktop** (for LaTeX compilation only)
+
+**That's it!** The DMG includes everything else:
+- Bundled Python backend (no Python installation needed)
+- Bundled Node.js runtime (no Node.js installation needed)
+- All dependencies pre-packaged
+
+**Installation Steps:**
+1. Download `Aura-x.x.x-arm64.dmg` from Releases
+2. Open the DMG and drag Aura to Applications
+3. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) if not already installed
+4. Launch Aura from Applications
+5. On first compile, Aura automatically builds the LaTeX Docker image
+
+> **Note:** The app is not code-signed. On first launch, right-click → Open, or go to System Preferences → Security & Privacy → "Open Anyway"
+
+### For Developers
 
 | Requirement | Version | Purpose |
 |-------------|---------|---------|
-| **macOS** | 14+ | Primary platform (tested) |
+| **macOS** | 14+ | Primary platform |
+| **Python** | 3.11+ | Backend development |
+| **Node.js** | 18+ | Frontend development |
+| **uv** | Latest | Python package management (recommended) |
 | **Docker Desktop** | Latest | LaTeX compilation sandbox |
-
-> **Note**: The DMG includes a bundled Python backend - no Python installation required for end users.
-
-> **For developers**: Python 3.11+, Node.js 18+, and uv are needed for development.
 
 ### Setup
 
@@ -526,8 +546,19 @@ lsof -ti:3000 | xargs kill -9  # Kill frontend
 
 ### Docker Not Running
 
-If LaTeX compilation fails:
-1. Ensure Docker Desktop is running
+If LaTeX compilation fails, Aura will display a friendly Docker installation guide:
+
+**Docker Not Installed:**
+- Step-by-step installation instructions
+- Direct download link for Docker Desktop
+- Note that Docker Desktop is free for personal use
+
+**Docker Not Running:**
+- Instructions to start Docker Desktop
+- Tip to enable auto-start on login
+
+You can also manually ensure Docker is set up:
+1. Ensure Docker Desktop is running (whale icon in menu bar)
 2. Build the LaTeX image: `cd sandbox && docker build -t aura-texlive .`
 
 ### Backend Won't Start

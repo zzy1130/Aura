@@ -17,9 +17,11 @@ import * as fs from 'fs';
 // Configuration
 // =============================================================================
 
-const isDev = process.env.NODE_ENV !== 'production';
+// Use app.isPackaged for reliable production detection
+// NODE_ENV isn't always set correctly in packaged apps
+const isDev = !app.isPackaged;
 const BACKEND_PORT = 8000;
-const FRONTEND_URL = isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../.next/server/app/index.html')}`;
+const FRONTEND_URL = 'http://localhost:3000';  // Only used in dev mode
 
 // =============================================================================
 // Global State
@@ -243,9 +245,13 @@ function createWindow(): void {
     mainWindow.loadURL(FRONTEND_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    // In production, __dirname is app.asar/main/dist
-    // So we need to go up 2 levels to get to app.asar root, then into out/
-    const indexPath = path.join(__dirname, '../../out/index.html');
+    // In production, the out folder is unpacked from asar
+    // It's located at: app.asar.unpacked/out/index.html
+    // __dirname is inside app.asar/main/dist
+    // So we need: go up to app.asar, replace with app.asar.unpacked, then out/
+    const asarPath = path.join(__dirname, '../..');  // app.asar
+    const unpackedPath = asarPath + '.unpacked';
+    const indexPath = path.join(unpackedPath, 'out/index.html');
     console.log('Loading production index from:', indexPath);
     mainWindow.loadFile(indexPath);
   }

@@ -6,6 +6,8 @@ const nextConfig = {
   },
   // Disable server-side features for Electron
   trailingSlash: true,
+  // Use relative paths for Electron file:// loading
+  assetPrefix: './',
   // Fix for react-pdf and pdfjs-dist
   webpack: (config) => {
     config.resolve.alias.canvas = false;

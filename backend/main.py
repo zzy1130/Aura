@@ -88,6 +88,7 @@ class CompileResponse(BaseModel):
     pdf_path: Optional[str] = None
     error_summary: str = ""
     log_output: str = ""
+    docker_not_available: bool = False  # True if Docker is not installed/running
 
 
 class CreateProjectRequest(BaseModel):
@@ -224,6 +225,7 @@ async def compile_latex(request: CompileRequest):
         pdf_path=result.pdf_path,
         error_summary=result.error_summary,
         log_output=result.log_output[-5000:] if result.log_output else "",  # Limit log size
+        docker_not_available=result.docker_not_available,
     )
 
 

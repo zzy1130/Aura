@@ -8,19 +8,36 @@ Usage: pyinstaller aura-backend.spec
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import copy_metadata, collect_all
 
 # Get the backend directory
 backend_dir = Path(SPECPATH)
+
+# Collect package metadata that pydantic_ai and other packages need
+datas = []
+datas += copy_metadata('genai_prices')
+datas += copy_metadata('pydantic_ai')
+datas += copy_metadata('pydantic_ai_slim')
+datas += copy_metadata('pydantic')
+datas += copy_metadata('pydantic_core')
+datas += copy_metadata('anthropic')
+datas += copy_metadata('httpx')
+datas += copy_metadata('httpcore')
+datas += copy_metadata('fastapi')
+datas += copy_metadata('starlette')
+datas += copy_metadata('uvicorn')
+
+# Include our source packages
+datas += [
+    ('agent', 'agent'),
+    ('services', 'services'),
+]
 
 a = Analysis(
     ['main.py'],
     pathex=[str(backend_dir)],
     binaries=[],
-    datas=[
-        # Include all Python packages
-        ('agent', 'agent'),
-        ('services', 'services'),
-    ],
+    datas=datas,
     hiddenimports=[
         # FastAPI and dependencies
         'uvicorn',

@@ -225,6 +225,14 @@ start_electron() {
     log_info "Starting Electron desktop app..."
     log_info "(This will also start the Next.js server)"
 
+    # Check if port is already in use
+    if lsof -Pi :$FRONTEND_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+        log_warn "Port $FRONTEND_PORT is already in use"
+        log_info "Killing existing process..."
+        lsof -Pi :$FRONTEND_PORT -sTCP:LISTEN -t | xargs kill -9 2>/dev/null || true
+        sleep 1
+    fi
+
     cd "$FRONTEND_DIR"
 
     # npm run dev starts both Next.js and Electron with concurrently

@@ -9,6 +9,7 @@ import AgentPanel from '@/components/AgentPanel';
 import NewProjectModal from '@/components/NewProjectModal';
 import SettingsModal from '@/components/SettingsModal';
 import MemoryModal from '@/components/MemoryModal';
+import DockerGuide from '@/components/DockerGuide';
 import ResizeHandle from '@/components/ResizeHandle';
 import { api, SyncStatus } from '@/lib/api';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
@@ -56,6 +57,8 @@ export default function Home() {
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
+  const [showDockerGuide, setShowDockerGuide] = useState(false);
+  const [dockerIsInstalled, setDockerIsInstalled] = useState(false);
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -305,7 +308,15 @@ export default function Home() {
         }
       } else {
         setCompileStatus('error');
-        setError(result.error_summary || 'Compilation failed');
+        // Check if Docker is not available
+        if (result.docker_not_available) {
+          // Determine if Docker is installed but not running
+          const isInstalled = result.error_summary.includes('not running');
+          setDockerIsInstalled(isInstalled);
+          setShowDockerGuide(true);
+        } else {
+          setError(result.error_summary || 'Compilation failed');
+        }
       }
     } catch (err) {
       console.error('Compilation error:', err);
@@ -687,6 +698,13 @@ export default function Home() {
         isOpen={showMemory}
         onClose={() => setShowMemory(false)}
         projectPath={project.path}
+      />
+
+      {/* Docker Installation Guide */}
+      <DockerGuide
+        isOpen={showDockerGuide}
+        onClose={() => setShowDockerGuide(false)}
+        isInstalled={dockerIsInstalled}
       />
     </div>
   );

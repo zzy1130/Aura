@@ -13,6 +13,7 @@ export interface CompileResult {
   pdf_path: string | null;
   error_summary: string;
   log_output: string;
+  docker_not_available?: boolean;  // True if Docker is not installed/running
 }
 
 export interface ProjectFile {

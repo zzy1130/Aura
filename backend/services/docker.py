@@ -16,6 +16,49 @@ logger = logging.getLogger(__name__)
 IMAGE_NAME = "aura-texlive"
 DOCKERFILE_PATH = Path(__file__).parent.parent.parent / "sandbox"
 
+# Friendly error message for Docker not being installed
+DOCKER_NOT_INSTALLED_MESSAGE = """Docker is not installed or not running.
+
+Aura uses Docker to compile LaTeX documents in a safe, isolated environment.
+
+📥 **How to Install Docker Desktop:**
+
+1. Download Docker Desktop for Mac from:
+   https://www.docker.com/products/docker-desktop/
+
+2. Open the downloaded .dmg file and drag Docker to Applications
+
+3. Launch Docker from Applications
+
+4. Wait for Docker to start (you'll see a whale icon in the menu bar)
+
+5. Return to Aura and try compiling again!
+
+💡 **Tip:** Docker Desktop is free for personal use and educational purposes.
+
+🔗 **Direct Download Link:**
+https://desktop.docker.com/mac/main/arm64/Docker.dmg
+"""
+
+DOCKER_NOT_RUNNING_MESSAGE = """Docker is installed but not running.
+
+Please start Docker Desktop:
+
+1. Open Docker from your Applications folder
+2. Wait for the whale icon to appear in the menu bar
+3. Once Docker shows "Docker Desktop is running", try compiling again!
+
+💡 **Tip:** You can set Docker to start automatically on login in Docker Desktop preferences.
+"""
+
+
+class DockerNotAvailableError(Exception):
+    """Raised when Docker is not available."""
+    def __init__(self, message: str, is_installed: bool = False):
+        super().__init__(message)
+        self.message = message
+        self.is_installed = is_installed
+
 
 @dataclass
 class CompileResult:
@@ -24,6 +67,7 @@ class CompileResult:
     pdf_path: Optional[str] = None
     log_output: str = ""
     error_summary: str = ""
+    docker_not_available: bool = False  # Flag to indicate Docker issue
 
 
 class DockerLatex:
@@ -34,8 +78,34 @@ class DockerLatex:
     """
 
     def __init__(self):
-        self.client = docker.from_env()
-        self._ensure_image()
+        self.client = None
+        self.docker_available = False
+        self.docker_installed = False
+        self._init_docker()
+
+    def _init_docker(self) -> None:
+        """Initialize Docker client and check availability."""
+        try:
+            self.client = docker.from_env()
+            self.client.ping()
+            self.docker_installed = True
+            self.docker_available = True
+            self._ensure_image()
+        except docker.errors.DockerException as e:
+            # Docker is installed but not running
+            if "connection refused" in str(e).lower() or "connect" in str(e).lower():
+                self.docker_installed = True
+                self.docker_available = False
+                logger.warning("Docker is installed but not running")
+            else:
+                # Docker might not be installed
+                self.docker_installed = False
+                self.docker_available = False
+                logger.warning(f"Docker not available: {e}")
+        except Exception as e:
+            self.docker_installed = False
+            self.docker_available = False
+            logger.warning(f"Docker not available: {e}")
 
     def _ensure_image(self) -> None:
         """Build the texlive image if it doesn't exist."""
@@ -70,6 +140,21 @@ class DockerLatex:
         Returns:
             CompileResult with success status, paths, and logs
         """
+        # Check if Docker is available
+        if not self.docker_available:
+            if self.docker_installed:
+                return CompileResult(
+                    success=False,
+                    error_summary=DOCKER_NOT_RUNNING_MESSAGE,
+                    docker_not_available=True
+                )
+            else:
+                return CompileResult(
+                    success=False,
+                    error_summary=DOCKER_NOT_INSTALLED_MESSAGE,
+                    docker_not_available=True
+                )
+
         project_path = Path(project_path).resolve()
 
         if not project_path.exists():
@@ -238,6 +323,21 @@ class DockerLatex:
 
         Uses -draftmode for faster checking.
         """
+        # Check if Docker is available
+        if not self.docker_available:
+            if self.docker_installed:
+                return CompileResult(
+                    success=False,
+                    error_summary=DOCKER_NOT_RUNNING_MESSAGE,
+                    docker_not_available=True
+                )
+            else:
+                return CompileResult(
+                    success=False,
+                    error_summary=DOCKER_NOT_INSTALLED_MESSAGE,
+                    docker_not_available=True
+                )
+
         project_path = Path(project_path).resolve()
         tex_file = project_path / filename
 
