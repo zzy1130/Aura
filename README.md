@@ -92,10 +92,18 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 
 ### Prerequisites
 
-- **macOS** (tested on macOS 14+)
-- **Python 3.11+**
-- **Node.js 18+**
-- **Docker Desktop**
+| Requirement | Version | Purpose |
+|-------------|---------|---------|
+| **macOS** | 14+ | Primary platform (tested) |
+| **Python** | 3.11+ | Backend server |
+| **uv** | Latest | Python package manager (recommended) |
+| **Node.js** | 18+ | Frontend & Electron |
+| **npm** | 9+ | Package management |
+| **Docker Desktop** | Latest | LaTeX compilation sandbox |
+
+> **Note**: Docker is only required for LaTeX compilation. You can use the app for research without Docker, but compilation features won't work.
+
+> **Installing uv**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ### Setup
 
@@ -105,55 +113,98 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
    cd Aura
    ```
 
-2. **Build the Docker LaTeX image**
+2. **Build the Docker LaTeX image** (required for compilation)
    ```bash
    cd sandbox
    docker build -t aura-texlive .
    cd ..
    ```
 
-3. **Install backend dependencies**
-   ```bash
-   cd backend
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   cd ..
-   ```
-
-4. **Install frontend dependencies**
-   ```bash
-   cd app
-   npm install
-   cd ..
-   ```
+That's it! The start script handles dependency installation automatically.
 
 ---
 
 ## Quick Start
 
-### Development Mode
+Aura provides a unified start script that handles everything:
+
+```bash
+# Make the script executable (first time only)
+chmod +x scripts/start.sh
+```
+
+### Desktop App (Recommended)
+
+```bash
+./scripts/start.sh --electron
+```
+
+This starts:
+- Backend server on `http://localhost:8000`
+- Electron desktop app with embedded Next.js frontend
+
+### Web Development Mode
+
+```bash
+./scripts/start.sh
+```
+
+This starts:
+- Backend server on `http://localhost:8000`
+- Web frontend on `http://localhost:3000`
+
+Open http://localhost:3000 in your browser.
+
+### Other Options
+
+```bash
+# Start only the backend (for API testing)
+./scripts/start.sh --backend-only
+
+# Start only the frontend (assumes backend is already running)
+./scripts/start.sh --frontend-only
+
+# Run API tests after starting
+./scripts/start.sh --test
+
+# Run API tests only (assumes backend is running)
+./scripts/start.sh --test-only
+
+# Show help
+./scripts/start.sh --help
+```
+
+### What the Start Script Does
+
+1. **Checks dependencies** - Verifies Python 3.11+, Node.js 18+, npm are installed
+2. **Auto-installs packages** - Runs `pip install` and `npm install` if needed
+3. **Kills conflicting ports** - Clears ports 8000 and 3000 if occupied
+4. **Starts services** - Launches backend and frontend with proper health checks
+5. **Cleanup on exit** - Gracefully stops all services on Ctrl+C
+
+### Manual Setup (Alternative)
+
+If you prefer manual control:
 
 **Terminal 1 - Backend:**
 ```bash
 cd backend
-source .venv/bin/activate
-uvicorn main:app --reload --port 8000
+
+# Using uv (recommended)
+uv sync
+uv run uvicorn main:app --reload --port 8000
+
+# Or using pip (fallback)
+pip install -r requirements.txt
+python3 -m uvicorn main:app --reload --port 8000
 ```
 
 **Terminal 2 - Frontend:**
 ```bash
 cd app
-npm run dev
-```
-
-Open http://localhost:3000 in your browser.
-
-### Electron App
-
-```bash
-cd app
-npm run electron-dev
+npm install
+npm run dev  # Electron + Next.js
+# Or: npm run next:dev  # Web only
 ```
 
 ### Production Build
@@ -161,7 +212,7 @@ npm run electron-dev
 ```bash
 cd app
 npm run build
-npm run electron-build
+npm run dist:mac
 ```
 
 The built `.app` will be in `app/dist/`.
@@ -404,28 +455,79 @@ class MySubagent(Subagent[MyDeps]):
 
 ## Configuration
 
+### API Access
+
+Aura uses the Colorist gateway for Claude API access. The default configuration works out of the box for internal users.
+
+**For external users**, you'll need to configure your own API access by setting environment variables:
+
+```bash
+# Option 1: Use Colorist gateway (if you have access)
+export COLORIST_API_KEY="your_colorist_token"
+export COLORIST_GATEWAY_URL="https://your-gateway-url"
+
+# Option 2: Modify the code to use Anthropic directly
+# Edit backend/agent/providers/colorist.py to use standard Anthropic client
+```
+
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `COLORIST_AUTH_TOKEN` | Colorist gateway auth token | Required |
-| `COLORIST_BASE_URL` | Colorist gateway URL | `https://colorist-gateway-staging.arco.ai` |
-| `DEFAULT_MODEL` | Default Claude model | `claude-4-5-sonnet-by-all` |
+| `COLORIST_API_KEY` | Colorist gateway auth token | Pre-configured |
+| `COLORIST_GATEWAY_URL` | Colorist gateway URL | `https://colorist-gateway-staging.arco.ai` |
+| `COLORIST_MODEL` | Claude model to use | `claude-4-5-sonnet-by-all` |
 
-### Colorist API
+### Project Storage
 
-Aura uses the Colorist gateway for Claude API access:
+By default, LaTeX projects are stored in:
+- `~/aura-projects/` - User projects
+- `<project>/.aura/` - Project metadata and vibe research state
 
-```python
-from anthropic import AsyncAnthropic
-import httpx
+---
 
-client = AsyncAnthropic(
-    auth_token="your_token",
-    base_url="https://colorist-gateway-staging.arco.ai",
-    http_client=httpx.AsyncClient(),
-)
+## Troubleshooting
+
+### Port Already in Use
+
+```bash
+# The start script handles this automatically, but if needed:
+lsof -ti:8000 | xargs kill -9  # Kill backend
+lsof -ti:3000 | xargs kill -9  # Kill frontend
 ```
+
+### Docker Not Running
+
+If LaTeX compilation fails:
+1. Ensure Docker Desktop is running
+2. Build the LaTeX image: `cd sandbox && docker build -t aura-texlive .`
+
+### Backend Won't Start
+
+```bash
+# Check Python version
+python3 --version  # Should be 3.11+
+
+# Reinstall dependencies
+cd backend
+pip install -r requirements.txt --force-reinstall
+```
+
+### Frontend Build Errors
+
+```bash
+# Clear cache and reinstall
+cd app
+rm -rf node_modules .next
+npm install
+```
+
+### API Connection Failed
+
+If the frontend can't reach the backend:
+1. Ensure backend is running on port 8000
+2. Check `http://localhost:8000/docs` in browser
+3. Look for CORS errors in browser console
 
 ---
 
