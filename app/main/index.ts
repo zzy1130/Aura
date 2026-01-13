@@ -17,9 +17,11 @@ import * as fs from 'fs';
 // Configuration
 // =============================================================================
 
-const isDev = process.env.NODE_ENV !== 'production';
+// Use app.isPackaged for reliable production detection
+// NODE_ENV isn't always set correctly in packaged apps
+const isDev = !app.isPackaged;
 const BACKEND_PORT = 8000;
-const FRONTEND_URL = isDev ? 'http://localhost:3000' : `file://${path.join(__dirname, '../.next/server/app/index.html')}`;
+const FRONTEND_URL = 'http://localhost:3000';  // Only used in dev mode
 
 // =============================================================================
 // Global State
@@ -41,6 +43,24 @@ function getBackendPath(): string {
     // Production: backend is bundled in resources
     return path.join(process.resourcesPath, 'backend');
   }
+}
+
+function getBackendExecutable(): string | null {
+  if (isDev) {
+    // Development: use Python
+    return null;
+  }
+
+  // Production: use bundled aura-backend executable
+  const backendPath = getBackendPath();
+  const executablePath = path.join(backendPath, 'aura-backend');
+
+  if (fs.existsSync(executablePath)) {
+    return executablePath;
+  }
+
+  console.warn('Bundled backend executable not found, falling back to Python');
+  return null;
 }
 
 function getPythonExecutable(): string {
@@ -90,10 +110,9 @@ async function startPythonBackend(): Promise<void> {
   }
 
   const backendPath = getBackendPath();
-  const pythonExe = getPythonExecutable();
+  const bundledExecutable = getBackendExecutable();
 
-  console.log(`Starting Python backend from: ${backendPath}`);
-  console.log(`Using Python: ${pythonExe}`);
+  console.log(`Starting backend from: ${backendPath}`);
 
   // Check if backend directory exists
   if (!fs.existsSync(backendPath)) {
@@ -101,18 +120,39 @@ async function startPythonBackend(): Promise<void> {
     return;
   }
 
-  pythonProcess = spawn(
-    pythonExe,
-    ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
-    {
-      cwd: backendPath,
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }
-  );
+  if (bundledExecutable) {
+    // Production: use bundled executable
+    console.log(`Using bundled executable: ${bundledExecutable}`);
+
+    pythonProcess = spawn(
+      bundledExecutable,
+      ['--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
+      {
+        cwd: backendPath,
+        env: {
+          ...process.env,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }
+    );
+  } else {
+    // Development: use Python
+    const pythonExe = getPythonExecutable();
+    console.log(`Using Python: ${pythonExe}`);
+
+    pythonProcess = spawn(
+      pythonExe,
+      ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
+      {
+        cwd: backendPath,
+        env: {
+          ...process.env,
+          PYTHONUNBUFFERED: '1',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }
+    );
+  }
 
   pythonProcess.stdout?.on('data', (data) => {
     console.log(`[Backend] ${data.toString().trim()}`);
@@ -123,11 +163,11 @@ async function startPythonBackend(): Promise<void> {
   });
 
   pythonProcess.on('error', (error) => {
-    console.error('Failed to start Python backend:', error);
+    console.error('Failed to start backend:', error);
   });
 
   pythonProcess.on('exit', (code, signal) => {
-    console.log(`Python backend exited with code ${code}, signal ${signal}`);
+    console.log(`Backend exited with code ${code}, signal ${signal}`);
     pythonProcess = null;
   });
 
@@ -205,7 +245,15 @@ function createWindow(): void {
     mainWindow.loadURL(FRONTEND_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../out/index.html'));
+    // In production, the out folder is unpacked from asar
+    // It's located at: app.asar.unpacked/out/index.html
+    // __dirname is inside app.asar/main/dist
+    // So we need: go up to app.asar, replace with app.asar.unpacked, then out/
+    const asarPath = path.join(__dirname, '../..');  // app.asar
+    const unpackedPath = asarPath + '.unpacked';
+    const indexPath = path.join(unpackedPath, 'out/index.html');
+    console.log('Loading production index from:', indexPath);
+    mainWindow.loadFile(indexPath);
   }
 
   mainWindow.on('closed', () => {

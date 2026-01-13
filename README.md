@@ -51,6 +51,7 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 - **Docker Sandbox**: Isolated TexLive environment
 - **Error Fixing**: AI-powered compilation error resolution
 - **Syntax Checking**: Pre-compilation validation
+- **Docker Guide**: Friendly setup instructions if Docker is not installed
 
 ---
 
@@ -90,20 +91,35 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 
 ## Installation
 
-### Prerequisites
+### For End Users (DMG)
+
+**Requirements:**
+- **macOS 14+** (Apple Silicon recommended)
+- **Docker Desktop** (for LaTeX compilation only)
+
+**That's it!** The DMG includes everything else:
+- Bundled Python backend (no Python installation needed)
+- Bundled Node.js runtime (no Node.js installation needed)
+- All dependencies pre-packaged
+
+**Installation Steps:**
+1. Download `Aura-x.x.x-arm64.dmg` from Releases
+2. Open the DMG and drag Aura to Applications
+3. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) if not already installed
+4. Launch Aura from Applications
+5. On first compile, Aura automatically builds the LaTeX Docker image
+
+> **Note:** The app is not code-signed. On first launch, right-click → Open, or go to System Preferences → Security & Privacy → "Open Anyway"
+
+### For Developers
 
 | Requirement | Version | Purpose |
 |-------------|---------|---------|
-| **macOS** | 14+ | Primary platform (tested) |
-| **Python** | 3.11+ | Backend server |
-| **uv** | Latest | Python package manager (recommended) |
-| **Node.js** | 18+ | Frontend & Electron |
-| **npm** | 9+ | Package management |
+| **macOS** | 14+ | Primary platform |
+| **Python** | 3.11+ | Backend development |
+| **Node.js** | 18+ | Frontend development |
+| **uv** | Latest | Python package management (recommended) |
 | **Docker Desktop** | Latest | LaTeX compilation sandbox |
-
-> **Note**: Docker is only required for LaTeX compilation. You can use the app for research without Docker, but compilation features won't work.
-
-> **Installing uv**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ### Setup
 
@@ -207,15 +223,47 @@ npm run dev  # Electron + Next.js
 # Or: npm run next:dev  # Web only
 ```
 
-### Production Build
+### Production Build (DMG)
+
+Build a distributable DMG file with bundled Python backend:
 
 ```bash
 cd app
-npm run build
 npm run dist:mac
 ```
 
-The built `.app` will be in `app/dist/`.
+The build process:
+1. Compiles Python backend into standalone executable (PyInstaller)
+2. Builds Next.js frontend
+3. Packages everything into Electron app
+4. Creates DMG installer
+
+**Output:** `app/dist/Aura-<version>-arm64.dmg` (~230MB)
+
+**What's included in the DMG:**
+- Electron app with bundled Next.js frontend
+- Bundled Python backend (standalone executable, no Python required)
+- Dockerfile for LaTeX sandbox
+
+**User requirements after install:**
+- Docker Desktop (for LaTeX compilation only)
+- That's it! No Python, no Node.js
+
+**Note:** The DMG is not code-signed by default. On first launch, users may need to:
+1. Right-click the app → Open
+2. Or: System Preferences → Security & Privacy → "Open Anyway"
+
+**Building for distribution:**
+```bash
+# Build full DMG (includes backend compilation)
+npm run dist:mac
+
+# Build unpacked directory (for testing)
+npm run pack
+
+# Build frontend only (dev backend already running)
+npm run build
+```
 
 ---
 
@@ -498,8 +546,19 @@ lsof -ti:3000 | xargs kill -9  # Kill frontend
 
 ### Docker Not Running
 
-If LaTeX compilation fails:
-1. Ensure Docker Desktop is running
+If LaTeX compilation fails, Aura will display a friendly Docker installation guide:
+
+**Docker Not Installed:**
+- Step-by-step installation instructions
+- Direct download link for Docker Desktop
+- Note that Docker Desktop is free for personal use
+
+**Docker Not Running:**
+- Instructions to start Docker Desktop
+- Tip to enable auto-start on login
+
+You can also manually ensure Docker is set up:
+1. Ensure Docker Desktop is running (whale icon in menu bar)
 2. Build the LaTeX image: `cd sandbox && docker build -t aura-texlive .`
 
 ### Backend Won't Start
