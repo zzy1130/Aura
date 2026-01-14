@@ -775,6 +775,153 @@ async def _search_arxiv_for_paper(query: str) -> Optional["PaperMetadata"]:
         return None
 
 
+@aura_agent.tool
+async def create_table(
+    ctx: RunContext[AuraDeps],
+    data: str,
+    caption: str,
+    label: str = "",
+    style: str = "booktabs",
+) -> str:
+    """
+    Generate a LaTeX table from data.
+
+    Args:
+        data: Table data in CSV or markdown format:
+              CSV: "Header1,Header2\\nValue1,Value2"
+              Markdown: "| H1 | H2 |\\n| v1 | v2 |"
+        caption: Table caption
+        label: Label for referencing (e.g., "results" -> \\label{tab:results})
+        style: Table style - "booktabs" (professional) or "basic"
+
+    Returns:
+        Complete LaTeX table code ready to paste
+    """
+    import re
+
+    def escape_latex(text: str) -> str:
+        """Escape LaTeX special characters in text."""
+        replacements = [
+            ('\\', r'\textbackslash{}'),
+            ('&', r'\&'),
+            ('%', r'\%'),
+            ('$', r'\$'),
+            ('#', r'\#'),
+            ('_', r'\_'),
+            ('{', r'\{'),
+            ('}', r'\}'),
+            ('^', r'\^{}'),
+            ('~', r'\~{}'),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    # Parse data
+    lines = data.strip().split("\n")
+    rows = []
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("|--") or line.startswith("|-"):
+            continue
+
+        # Handle markdown format
+        if "|" in line:
+            cells = [c.strip() for c in line.split("|") if c.strip()]
+        # Handle CSV format
+        else:
+            cells = [c.strip() for c in line.split(",")]
+
+        if cells:
+            rows.append(cells)
+
+    if not rows:
+        return "Error: Could not parse table data"
+
+    # Determine column count and alignment
+    num_cols = max(len(row) for row in rows)
+
+    # Detect numeric columns for right-alignment
+    alignments = []
+    for col in range(num_cols):
+        is_numeric = True
+        for row in rows[1:]:  # Skip header
+            if col < len(row):
+                val = row[col].strip()
+                # Check if it's a number (including decimals, percentages)
+                if not re.match(r"^[\d.,]+%?$", val) and val:
+                    is_numeric = False
+                    break
+        alignments.append("r" if is_numeric else "l")
+
+    # First column usually left-aligned
+    if alignments:
+        alignments[0] = "l"
+
+    alignment_str = "".join(alignments)
+
+    # Build table
+    if style == "booktabs":
+        table_lines = [
+            r"\begin{table}[htbp]",
+            r"    \centering",
+            f"    \\caption{{{caption}}}",
+        ]
+        if label:
+            table_lines.append(f"    \\label{{tab:{label}}}")
+        table_lines.extend([
+            f"    \\begin{{tabular}}{{{alignment_str}}}",
+            r"        \toprule",
+        ])
+
+        # Header row
+        if rows:
+            header = " & ".join(f"\\textbf{{{escape_latex(cell)}}}" for cell in rows[0])
+            table_lines.append(f"        {header} \\\\")
+            table_lines.append(r"        \midrule")
+
+        # Data rows
+        for row in rows[1:]:
+            # Pad row if needed (create copy to avoid mutation)
+            padded_row = row + [''] * (num_cols - len(row))
+            row_str = " & ".join(escape_latex(cell) for cell in padded_row)
+            table_lines.append(f"        {row_str} \\\\")
+
+        table_lines.extend([
+            r"        \bottomrule",
+            r"    \end{tabular}",
+            r"\end{table}",
+        ])
+    else:
+        # Basic style
+        table_lines = [
+            r"\begin{table}[htbp]",
+            r"    \centering",
+            f"    \\caption{{{caption}}}",
+        ]
+        if label:
+            table_lines.append(f"    \\label{{tab:{label}}}")
+        table_lines.extend([
+            f"    \\begin{{tabular}}{{|{alignment_str}|}}",
+            r"        \hline",
+        ])
+
+        for i, row in enumerate(rows):
+            # Pad row if needed (create copy to avoid mutation)
+            padded_row = row + [''] * (num_cols - len(row))
+            row_str = " & ".join(escape_latex(cell) for cell in padded_row)
+            table_lines.append(f"        {row_str} \\\\")
+            table_lines.append(r"        \hline")
+
+        table_lines.extend([
+            r"    \end{tabular}",
+            r"\end{table}",
+        ])
+
+    return "\n".join(table_lines)
+
+
 # =============================================================================
 # PDF Tools
 # =============================================================================
