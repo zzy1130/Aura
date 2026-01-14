@@ -60,3 +60,114 @@ class DocumentStructure:
     citation_style: str = "unknown"     # "biblatex" or "bibtex"
     bib_file: Optional[str] = None      # Path to .bib file
     packages: list[str] = field(default_factory=list)
+
+
+# =============================================================================
+# Regex Patterns
+# =============================================================================
+
+# Section commands with their levels
+SECTION_PATTERNS = {
+    r"\\part\{": 0,
+    r"\\chapter\{": 0,
+    r"\\section\{": 1,
+    r"\\subsection\{": 2,
+    r"\\subsubsection\{": 3,
+    r"\\paragraph\{": 4,
+}
+
+# Combined pattern to find any section
+SECTION_REGEX = re.compile(
+    r"^[ \t]*(\\(?:part|chapter|section|subsection|subsubsection|paragraph)\{([^}]+)\})",
+    re.MULTILINE
+)
+
+# Label pattern
+LABEL_REGEX = re.compile(r"\\label\{([^}]+)\}")
+
+
+# =============================================================================
+# Section Parsing
+# =============================================================================
+
+def parse_sections(content: str) -> list[DocumentSection]:
+    """
+    Parse section hierarchy from LaTeX content.
+
+    Returns a flat list of sections with line numbers.
+    Use build_section_tree() to get nested structure.
+    """
+    lines = content.split("\n")
+    sections: list[DocumentSection] = []
+
+    for i, line in enumerate(lines, start=1):
+        match = SECTION_REGEX.match(line)
+        if match:
+            full_match = match.group(1)
+            name = match.group(2)
+
+            # Determine level
+            level = 1  # default to section
+            for pattern, lvl in SECTION_PATTERNS.items():
+                if re.match(pattern, full_match):
+                    level = lvl
+                    break
+
+            # Extract command
+            cmd_match = re.match(r"(\\[a-z]+)", full_match)
+            command = cmd_match.group(1) if cmd_match else r"\section"
+
+            # Look for label on same or next line
+            label = None
+            label_match = LABEL_REGEX.search(line)
+            if not label_match and i < len(lines):
+                label_match = LABEL_REGEX.search(lines[i])
+            if label_match:
+                label = label_match.group(1)
+
+            sections.append(DocumentSection(
+                level=level,
+                name=name,
+                command=command,
+                line_start=i,
+                line_end=i,  # Will be updated later
+                label=label,
+            ))
+
+    # Calculate line_end for each section (start of next section - 1)
+    for i, section in enumerate(sections):
+        if i + 1 < len(sections):
+            section.line_end = sections[i + 1].line_start - 1
+        else:
+            section.line_end = len(lines)
+
+    return sections
+
+
+def build_section_tree(sections: list[DocumentSection]) -> list[DocumentSection]:
+    """
+    Build nested section hierarchy from flat list.
+
+    Returns only top-level sections with children nested.
+    """
+    if not sections:
+        return []
+
+    root: list[DocumentSection] = []
+    stack: list[DocumentSection] = []
+
+    for section in sections:
+        # Pop sections from stack that are same level or deeper
+        while stack and stack[-1].level >= section.level:
+            stack.pop()
+
+        if stack:
+            # Add as child of parent
+            stack[-1].children.append(section)
+        else:
+            # Top-level section
+            root.append(section)
+
+        stack.append(section)
+
+    return root
