@@ -275,11 +275,12 @@ def find_citations(content: str) -> list[CitationInfo]:
             keys_str = match.group(2)
 
             # Handle multiple keys in one citation: \cite{key1,key2}
-            keys = [k.strip() for k in keys_str.split(",")]
+            keys = [k.strip() for k in keys_str.split(",") if k.strip()]
 
             for key in keys:
                 if key in citations_map:
-                    citations_map[key].locations.append(i)
+                    if i not in citations_map[key].locations:
+                        citations_map[key].locations.append(i)
                 else:
                     citations_map[key] = CitationInfo(
                         key=key,
@@ -297,8 +298,8 @@ def detect_citation_style(content: str) -> tuple[str, Optional[str]]:
     Returns:
         (style, bib_file) where style is "biblatex" or "bibtex"
     """
-    # Check for biblatex
-    if "biblatex" in content or BIBRESOURCE_REGEX.search(content):
+    # Check for biblatex (must be in \usepackage or have \addbibresource)
+    if BIBRESOURCE_REGEX.search(content) or re.search(r"\\usepackage(?:\[[^\]]*\])?\{[^}]*biblatex", content):
         bib_match = BIBRESOURCE_REGEX.search(content)
         bib_file = bib_match.group(1) if bib_match else None
         return "biblatex", bib_file
