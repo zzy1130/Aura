@@ -123,7 +123,7 @@ class WritingAgent(Subagent[WritingDeps]):
 
             content = full_path.read_text()
             lines = content.split("\n")
-            numbered = [f"{i+1:4}| {line}" for i, line in enumerate(lines)]
+            numbered = [f"{i+1:4}│ {line}" for i, line in enumerate(lines)]
             return "\n".join(numbered)
 
         @agent.tool
@@ -140,7 +140,10 @@ class WritingAgent(Subagent[WritingDeps]):
             Returns:
                 Hierarchical section structure with line numbers
             """
-            from services.latex_parser import parse_document, build_section_tree
+            try:
+                from services.latex_parser import parse_document, build_section_tree
+            except ImportError as e:
+                return f"Error: LaTeX parser service not available: {e}"
 
             full_path = Path(ctx.deps.project_path) / filepath
 
@@ -263,12 +266,15 @@ class WritingAgent(Subagent[WritingDeps]):
             Returns:
                 Analysis of bibliography usage with unused and missing entries
             """
-            from services.latex_parser import (
-                parse_document,
-                parse_bib_file_path,
-                find_unused_citations,
-                find_missing_citations,
-            )
+            try:
+                from services.latex_parser import (
+                    parse_document,
+                    parse_bib_file_path,
+                    find_unused_citations,
+                    find_missing_citations,
+                )
+            except ImportError as e:
+                return f"Error: LaTeX parser service not available: {e}"
 
             tex_path = Path(ctx.deps.project_path) / tex_file
 
@@ -288,6 +294,11 @@ class WritingAgent(Subagent[WritingDeps]):
                 return "No bibliography file detected in document"
 
             bib_path = Path(ctx.deps.project_path) / structure.bib_file
+            # SECURITY: Path traversal check for bib file
+            try:
+                bib_path.resolve().relative_to(Path(ctx.deps.project_path).resolve())
+            except ValueError:
+                return f"Error: Bibliography path must be within project directory: {structure.bib_file}"
             if not bib_path.exists():
                 return f"Bibliography file not found: {structure.bib_file}"
 
@@ -387,20 +398,3 @@ class WritingAgent(Subagent[WritingDeps]):
 
             return f"Claims that may need citations ({len(suggestions)}):\n\n" + "\n".join(suggestions)
 
-        @agent.tool
-        async def think(ctx: RunContext[WritingDeps], thought: str) -> str:
-            """
-            Think through the writing analysis step-by-step.
-
-            Use this to reason about:
-            - Writing quality issues
-            - Style improvements
-            - Document structure
-
-            Args:
-                thought: Your reasoning process
-
-            Returns:
-                Acknowledgment to continue
-            """
-            return "Thinking recorded. Continue with your analysis."
