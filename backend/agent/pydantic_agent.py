@@ -922,6 +922,218 @@ async def create_table(
     return "\n".join(table_lines)
 
 
+@aura_agent.tool
+async def create_figure(
+    ctx: RunContext[AuraDeps],
+    description: str,
+    figure_type: str = "tikz",
+    caption: str = "",
+    label: str = "",
+    data: str = "",
+) -> str:
+    """
+    Generate a LaTeX figure from description.
+
+    Args:
+        description: What the figure should show (e.g., "flowchart of training pipeline")
+        figure_type: Type of figure:
+                    - "tikz": General diagrams
+                    - "pgfplots-bar": Bar chart
+                    - "pgfplots-line": Line plot
+                    - "pgfplots-scatter": Scatter plot
+        caption: Figure caption
+        label: Label for referencing (e.g., "architecture" -> \\label{fig:architecture})
+        data: For plots, provide data as CSV: "x,y1,y2\\n1,2,3\\n2,4,5"
+
+    Returns:
+        Complete LaTeX figure code
+    """
+    import re
+
+    def escape_latex(text: str) -> str:
+        """Escape LaTeX special characters in text."""
+        replacements = [
+            ('\\', r'\textbackslash{}'),
+            ('&', r'\&'),
+            ('%', r'\%'),
+            ('$', r'\$'),
+            ('#', r'\#'),
+            ('_', r'\_'),
+            ('{', r'\{'),
+            ('}', r'\}'),
+            ('^', r'\^{}'),
+            ('~', r'\~{}'),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    # For complex figure generation, we provide templates
+    # The LLM will customize based on description
+
+    if figure_type == "tikz":
+        # Generic TikZ template
+        figure_code = r"""
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        node distance=2cm,
+        box/.style={rectangle, draw, rounded corners, minimum width=2.5cm, minimum height=1cm, align=center},
+        arrow/.style={->, >=stealth, thick}
+    ]
+        % Nodes - customize based on your needs
+        \node[box] (input) {Input};
+        \node[box, right of=input] (process) {Process};
+        \node[box, right of=process] (output) {Output};
+
+        % Arrows
+        \draw[arrow] (input) -- (process);
+        \draw[arrow] (process) -- (output);
+    \end{tikzpicture}
+    \caption{CAPTION_PLACEHOLDER}
+    \label{fig:LABEL_PLACEHOLDER}
+\end{figure}
+"""
+    elif figure_type == "pgfplots-bar":
+        # Parse data for bar chart
+        if data:
+            lines = data.strip().split("\n")
+            headers = lines[0].split(",") if lines else ["Category", "Value"]
+
+            coords = []
+            for line in lines[1:]:
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    coords.append(f"({parts[0]}, {parts[1]})")
+
+            # Validate that we have data rows
+            if not coords:
+                return "Error: No data rows found. Provide data with at least one data row after the header."
+
+            coords_str = " ".join(coords)
+        else:
+            headers = ["Category", "Value"]
+            coords_str = "(A, 10) (B, 20) (C, 15)"
+
+        # Escape LaTeX special characters in axis labels
+        xlabel_text = escape_latex(headers[0]) if headers else 'Category'
+        ylabel_text = escape_latex(headers[1]) if len(headers) > 1 else 'Value'
+
+        figure_code = rf"""
+\begin{{figure}}[htbp]
+    \centering
+    \begin{{tikzpicture}}
+        \begin{{axis}}[
+            ybar,
+            xlabel={{{xlabel_text}}},
+            ylabel={{{ylabel_text}}},
+            symbolic x coords={{A, B, C}},
+            xtick=data,
+            nodes near coords,
+            width=0.8\textwidth,
+            height=6cm,
+        ]
+            \addplot coordinates {{{coords_str}}};
+        \end{{axis}}
+    \end{{tikzpicture}}
+    \caption{{CAPTION_PLACEHOLDER}}
+    \label{{fig:LABEL_PLACEHOLDER}}
+\end{{figure}}
+"""
+    elif figure_type == "pgfplots-line":
+        # Parse data for line plot
+        if data:
+            lines = data.strip().split("\n")
+            headers = lines[0].split(",") if lines else ["x", "y"]
+
+            coords = []
+            for line in lines[1:]:
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    coords.append(f"({parts[0]}, {parts[1]})")
+
+            # Validate that we have data rows
+            if not coords:
+                return "Error: No data rows found. Provide data with at least one data row after the header."
+
+            coords_str = " ".join(coords)
+        else:
+            headers = ["x", "y"]
+            coords_str = "(0, 0) (1, 2) (2, 4) (3, 3) (4, 5)"
+
+        # Escape LaTeX special characters in axis labels
+        xlabel_text = escape_latex(headers[0]) if headers else 'x'
+        ylabel_text = escape_latex(headers[1]) if len(headers) > 1 else 'y'
+
+        figure_code = rf"""
+\begin{{figure}}[htbp]
+    \centering
+    \begin{{tikzpicture}}
+        \begin{{axis}}[
+            xlabel={{{xlabel_text}}},
+            ylabel={{{ylabel_text}}},
+            legend pos=north west,
+            grid=major,
+            width=0.8\textwidth,
+            height=6cm,
+        ]
+            \addplot[color=blue, mark=*] coordinates {{{coords_str}}};
+            \legend{{Data}}
+        \end{{axis}}
+    \end{{tikzpicture}}
+    \caption{{CAPTION_PLACEHOLDER}}
+    \label{{fig:LABEL_PLACEHOLDER}}
+\end{{figure}}
+"""
+    elif figure_type == "pgfplots-scatter":
+        coords_str = "(1, 2) (2, 3) (3, 2.5) (4, 4) (5, 4.5)"
+        if data:
+            lines = data.strip().split("\n")
+            coords = []
+            for line in lines[1:]:
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    coords.append(f"({parts[0]}, {parts[1]})")
+            if coords:
+                coords_str = " ".join(coords)
+
+        figure_code = rf"""
+\begin{{figure}}[htbp]
+    \centering
+    \begin{{tikzpicture}}
+        \begin{{axis}}[
+            xlabel={{X}},
+            ylabel={{Y}},
+            only marks,
+            width=0.8\textwidth,
+            height=6cm,
+        ]
+            \addplot[color=blue, mark=o] coordinates {{{coords_str}}};
+        \end{{axis}}
+    \end{{tikzpicture}}
+    \caption{{CAPTION_PLACEHOLDER}}
+    \label{{fig:LABEL_PLACEHOLDER}}
+\end{{figure}}
+"""
+    else:
+        return f"Error: Unknown figure type '{figure_type}'. Use: tikz, pgfplots-bar, pgfplots-line, pgfplots-scatter"
+
+    # Replace placeholders
+    if caption:
+        figure_code = figure_code.replace("CAPTION_PLACEHOLDER", escape_latex(caption))
+    else:
+        figure_code = figure_code.replace("CAPTION_PLACEHOLDER", escape_latex(description[:50]))
+
+    if label:
+        figure_code = figure_code.replace("LABEL_PLACEHOLDER", label)
+    else:
+        # Generate label from description
+        label_text = re.sub(r"[^a-z0-9]+", "-", description.lower())[:20]
+        figure_code = figure_code.replace("LABEL_PLACEHOLDER", label_text)
+
+    return figure_code.strip()
+
+
 # =============================================================================
 # PDF Tools
 # =============================================================================
