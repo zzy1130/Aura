@@ -479,6 +479,12 @@ async def analyze_structure(
     if not full_path.exists():
         return f"Error: File not found: {filepath}"
 
+    # Security check: ensure path is within project directory
+    try:
+        full_path.resolve().relative_to(Path(project_path).resolve())
+    except ValueError:
+        return f"Error: Path must be within project directory: {filepath}"
+
     try:
         content = full_path.read_text(encoding="utf-8", errors="replace")
         structure = parse_document(content)
