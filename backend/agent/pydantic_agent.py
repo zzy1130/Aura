@@ -19,6 +19,16 @@ if TYPE_CHECKING:
     from agent.hitl import HITLManager, ApprovalStatus
     from agent.planning import PlanManager, Plan
 
+from services.latex_parser import (
+    parse_document,
+    parse_bib_file_path,
+    build_section_tree,
+    count_citations_per_section,
+    find_unused_citations,
+    find_missing_citations,
+    DocumentStructure,
+)
+
 
 @dataclass
 class AuraDeps:
@@ -438,6 +448,120 @@ async def read_file_lines(
 
     except Exception as e:
         return f"Error reading file: {e}"
+
+
+# =============================================================================
+# Document Analysis Tools
+# =============================================================================
+
+@aura_agent.tool
+async def analyze_structure(
+    ctx: RunContext[AuraDeps],
+    filepath: str = "main.tex",
+) -> str:
+    """
+    Analyze the structure of a LaTeX document.
+
+    Returns section hierarchy, figures/tables, citation statistics,
+    and any structural issues detected.
+
+    Args:
+        filepath: Path to the .tex file to analyze (default: main.tex)
+
+    Returns:
+        Formatted structure analysis with sections, elements, and issues
+    """
+    from pathlib import Path
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    if not full_path.exists():
+        return f"Error: File not found: {filepath}"
+
+    try:
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+        structure = parse_document(content)
+        tree = build_section_tree(structure.sections)
+        cite_counts = count_citations_per_section(structure, content)
+
+        # Format output
+        lines = [f"Document Structure: {filepath}", ""]
+
+        # Section hierarchy
+        lines.append("SECTIONS:")
+        def format_tree(sections, prefix=""):
+            result = []
+            for i, s in enumerate(sections):
+                is_last = i == len(sections) - 1
+                current_prefix = "└── " if is_last else "├── "
+                cite_count = cite_counts.get(s.name, 0)
+                label_info = f" [{s.label}]" if s.label else ""
+                result.append(f"{prefix}{current_prefix}{s.name} (L{s.line_start}-{s.line_end}) [{cite_count} citations]{label_info}")
+                if s.children:
+                    child_prefix = prefix + ("    " if is_last else "│   ")
+                    result.extend(format_tree(s.children, child_prefix))
+            return result
+
+        lines.extend(format_tree(tree))
+        lines.append("")
+
+        # Elements
+        lines.append("ELEMENTS:")
+        if structure.elements:
+            for e in structure.elements:
+                label_status = "✓ labeled" if e.label else "⚠ no label"
+                caption_preview = e.caption[:40] + "..." if e.caption and len(e.caption) > 40 else (e.caption or "no caption")
+                lines.append(f"  - {e.type}: \"{caption_preview}\" (L{e.line_start}) {label_status}")
+        else:
+            lines.append("  (none found)")
+        lines.append("")
+
+        # Citation info
+        lines.append(f"CITATIONS: {len(structure.citations)} unique keys")
+        lines.append(f"STYLE: {structure.citation_style}")
+        lines.append(f"BIB FILE: {structure.bib_file or 'not detected'}")
+        lines.append(f"PACKAGES: {', '.join(structure.packages[:10])}")
+        lines.append("")
+
+        # Issues
+        issues = []
+
+        # Check for sections without citations in expected places
+        for s in structure.sections:
+            name_lower = s.name.lower()
+            if "related" in name_lower or "background" in name_lower:
+                if cite_counts.get(s.name, 0) < 3:
+                    issues.append(f"Section '{s.name}' has few citations ({cite_counts.get(s.name, 0)}) - expected more for this section type")
+
+        # Check for unlabeled figures/tables
+        unlabeled = [e for e in structure.elements if not e.label]
+        if unlabeled:
+            issues.append(f"{len(unlabeled)} element(s) missing \\label{{}}")
+
+        # Check bib file if available
+        if structure.bib_file:
+            bib_path = Path(project_path) / structure.bib_file
+            if bib_path.exists():
+                bib_entries = parse_bib_file_path(bib_path)
+                unused = find_unused_citations(structure.citations, bib_entries)
+                missing = find_missing_citations(structure.citations, bib_entries)
+                if unused:
+                    issues.append(f"{len(unused)} unused entries in bibliography")
+                if missing:
+                    issues.append(f"{len(missing)} citations not in bibliography: {', '.join(missing[:5])}")
+
+        if issues:
+            lines.append("ISSUES:")
+            for issue in issues:
+                lines.append(f"  ⚠ {issue}")
+        else:
+            lines.append("ISSUES: None detected ✓")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Error analyzing document: {e}"
 
 
 # =============================================================================
