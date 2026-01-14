@@ -1216,13 +1216,16 @@ async def create_algorithm(
 
     # Parse steps and convert to algorithm2e syntax
     step_lines = steps.strip().split("\n")
+    # Filter out empty lines early and validate
+    step_lines = [l for l in step_lines if l.strip()]
+    if not step_lines:
+        return "Error: No algorithm steps provided. Please provide at least one step."
+
     formatted_steps = []
 
     for line in step_lines:
         # Count leading spaces/tabs for indentation level
         stripped = line.lstrip()
-        if not stripped:
-            continue
 
         indent = len(line) - len(stripped)
         indent_level = indent // 4  # Assume 4 spaces per level
@@ -1264,13 +1267,18 @@ async def create_algorithm(
     # Escape caption and name for safe LaTeX output
     safe_caption = escape_caption(caption) if caption else escape_caption(name)
     safe_label = label if label else name.lower().replace(' ', '-')
+    # Remove invalid characters (only allow alphanumeric and hyphens)
+    safe_label = re.sub(r'[^a-z0-9-]', '', safe_label)
+    # Ensure not empty after sanitization
+    if not safe_label:
+        safe_label = "algorithm"
 
     algorithm_code = rf"""
 \begin{{algorithm}}[htbp]
     \caption{{{safe_caption}}}
     \label{{alg:{safe_label}}}
-    \KwIn{{{inputs}}}
-    \KwOut{{{outputs}}}
+    \KwIn{{{escape_latex(inputs)}}}
+    \KwOut{{{escape_latex(outputs)}}}
 
         {steps_str}
 \end{{algorithm}}
