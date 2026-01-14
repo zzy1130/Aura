@@ -570,6 +570,205 @@ async def analyze_structure(
         return f"Error analyzing document: {e}"
 
 
+@aura_agent.tool
+async def add_citation(
+    ctx: RunContext[AuraDeps],
+    paper_id: str,
+    cite_key: Optional[str] = None,
+    insert_after_line: Optional[int] = None,
+    cite_style: str = "cite",
+) -> str:
+    """
+    Add a citation to the document.
+
+    Fetches paper metadata, generates BibTeX entry, adds to .bib file,
+    and optionally inserts the citation command in the document.
+
+    Args:
+        paper_id: Paper identifier - can be:
+                  - arXiv ID (e.g., "2301.07041" or "arxiv:2301.07041")
+                  - Semantic Scholar ID (e.g., "s2:abc123")
+                  - Search query (will search and use first result)
+        cite_key: Optional custom citation key (auto-generated if not provided)
+        insert_after_line: Line number after which to insert \\cite{} command
+        cite_style: Citation style - "cite", "citep", "citet", "autocite", etc.
+
+    Returns:
+        Confirmation with the cite key and BibTeX entry
+    """
+    from pathlib import Path
+    import httpx
+    from agent.tools.citations import PaperMetadata, generate_bibtex, generate_cite_key, format_citation_command
+
+    project_path = ctx.deps.project_path
+
+    # Determine paper source and fetch metadata
+    paper = None
+
+    if paper_id.startswith("arxiv:") or paper_id.replace(".", "").replace("v", "").isdigit():
+        # arXiv paper
+        arxiv_id = paper_id.replace("arxiv:", "").strip()
+        paper = await _fetch_arxiv_metadata(arxiv_id)
+    elif paper_id.startswith("s2:"):
+        # Semantic Scholar ID
+        s2_id = paper_id.replace("s2:", "").strip()
+        paper = await _fetch_s2_metadata(s2_id)
+    else:
+        # Treat as search query - search arXiv
+        paper = await _search_arxiv_for_paper(paper_id)
+
+    if not paper:
+        return f"Error: Could not find paper: {paper_id}"
+
+    # Generate cite key if not provided
+    if cite_key is None:
+        cite_key = generate_cite_key(paper)
+
+    # Generate BibTeX entry
+    bibtex = generate_bibtex(paper, cite_key)
+
+    # Find and update .bib file
+    main_tex = Path(project_path) / "main.tex"
+    if main_tex.exists():
+        content = main_tex.read_text()
+        structure = parse_document(content)
+        bib_file = structure.bib_file or "refs.bib"
+    else:
+        bib_file = "refs.bib"
+
+    bib_path = Path(project_path) / bib_file
+
+    # Check if entry already exists
+    if bib_path.exists():
+        existing_content = bib_path.read_text()
+        if cite_key in existing_content:
+            return f"Citation key '{cite_key}' already exists in {bib_file}. Use a different cite_key."
+        # Append entry
+        with open(bib_path, "a") as f:
+            f.write("\n\n" + bibtex)
+    else:
+        # Create new .bib file
+        bib_path.write_text(bibtex + "\n")
+
+    result = f"Added citation to {bib_file}:\n\n{bibtex}\n\nUse: {format_citation_command(cite_key, cite_style)}"
+
+    # Insert citation in document if requested
+    if insert_after_line is not None and main_tex.exists():
+        content = main_tex.read_text()
+        lines = content.split("\n")
+        if 0 < insert_after_line <= len(lines):
+            cite_cmd = format_citation_command(cite_key, cite_style)
+            lines[insert_after_line - 1] += f" {cite_cmd}"
+            main_tex.write_text("\n".join(lines))
+            result += f"\n\nInserted {cite_cmd} after line {insert_after_line}"
+
+    return result
+
+
+async def _fetch_arxiv_metadata(arxiv_id: str) -> Optional["PaperMetadata"]:
+    """Fetch paper metadata from arXiv."""
+    import httpx
+    from agent.tools.citations import PaperMetadata
+
+    # Clean ID
+    arxiv_id = arxiv_id.split("v")[0]  # Remove version
+
+    url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+
+            # Parse Atom XML (simple regex extraction)
+            import re
+            content = response.text
+
+            title_match = re.search(r"<title>([^<]+)</title>", content)
+            if not title_match or "Error" in title_match.group(1):
+                return None
+
+            title = title_match.group(1).strip().replace("\n", " ")
+
+            # Extract authors
+            authors = re.findall(r"<name>([^<]+)</name>", content)
+
+            # Extract year from published date
+            pub_match = re.search(r"<published>(\d{4})", content)
+            year = int(pub_match.group(1)) if pub_match else 2024
+
+            # Extract abstract
+            abs_match = re.search(r"<summary>([^<]+)</summary>", content, re.DOTALL)
+            abstract = abs_match.group(1).strip() if abs_match else None
+
+            return PaperMetadata(
+                title=title,
+                authors=authors[:10],
+                year=year,
+                arxiv_id=arxiv_id,
+                abstract=abstract,
+                url=f"https://arxiv.org/abs/{arxiv_id}",
+            )
+    except Exception:
+        return None
+
+
+async def _fetch_s2_metadata(s2_id: str) -> Optional["PaperMetadata"]:
+    """Fetch paper metadata from Semantic Scholar."""
+    import httpx
+    from agent.tools.citations import PaperMetadata
+
+    url = f"https://api.semanticscholar.org/graph/v1/paper/{s2_id}"
+    params = {"fields": "title,authors,year,abstract,externalIds,venue"}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=10.0)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            data = response.json()
+
+            return PaperMetadata(
+                title=data.get("title", "Unknown"),
+                authors=[a.get("name", "") for a in data.get("authors", [])[:10]],
+                year=data.get("year", 2024),
+                arxiv_id=data.get("externalIds", {}).get("ArXiv"),
+                doi=data.get("externalIds", {}).get("DOI"),
+                venue=data.get("venue"),
+                abstract=data.get("abstract"),
+            )
+    except Exception:
+        return None
+
+
+async def _search_arxiv_for_paper(query: str) -> Optional["PaperMetadata"]:
+    """Search arXiv and return first result."""
+    import httpx
+    import urllib.parse
+
+    encoded_query = urllib.parse.quote(query)
+    url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&max_results=1"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+
+            import re
+            content = response.text
+
+            # Extract arXiv ID from first result
+            id_match = re.search(r"<id>http://arxiv.org/abs/([^<]+)</id>", content)
+            if not id_match:
+                return None
+
+            arxiv_id = id_match.group(1)
+            return await _fetch_arxiv_metadata(arxiv_id)
+    except Exception:
+        return None
+
+
 # =============================================================================
 # PDF Tools
 # =============================================================================
