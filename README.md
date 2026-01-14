@@ -15,6 +15,7 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 - [Usage Guide](#usage-guide)
   - [Chat Mode](#chat-mode)
   - [Vibe Research Mode](#vibe-research-mode)
+  - [Writing Tools](#writing-tools)
 - [API Reference](#api-reference)
 - [Project Structure](#project-structure)
 - [Development](#development)
@@ -33,10 +34,20 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 ### AI Agent
 - **Chat Mode**: Quick research assistance, paper searches, writing help
 - **Vibe Research Mode**: Autonomous deep literature exploration with hypothesis generation
-- **17 Built-in Tools**: File operations, LaTeX compilation, research, planning
-- **Subagent System**: Specialized agents for research, compilation, and planning
+- **Writing Intelligence**: Automated document analysis, citation management, and LaTeX generation
+- **22 Built-in Tools**: File operations, LaTeX compilation, research, planning, writing
+- **Subagent System**: Specialized agents for research, compilation, planning, and writing
 - **Human-in-the-Loop**: Approval system for sensitive operations
 - **Streaming Responses**: Real-time SSE streaming with tool call visibility
+
+### Writing Intelligence
+- **Document Analysis**: Parse LaTeX structure (sections, figures, tables, citations)
+- **Citation Management**: Auto-generate BibTeX entries and insert `\cite{}` commands
+- **Table Generation**: Create booktabs tables from CSV or markdown data
+- **Figure Generation**: Generate TikZ diagrams or pgfplots visualizations
+- **Algorithm Generation**: Create algorithm2e pseudocode blocks
+- **Consistency Checking**: Find terminology and notation inconsistencies
+- **Bibliography Cleanup**: Identify unused BibTeX entries
 
 ### Research Capabilities
 - **arXiv Search**: Find papers by topic, author, or ID
@@ -72,12 +83,14 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 │  │   ├── File Tools (read, edit, write, list, find)                │
 │  │   ├── LaTeX Tools (compile, syntax check, get log)              │
 │  │   ├── Planning Tools (plan, execute, complete steps)            │
+│  │   ├── Writing Tools (analyze, cite, table, figure, algorithm)   │
 │  │   └── Delegation (handoff to subagents)                         │
 │  │                                                                   │
 │  ├── Subagents                                                       │
 │  │   ├── Research Agent (arXiv, S2, PDF, vibe research)            │
 │  │   ├── Compiler Agent (LaTeX error fixing)                       │
-│  │   └── Planner Agent (task decomposition)                        │
+│  │   ├── Planner Agent (task decomposition)                        │
+│  │   └── Writing Agent (document analysis, consistency checks)     │
 │  │                                                                   │
 │  └── Services                                                        │
 │      ├── Docker Service (LaTeX compilation)                         │
@@ -337,6 +350,69 @@ The UI displays real-time updates:
 - Current agent activity with timestamp
 - Stall warnings if progress stagnates
 
+### Writing Tools
+
+Writing Intelligence provides AI-powered tools for LaTeX document creation and maintenance.
+
+#### Document Analysis
+
+Ask the agent to analyze your document structure:
+- "Analyze the structure of main.tex"
+- "Show me all figures and tables in my document"
+- "List all citations in chapter2.tex"
+
+The `analyze_structure` tool parses LaTeX files and returns:
+- Section hierarchy (sections, subsections, etc.)
+- Figures with labels and captions
+- Tables with labels and captions
+- All `\cite{}` references
+
+#### Citation Management
+
+Add citations from research papers:
+- "Add citation for the paper 2301.07041 to the introduction"
+- "Cite this Semantic Scholar paper in section 3"
+
+The agent will:
+1. Fetch paper metadata (title, authors, year, venue)
+2. Generate a proper BibTeX entry
+3. Add it to your `.bib` file
+4. Insert `\cite{key}` at the specified location
+
+#### Table and Figure Generation
+
+Create LaTeX tables from data:
+- "Create a table comparing model accuracies from this CSV"
+- "Generate a booktabs table with these results: Model A 94.2%, Model B 92.1%"
+
+Generate visualizations:
+- "Create a bar chart comparing the F1 scores"
+- "Generate a TikZ diagram showing the architecture"
+- "Create a line plot of training loss over epochs"
+
+#### Algorithm Pseudocode
+
+Generate algorithm2e blocks:
+- "Create an algorithm block for binary search"
+- "Generate pseudocode for the attention mechanism"
+
+The `create_algorithm` tool produces properly formatted `algorithm2e` blocks with:
+- Inputs and outputs
+- Numbered lines
+- Control structures (if/else, for, while)
+
+#### Consistency Checking
+
+Delegate to the Writing Agent for document-wide analysis:
+- "Check my document for terminology inconsistencies"
+- "Find notation inconsistencies in the methods section"
+- "Clean up unused bibliography entries"
+
+The Writing Agent scans your document for:
+- Inconsistent terminology (e.g., "dataset" vs "data set")
+- Notation variations (e.g., "$x$" vs "$X$" for the same variable)
+- Unused BibTeX entries that can be removed
+
 ---
 
 ## API Reference
@@ -385,6 +461,13 @@ The UI displays real-time updates:
 | `/api/sync/overleaf/pull` | POST | Pull from Overleaf |
 | `/api/sync/git/status` | GET | Get git status |
 
+### Writing Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/analyze-structure` | POST | Parse LaTeX document structure |
+| `/api/clean-bibliography` | POST | Find unused BibTeX entries |
+
 ---
 
 ## Project Structure
@@ -405,7 +488,7 @@ Aura/
 ├── backend/                      # FastAPI Python backend
 │   ├── main.py                   # API endpoints
 │   ├── agent/
-│   │   ├── pydantic_agent.py     # Main agent (17 tools)
+│   │   ├── pydantic_agent.py     # Main agent (22 tools)
 │   │   ├── streaming.py          # SSE streaming
 │   │   ├── compression.py        # Message compression
 │   │   ├── hitl.py               # Human-in-the-loop
@@ -418,13 +501,16 @@ Aura/
 │   │   │   ├── base.py           # Subagent base class
 │   │   │   ├── research.py       # arXiv/S2/PDF + vibe mode
 │   │   │   ├── compiler.py       # LaTeX error fixing
-│   │   │   └── planner.py        # Task planning
+│   │   │   ├── planner.py        # Task planning
+│   │   │   └── writing.py        # Document analysis + consistency
 │   │   └── tools/
-│   │       └── pdf_reader.py     # PDF text extraction
+│   │       ├── pdf_reader.py     # PDF text extraction
+│   │       └── citations.py      # BibTeX generation helper
 │   └── services/
 │       ├── docker.py             # LaTeX compilation
 │       ├── project.py            # Project management
 │       ├── memory.py             # Persistent notes
+│       ├── latex_parser.py       # LaTeX document parsing
 │       └── semantic_scholar.py   # S2 API client
 │
 ├── sandbox/
