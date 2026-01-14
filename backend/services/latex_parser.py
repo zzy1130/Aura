@@ -8,7 +8,14 @@ Uses regex for speed, with pylatexenc AST fallback for complex cases.
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
+
+# Optional AST parsing (for complex cases)
+try:
+    from pylatexenc.latexwalker import LatexWalker, LatexEnvironmentNode, LatexMacroNode
+    HAS_PYLATEXENC = True
+except ImportError:
+    HAS_PYLATEXENC = False
 
 
 @dataclass
@@ -486,3 +493,85 @@ def count_citations_per_section(
         counts[section.name] = count
 
     return counts
+
+
+# =============================================================================
+# AST-based Parsing (for complex cases)
+# =============================================================================
+
+def parse_environment_ast(content: str, env_name: str) -> list[dict[str, Any]]:
+    """
+    Parse a specific environment using AST for complex nested structures.
+
+    Use this when regex fails on nested environments.
+    Falls back to regex if pylatexenc not available.
+    """
+    if not HAS_PYLATEXENC:
+        # Fallback: use regex-based parsing
+        return _parse_environment_regex(content, env_name)
+
+    results: list[dict[str, Any]] = []
+
+    try:
+        walker = LatexWalker(content)
+        nodes, _, _ = walker.get_latex_nodes()
+
+        for node in _walk_nodes(nodes):
+            if isinstance(node, LatexEnvironmentNode):
+                if node.environmentname == env_name:
+                    results.append({
+                        "type": env_name,
+                        "content": node.latex_verbatim(),
+                        "pos": node.pos,
+                        "children": _extract_child_info(node),
+                    })
+    except Exception as e:
+        # AST parsing failed, fall back to regex
+        return _parse_environment_regex(content, env_name)
+
+    return results
+
+
+def _walk_nodes(nodes):
+    """Recursively walk all nodes in the AST."""
+    if nodes is None:
+        return
+    for node in nodes:
+        yield node
+        if hasattr(node, "nodelist") and node.nodelist:
+            yield from _walk_nodes(node.nodelist)
+
+
+def _extract_child_info(node) -> list[dict]:
+    """Extract info about child nodes."""
+    children = []
+    if hasattr(node, "nodelist") and node.nodelist:
+        for child in node.nodelist:
+            if isinstance(child, LatexMacroNode):
+                children.append({
+                    "type": "macro",
+                    "name": child.macroname,
+                })
+            elif isinstance(child, LatexEnvironmentNode):
+                children.append({
+                    "type": "environment",
+                    "name": child.environmentname,
+                })
+    return children
+
+
+def _parse_environment_regex(content: str, env_name: str) -> list[dict[str, Any]]:
+    """Fallback regex-based environment parsing."""
+    pattern = re.compile(
+        rf"\\begin\{{{env_name}\}}(.*?)\\end\{{{env_name}\}}",
+        re.DOTALL
+    )
+    results = []
+    for match in pattern.finditer(content):
+        results.append({
+            "type": env_name,
+            "content": match.group(0),
+            "pos": match.start(),
+            "children": [],
+        })
+    return results
