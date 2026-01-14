@@ -170,3 +170,71 @@ def build_section_tree(sections: list[DocumentSection]) -> list[DocumentSection]
         stack.append(section)
 
     return root
+
+
+# =============================================================================
+# Element Parsing (Figures, Tables, Algorithms)
+# =============================================================================
+
+# Environment patterns
+ENVIRONMENT_START = re.compile(r"\\begin\{(\w+)\}")
+ENVIRONMENT_END = re.compile(r"\\end\{(\w+)\}")
+CAPTION_REGEX = re.compile(r"\\caption\{([^}]+)\}")
+
+# Element types we track
+ELEMENT_TYPES = {"figure", "table", "algorithm", "lstlisting", "equation", "align"}
+
+
+def parse_elements(content: str) -> list[DocumentElement]:
+    """
+    Parse figures, tables, algorithms from LaTeX content.
+
+    Extracts:
+    - Environment type
+    - Caption text
+    - Label
+    - Line numbers
+    """
+    lines = content.split("\n")
+    elements: list[DocumentElement] = []
+
+    # Track open environments
+    env_stack: list[tuple[str, int, list[str]]] = []  # (type, start_line, content_lines)
+
+    for i, line in enumerate(lines, start=1):
+        # Check for environment start
+        start_match = ENVIRONMENT_START.search(line)
+        if start_match:
+            env_type = start_match.group(1)
+            if env_type in ELEMENT_TYPES:
+                env_stack.append((env_type, i, [line]))
+                continue
+
+        # Check for environment end
+        end_match = ENVIRONMENT_END.search(line)
+        if end_match and env_stack:
+            env_type = end_match.group(1)
+            if env_stack[-1][0] == env_type:
+                start_type, start_line, content_lines = env_stack.pop()
+                content_lines.append(line)
+                full_content = "\n".join(content_lines)
+
+                # Extract caption and label
+                caption_match = CAPTION_REGEX.search(full_content)
+                label_match = LABEL_REGEX.search(full_content)
+
+                elements.append(DocumentElement(
+                    type=start_type,
+                    label=label_match.group(1) if label_match else None,
+                    caption=caption_match.group(1) if caption_match else None,
+                    line_start=start_line,
+                    line_end=i,
+                    content=full_content,
+                ))
+                continue
+
+        # Accumulate content for open environments
+        if env_stack:
+            env_stack[-1][2].append(line)
+
+    return elements
