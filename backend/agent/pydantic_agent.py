@@ -638,6 +638,12 @@ async def add_citation(
 
     bib_path = Path(project_path) / bib_file
 
+    # Security check: ensure bib path is within project directory
+    try:
+        bib_path.resolve().relative_to(Path(project_path).resolve())
+    except ValueError:
+        return f"Error: Bibliography path must be within project directory: {bib_file}"
+
     # Check if entry already exists
     if bib_path.exists():
         existing_content = bib_path.read_text()
