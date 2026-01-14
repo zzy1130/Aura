@@ -1134,6 +1134,151 @@ async def create_figure(
     return figure_code.strip()
 
 
+@aura_agent.tool
+async def create_algorithm(
+    ctx: RunContext[AuraDeps],
+    name: str,
+    inputs: str,
+    outputs: str,
+    steps: str,
+    caption: str = "",
+    label: str = "",
+) -> str:
+    """
+    Generate an algorithm/pseudocode block.
+
+    Args:
+        name: Algorithm name
+        inputs: Input parameters (comma-separated)
+        outputs: Output values (comma-separated)
+        steps: Algorithm steps (one per line, use indentation for nesting)
+        caption: Algorithm caption
+        label: Label for referencing
+
+    Returns:
+        Complete algorithm2e LaTeX code
+
+    Example steps format:
+        "Initialize parameters
+        for each epoch:
+            for each batch:
+                Compute loss
+                Update weights
+        return model"
+    """
+    import re
+
+    def escape_latex(text: str) -> str:
+        """Escape LaTeX special characters in text (preserves math mode)."""
+        # Don't escape text inside math mode ($...$)
+        # Split by math mode delimiters and only escape non-math parts
+        parts = re.split(r'(\$[^$]+\$)', text)
+        escaped_parts = []
+        for part in parts:
+            if part.startswith('$') and part.endswith('$'):
+                # Math mode - don't escape
+                escaped_parts.append(part)
+            else:
+                # Regular text - escape special characters
+                replacements = [
+                    ('\\', r'\textbackslash{}'),
+                    ('&', r'\&'),
+                    ('%', r'\%'),
+                    ('#', r'\#'),
+                    ('_', r'\_'),
+                    ('{', r'\{'),
+                    ('}', r'\}'),
+                    ('^', r'\^{}'),
+                    ('~', r'\~{}'),
+                ]
+                for old, new in replacements:
+                    part = part.replace(old, new)
+                escaped_parts.append(part)
+        return ''.join(escaped_parts)
+
+    def escape_caption(text: str) -> str:
+        """Escape caption text (full escaping including $)."""
+        replacements = [
+            ('\\', r'\textbackslash{}'),
+            ('&', r'\&'),
+            ('%', r'\%'),
+            ('$', r'\$'),
+            ('#', r'\#'),
+            ('_', r'\_'),
+            ('{', r'\{'),
+            ('}', r'\}'),
+            ('^', r'\^{}'),
+            ('~', r'\~{}'),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    # Parse steps and convert to algorithm2e syntax
+    step_lines = steps.strip().split("\n")
+    formatted_steps = []
+
+    for line in step_lines:
+        # Count leading spaces/tabs for indentation level
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+
+        indent = len(line) - len(stripped)
+        indent_level = indent // 4  # Assume 4 spaces per level
+
+        # Convert common patterns to algorithm2e commands
+        lower = stripped.lower()
+
+        if lower.startswith("for ") and ":" in lower:
+            # for X in Y: or for each X:
+            parts = stripped[4:].split(":")
+            formatted_steps.append(f"\\For{{{escape_latex(parts[0].strip())}}}")
+            formatted_steps.append("{")
+        elif lower.startswith("while ") and ":" in lower:
+            parts = stripped[6:].split(":")
+            formatted_steps.append(f"\\While{{{escape_latex(parts[0].strip())}}}")
+            formatted_steps.append("{")
+        elif lower.startswith("if ") and ":" in lower:
+            parts = stripped[3:].split(":")
+            formatted_steps.append(f"\\If{{{escape_latex(parts[0].strip())}}}")
+            formatted_steps.append("{")
+        elif lower.startswith("else:"):
+            formatted_steps.append("}")
+            formatted_steps.append("\\Else{")
+        elif lower.startswith("return "):
+            formatted_steps.append(f"\\Return{{{escape_latex(stripped[7:])}}}")
+        elif stripped.endswith(":"):
+            # Generic block start
+            formatted_steps.append(f"\\tcp*[l]{{{escape_latex(stripped[:-1])}}}")
+        else:
+            # Regular statement
+            formatted_steps.append(f"    {escape_latex(stripped)}\\;")
+
+    # Close any open blocks (simple heuristic)
+    open_braces = sum(1 for s in formatted_steps if s == "{") - sum(1 for s in formatted_steps if s == "}")
+    formatted_steps.extend(["}"] * open_braces)
+
+    steps_str = "\n        ".join(formatted_steps)
+
+    # Escape caption and name for safe LaTeX output
+    safe_caption = escape_caption(caption) if caption else escape_caption(name)
+    safe_label = label if label else name.lower().replace(' ', '-')
+
+    algorithm_code = rf"""
+\begin{{algorithm}}[htbp]
+    \caption{{{safe_caption}}}
+    \label{{alg:{safe_label}}}
+    \KwIn{{{inputs}}}
+    \KwOut{{{outputs}}}
+
+        {steps_str}
+\end{{algorithm}}
+"""
+
+    return algorithm_code.strip()
+
+
 # =============================================================================
 # PDF Tools
 # =============================================================================
