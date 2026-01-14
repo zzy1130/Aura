@@ -323,3 +323,81 @@ def find_packages(content: str) -> list[str]:
         pkgs = [p.strip() for p in match.group(1).split(",")]
         packages.extend(pkgs)
     return packages
+
+
+# =============================================================================
+# BibTeX Parsing
+# =============================================================================
+
+# BibTeX entry pattern
+BIB_ENTRY_REGEX = re.compile(
+    r"@(\w+)\s*\{\s*([^,]+)\s*,",
+    re.IGNORECASE
+)
+BIB_FIELD_REGEX = re.compile(
+    r"(\w+)\s*=\s*[{\"]([^}\"]+)[}\"]",
+    re.IGNORECASE
+)
+
+
+def parse_bib_file(content: str) -> list[BibEntry]:
+    """
+    Parse a .bib file and extract all entries.
+
+    Handles standard BibTeX format with @type{key, field={value}, ...}
+    """
+    entries: list[BibEntry] = []
+
+    # Split into individual entries (rough split on @)
+    parts = re.split(r"(?=@\w+\{)", content)
+
+    for part in parts:
+        part = part.strip()
+        if not part.startswith("@"):
+            continue
+
+        # Extract entry type and key
+        entry_match = BIB_ENTRY_REGEX.match(part)
+        if not entry_match:
+            continue
+
+        entry_type = entry_match.group(1).lower()
+        key = entry_match.group(2).strip()
+
+        # Skip comments and preambles
+        if entry_type in ("comment", "preamble", "string"):
+            continue
+
+        # Extract fields
+        fields: dict[str, str] = {}
+        for field_match in BIB_FIELD_REGEX.finditer(part):
+            field_name = field_match.group(1).lower()
+            field_value = field_match.group(2).strip()
+            fields[field_name] = field_value
+
+        entries.append(BibEntry(
+            key=key,
+            entry_type=entry_type,
+            fields=fields,
+            raw=part,
+        ))
+
+    return entries
+
+
+def find_unused_citations(
+    document_citations: list[CitationInfo],
+    bib_entries: list[BibEntry],
+) -> list[BibEntry]:
+    """Find bibliography entries that are not cited in the document."""
+    cited_keys = {c.key for c in document_citations}
+    return [e for e in bib_entries if e.key not in cited_keys]
+
+
+def find_missing_citations(
+    document_citations: list[CitationInfo],
+    bib_entries: list[BibEntry],
+) -> list[str]:
+    """Find citation keys used in document but not in bibliography."""
+    bib_keys = {e.key for e in bib_entries}
+    return [c.key for c in document_citations if c.key not in bib_keys]
