@@ -66,14 +66,14 @@ class DocumentStructure:
 # Regex Patterns
 # =============================================================================
 
-# Section commands with their levels
-SECTION_PATTERNS = {
-    r"\\part\{": 0,
-    r"\\chapter\{": 0,
-    r"\\section\{": 1,
-    r"\\subsection\{": 2,
-    r"\\subsubsection\{": 3,
-    r"\\paragraph\{": 4,
+# Section commands with their levels (by command name)
+SECTION_LEVELS = {
+    "part": 0,
+    "chapter": 0,
+    "section": 1,
+    "subsection": 2,
+    "subsubsection": 3,
+    "paragraph": 4,
 }
 
 # Combined pattern to find any section
@@ -106,16 +106,15 @@ def parse_sections(content: str) -> list[DocumentSection]:
             full_match = match.group(1)
             name = match.group(2)
 
-            # Determine level
-            level = 1  # default to section
-            for pattern, lvl in SECTION_PATTERNS.items():
-                if re.match(pattern, full_match):
-                    level = lvl
-                    break
-
-            # Extract command
-            cmd_match = re.match(r"(\\[a-z]+)", full_match)
-            command = cmd_match.group(1) if cmd_match else r"\section"
+            # Extract command name and determine level
+            cmd_match = re.match(r"\\([a-z]+)", full_match)
+            if cmd_match:
+                command = "\\" + cmd_match.group(1)
+                cmd_name = cmd_match.group(1)
+                level = SECTION_LEVELS.get(cmd_name, 1)
+            else:
+                command = r"\section"
+                level = 1
 
             # Look for label on same or next line
             label = None
