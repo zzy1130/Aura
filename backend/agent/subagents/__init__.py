@@ -8,6 +8,7 @@ Available Subagents:
     - research: Search arXiv and Semantic Scholar for papers
     - compiler: Fix LaTeX compilation errors
     - planner: Create structured plans for complex tasks
+    - writing: Style analysis, consistency checking, bibliography management
 
 Usage:
     from agent.subagents import get_subagent, run_subagent, list_subagents
@@ -48,11 +49,13 @@ from agent.subagents.base import (
 from agent.subagents import research
 from agent.subagents import compiler
 from agent.subagents import planner
+from agent.subagents import writing
 
 # Re-export specific subagents for direct access
 from agent.subagents.research import ResearchAgent
 from agent.subagents.compiler import CompilerAgent
 from agent.subagents.planner import PlannerAgent, create_plan_for_task
+from agent.subagents.writing import WritingAgent
 
 
 __all__ = [
@@ -69,6 +72,7 @@ __all__ = [
     "ResearchAgent",
     "CompilerAgent",
     "PlannerAgent",
+    "WritingAgent",
     # Planning helpers
     "create_plan_for_task",
 ]
