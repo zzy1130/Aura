@@ -19,6 +19,16 @@ if TYPE_CHECKING:
     from agent.hitl import HITLManager, ApprovalStatus
     from agent.planning import PlanManager, Plan
 
+from services.latex_parser import (
+    parse_document,
+    parse_bib_file_path,
+    build_section_tree,
+    count_citations_per_section,
+    find_unused_citations,
+    find_missing_citations,
+    DocumentStructure,
+)
+
 
 @dataclass
 class AuraDeps:
@@ -438,6 +448,843 @@ async def read_file_lines(
 
     except Exception as e:
         return f"Error reading file: {e}"
+
+
+# =============================================================================
+# Document Analysis Tools
+# =============================================================================
+
+@aura_agent.tool
+async def analyze_structure(
+    ctx: RunContext[AuraDeps],
+    filepath: str = "main.tex",
+) -> str:
+    """
+    Analyze the structure of a LaTeX document.
+
+    Returns section hierarchy, figures/tables, citation statistics,
+    and any structural issues detected.
+
+    Args:
+        filepath: Path to the .tex file to analyze (default: main.tex)
+
+    Returns:
+        Formatted structure analysis with sections, elements, and issues
+    """
+    from pathlib import Path
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    if not full_path.exists():
+        return f"Error: File not found: {filepath}"
+
+    # Security check: ensure path is within project directory
+    try:
+        full_path.resolve().relative_to(Path(project_path).resolve())
+    except ValueError:
+        return f"Error: Path must be within project directory: {filepath}"
+
+    try:
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+        structure = parse_document(content)
+        tree = build_section_tree(structure.sections)
+        cite_counts = count_citations_per_section(structure, content)
+
+        # Format output
+        lines = [f"Document Structure: {filepath}", ""]
+
+        # Section hierarchy
+        lines.append("SECTIONS:")
+        def format_tree(sections, prefix=""):
+            result = []
+            for i, s in enumerate(sections):
+                is_last = i == len(sections) - 1
+                current_prefix = "└── " if is_last else "├── "
+                cite_count = cite_counts.get(s.name, 0)
+                label_info = f" [{s.label}]" if s.label else ""
+                result.append(f"{prefix}{current_prefix}{s.name} (L{s.line_start}-{s.line_end}) [{cite_count} citations]{label_info}")
+                if s.children:
+                    child_prefix = prefix + ("    " if is_last else "│   ")
+                    result.extend(format_tree(s.children, child_prefix))
+            return result
+
+        lines.extend(format_tree(tree))
+        lines.append("")
+
+        # Elements
+        lines.append("ELEMENTS:")
+        if structure.elements:
+            for e in structure.elements:
+                label_status = "✓ labeled" if e.label else "⚠ no label"
+                caption_preview = e.caption[:40] + "..." if e.caption and len(e.caption) > 40 else (e.caption or "no caption")
+                lines.append(f"  - {e.type}: \"{caption_preview}\" (L{e.line_start}) {label_status}")
+        else:
+            lines.append("  (none found)")
+        lines.append("")
+
+        # Citation info
+        lines.append(f"CITATIONS: {len(structure.citations)} unique keys")
+        lines.append(f"STYLE: {structure.citation_style}")
+        lines.append(f"BIB FILE: {structure.bib_file or 'not detected'}")
+        lines.append(f"PACKAGES: {', '.join(structure.packages[:10])}")
+        lines.append("")
+
+        # Issues
+        issues = []
+
+        # Check for sections without citations in expected places
+        for s in structure.sections:
+            name_lower = s.name.lower()
+            if "related" in name_lower or "background" in name_lower:
+                if cite_counts.get(s.name, 0) < 3:
+                    issues.append(f"Section '{s.name}' has few citations ({cite_counts.get(s.name, 0)}) - expected more for this section type")
+
+        # Check for unlabeled figures/tables
+        unlabeled = [e for e in structure.elements if not e.label]
+        if unlabeled:
+            issues.append(f"{len(unlabeled)} element(s) missing \\label{{}}")
+
+        # Check bib file if available
+        if structure.bib_file:
+            bib_path = Path(project_path) / structure.bib_file
+            if bib_path.exists():
+                bib_entries = parse_bib_file_path(bib_path)
+                unused = find_unused_citations(structure.citations, bib_entries)
+                missing = find_missing_citations(structure.citations, bib_entries)
+                if unused:
+                    issues.append(f"{len(unused)} unused entries in bibliography")
+                if missing:
+                    issues.append(f"{len(missing)} citations not in bibliography: {', '.join(missing[:5])}")
+
+        if issues:
+            lines.append("ISSUES:")
+            for issue in issues:
+                lines.append(f"  ⚠ {issue}")
+        else:
+            lines.append("ISSUES: None detected ✓")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Error analyzing document: {e}"
+
+
+@aura_agent.tool
+async def add_citation(
+    ctx: RunContext[AuraDeps],
+    paper_id: str,
+    cite_key: Optional[str] = None,
+    insert_after_line: Optional[int] = None,
+    cite_style: str = "cite",
+) -> str:
+    """
+    Add a citation to the document.
+
+    Fetches paper metadata, generates BibTeX entry, adds to .bib file,
+    and optionally inserts the citation command in the document.
+
+    Args:
+        paper_id: Paper identifier - can be:
+                  - arXiv ID (e.g., "2301.07041" or "arxiv:2301.07041")
+                  - Semantic Scholar ID (e.g., "s2:abc123")
+                  - Search query (will search and use first result)
+        cite_key: Optional custom citation key (auto-generated if not provided)
+        insert_after_line: Line number after which to insert \\cite{} command
+        cite_style: Citation style - "cite", "citep", "citet", "autocite", etc.
+
+    Returns:
+        Confirmation with the cite key and BibTeX entry
+    """
+    from pathlib import Path
+    import httpx
+    from agent.tools.citations import PaperMetadata, generate_bibtex, generate_cite_key, format_citation_command
+
+    project_path = ctx.deps.project_path
+
+    # Determine paper source and fetch metadata
+    paper = None
+
+    if paper_id.startswith("arxiv:") or paper_id.replace(".", "").replace("v", "").isdigit():
+        # arXiv paper
+        arxiv_id = paper_id.replace("arxiv:", "").strip()
+        paper = await _fetch_arxiv_metadata(arxiv_id)
+    elif paper_id.startswith("s2:"):
+        # Semantic Scholar ID
+        s2_id = paper_id.replace("s2:", "").strip()
+        paper = await _fetch_s2_metadata(s2_id)
+    else:
+        # Treat as search query - search arXiv
+        paper = await _search_arxiv_for_paper(paper_id)
+
+    if not paper:
+        return f"Error: Could not find paper: {paper_id}"
+
+    # Generate cite key if not provided
+    if cite_key is None:
+        cite_key = generate_cite_key(paper)
+
+    # Generate BibTeX entry
+    bibtex = generate_bibtex(paper, cite_key)
+
+    # Find and update .bib file
+    main_tex = Path(project_path) / "main.tex"
+    if main_tex.exists():
+        content = main_tex.read_text()
+        structure = parse_document(content)
+        bib_file = structure.bib_file or "refs.bib"
+    else:
+        bib_file = "refs.bib"
+
+    bib_path = Path(project_path) / bib_file
+
+    # Security check: ensure bib path is within project directory
+    try:
+        bib_path.resolve().relative_to(Path(project_path).resolve())
+    except ValueError:
+        return f"Error: Bibliography path must be within project directory: {bib_file}"
+
+    # Check if entry already exists
+    if bib_path.exists():
+        existing_content = bib_path.read_text()
+        if cite_key in existing_content:
+            return f"Citation key '{cite_key}' already exists in {bib_file}. Use a different cite_key."
+        # Append entry
+        with open(bib_path, "a") as f:
+            f.write("\n\n" + bibtex)
+    else:
+        # Create new .bib file
+        bib_path.write_text(bibtex + "\n")
+
+    result = f"Added citation to {bib_file}:\n\n{bibtex}\n\nUse: {format_citation_command(cite_key, cite_style)}"
+
+    # Insert citation in document if requested
+    if insert_after_line is not None and main_tex.exists():
+        content = main_tex.read_text()
+        lines = content.split("\n")
+        if 0 < insert_after_line <= len(lines):
+            cite_cmd = format_citation_command(cite_key, cite_style)
+            lines[insert_after_line - 1] += f" {cite_cmd}"
+            main_tex.write_text("\n".join(lines))
+            result += f"\n\nInserted {cite_cmd} after line {insert_after_line}"
+
+    return result
+
+
+async def _fetch_arxiv_metadata(arxiv_id: str) -> Optional["PaperMetadata"]:
+    """Fetch paper metadata from arXiv."""
+    import httpx
+    from agent.tools.citations import PaperMetadata
+
+    # Clean ID
+    arxiv_id = arxiv_id.split("v")[0]  # Remove version
+
+    url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+
+            # Parse Atom XML (simple regex extraction)
+            import re
+            content = response.text
+
+            title_match = re.search(r"<title>([^<]+)</title>", content)
+            if not title_match or "Error" in title_match.group(1):
+                return None
+
+            title = title_match.group(1).strip().replace("\n", " ")
+
+            # Extract authors
+            authors = re.findall(r"<name>([^<]+)</name>", content)
+
+            # Extract year from published date
+            pub_match = re.search(r"<published>(\d{4})", content)
+            year = int(pub_match.group(1)) if pub_match else 2024
+
+            # Extract abstract
+            abs_match = re.search(r"<summary>([^<]+)</summary>", content, re.DOTALL)
+            abstract = abs_match.group(1).strip() if abs_match else None
+
+            return PaperMetadata(
+                title=title,
+                authors=authors[:10],
+                year=year,
+                arxiv_id=arxiv_id,
+                abstract=abstract,
+                url=f"https://arxiv.org/abs/{arxiv_id}",
+            )
+    except Exception:
+        return None
+
+
+async def _fetch_s2_metadata(s2_id: str) -> Optional["PaperMetadata"]:
+    """Fetch paper metadata from Semantic Scholar."""
+    import httpx
+    from agent.tools.citations import PaperMetadata
+
+    url = f"https://api.semanticscholar.org/graph/v1/paper/{s2_id}"
+    params = {"fields": "title,authors,year,abstract,externalIds,venue"}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=10.0)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            data = response.json()
+
+            return PaperMetadata(
+                title=data.get("title", "Unknown"),
+                authors=[a.get("name", "") for a in data.get("authors", [])[:10]],
+                year=data.get("year", 2024),
+                arxiv_id=data.get("externalIds", {}).get("ArXiv"),
+                doi=data.get("externalIds", {}).get("DOI"),
+                venue=data.get("venue"),
+                abstract=data.get("abstract"),
+            )
+    except Exception:
+        return None
+
+
+async def _search_arxiv_for_paper(query: str) -> Optional["PaperMetadata"]:
+    """Search arXiv and return first result."""
+    import httpx
+    import urllib.parse
+
+    encoded_query = urllib.parse.quote(query)
+    url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&max_results=1"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+
+            import re
+            content = response.text
+
+            # Extract arXiv ID from first result
+            id_match = re.search(r"<id>http://arxiv.org/abs/([^<]+)</id>", content)
+            if not id_match:
+                return None
+
+            arxiv_id = id_match.group(1)
+            return await _fetch_arxiv_metadata(arxiv_id)
+    except Exception:
+        return None
+
+
+@aura_agent.tool
+async def create_table(
+    ctx: RunContext[AuraDeps],
+    data: str,
+    caption: str,
+    label: str = "",
+    style: str = "booktabs",
+) -> str:
+    """
+    Generate a LaTeX table from data.
+
+    Args:
+        data: Table data in CSV or markdown format:
+              CSV: "Header1,Header2\\nValue1,Value2"
+              Markdown: "| H1 | H2 |\\n| v1 | v2 |"
+        caption: Table caption
+        label: Label for referencing (e.g., "results" -> \\label{tab:results})
+        style: Table style - "booktabs" (professional) or "basic"
+
+    Returns:
+        Complete LaTeX table code ready to paste
+    """
+    import re
+
+    def escape_latex(text: str) -> str:
+        """Escape LaTeX special characters in text."""
+        replacements = [
+            ('\\', r'\textbackslash{}'),
+            ('&', r'\&'),
+            ('%', r'\%'),
+            ('$', r'\$'),
+            ('#', r'\#'),
+            ('_', r'\_'),
+            ('{', r'\{'),
+            ('}', r'\}'),
+            ('^', r'\^{}'),
+            ('~', r'\~{}'),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    # Parse data
+    lines = data.strip().split("\n")
+    rows = []
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("|--") or line.startswith("|-"):
+            continue
+
+        # Handle markdown format
+        if "|" in line:
+            cells = [c.strip() for c in line.split("|") if c.strip()]
+        # Handle CSV format
+        else:
+            cells = [c.strip() for c in line.split(",")]
+
+        if cells:
+            rows.append(cells)
+
+    if not rows:
+        return "Error: Could not parse table data"
+
+    # Determine column count and alignment
+    num_cols = max(len(row) for row in rows)
+
+    # Detect numeric columns for right-alignment
+    alignments = []
+    for col in range(num_cols):
+        is_numeric = True
+        for row in rows[1:]:  # Skip header
+            if col < len(row):
+                val = row[col].strip()
+                # Check if it's a number (including decimals, percentages)
+                if not re.match(r"^[\d.,]+%?$", val) and val:
+                    is_numeric = False
+                    break
+        alignments.append("r" if is_numeric else "l")
+
+    # First column usually left-aligned
+    if alignments:
+        alignments[0] = "l"
+
+    alignment_str = "".join(alignments)
+
+    # Build table
+    if style == "booktabs":
+        table_lines = [
+            r"\begin{table}[htbp]",
+            r"    \centering",
+            f"    \\caption{{{caption}}}",
+        ]
+        if label:
+            table_lines.append(f"    \\label{{tab:{label}}}")
+        table_lines.extend([
+            f"    \\begin{{tabular}}{{{alignment_str}}}",
+            r"        \toprule",
+        ])
+
+        # Header row
+        if rows:
+            header = " & ".join(f"\\textbf{{{escape_latex(cell)}}}" for cell in rows[0])
+            table_lines.append(f"        {header} \\\\")
+            table_lines.append(r"        \midrule")
+
+        # Data rows
+        for row in rows[1:]:
+            # Pad row if needed (create copy to avoid mutation)
+            padded_row = row + [''] * (num_cols - len(row))
+            row_str = " & ".join(escape_latex(cell) for cell in padded_row)
+            table_lines.append(f"        {row_str} \\\\")
+
+        table_lines.extend([
+            r"        \bottomrule",
+            r"    \end{tabular}",
+            r"\end{table}",
+        ])
+    else:
+        # Basic style
+        table_lines = [
+            r"\begin{table}[htbp]",
+            r"    \centering",
+            f"    \\caption{{{caption}}}",
+        ]
+        if label:
+            table_lines.append(f"    \\label{{tab:{label}}}")
+        table_lines.extend([
+            f"    \\begin{{tabular}}{{|{alignment_str}|}}",
+            r"        \hline",
+        ])
+
+        for i, row in enumerate(rows):
+            # Pad row if needed (create copy to avoid mutation)
+            padded_row = row + [''] * (num_cols - len(row))
+            row_str = " & ".join(escape_latex(cell) for cell in padded_row)
+            table_lines.append(f"        {row_str} \\\\")
+            table_lines.append(r"        \hline")
+
+        table_lines.extend([
+            r"    \end{tabular}",
+            r"\end{table}",
+        ])
+
+    return "\n".join(table_lines)
+
+
+@aura_agent.tool
+async def create_figure(
+    ctx: RunContext[AuraDeps],
+    description: str,
+    figure_type: str = "tikz",
+    caption: str = "",
+    label: str = "",
+    data: str = "",
+) -> str:
+    """
+    Generate a LaTeX figure from description.
+
+    Args:
+        description: What the figure should show (e.g., "flowchart of training pipeline")
+        figure_type: Type of figure:
+                    - "tikz": General diagrams
+                    - "pgfplots-bar": Bar chart
+                    - "pgfplots-line": Line plot
+                    - "pgfplots-scatter": Scatter plot
+        caption: Figure caption
+        label: Label for referencing (e.g., "architecture" -> \\label{fig:architecture})
+        data: For plots, provide data as CSV: "x,y1,y2\\n1,2,3\\n2,4,5"
+
+    Returns:
+        Complete LaTeX figure code
+    """
+    import re
+
+    def escape_latex(text: str) -> str:
+        """Escape LaTeX special characters in text."""
+        replacements = [
+            ('\\', r'\textbackslash{}'),
+            ('&', r'\&'),
+            ('%', r'\%'),
+            ('$', r'\$'),
+            ('#', r'\#'),
+            ('_', r'\_'),
+            ('{', r'\{'),
+            ('}', r'\}'),
+            ('^', r'\^{}'),
+            ('~', r'\~{}'),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    # For complex figure generation, we provide templates
+    # The LLM will customize based on description
+
+    if figure_type == "tikz":
+        # Generic TikZ template
+        figure_code = r"""
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[
+        node distance=2cm,
+        box/.style={rectangle, draw, rounded corners, minimum width=2.5cm, minimum height=1cm, align=center},
+        arrow/.style={->, >=stealth, thick}
+    ]
+        % Nodes - customize based on your needs
+        \node[box] (input) {Input};
+        \node[box, right of=input] (process) {Process};
+        \node[box, right of=process] (output) {Output};
+
+        % Arrows
+        \draw[arrow] (input) -- (process);
+        \draw[arrow] (process) -- (output);
+    \end{tikzpicture}
+    \caption{CAPTION_PLACEHOLDER}
+    \label{fig:LABEL_PLACEHOLDER}
+\end{figure}
+"""
+    elif figure_type == "pgfplots-bar":
+        # Parse data for bar chart
+        if data:
+            lines = data.strip().split("\n")
+            headers = lines[0].split(",") if lines else ["Category", "Value"]
+
+            coords = []
+            for line in lines[1:]:
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    coords.append(f"({parts[0]}, {parts[1]})")
+
+            # Validate that we have data rows
+            if not coords:
+                return "Error: No data rows found. Provide data with at least one data row after the header."
+
+            coords_str = " ".join(coords)
+        else:
+            headers = ["Category", "Value"]
+            coords_str = "(A, 10) (B, 20) (C, 15)"
+
+        # Escape LaTeX special characters in axis labels
+        xlabel_text = escape_latex(headers[0]) if headers else 'Category'
+        ylabel_text = escape_latex(headers[1]) if len(headers) > 1 else 'Value'
+
+        figure_code = rf"""
+\begin{{figure}}[htbp]
+    \centering
+    \begin{{tikzpicture}}
+        \begin{{axis}}[
+            ybar,
+            xlabel={{{xlabel_text}}},
+            ylabel={{{ylabel_text}}},
+            symbolic x coords={{A, B, C}},
+            xtick=data,
+            nodes near coords,
+            width=0.8\textwidth,
+            height=6cm,
+        ]
+            \addplot coordinates {{{coords_str}}};
+        \end{{axis}}
+    \end{{tikzpicture}}
+    \caption{{CAPTION_PLACEHOLDER}}
+    \label{{fig:LABEL_PLACEHOLDER}}
+\end{{figure}}
+"""
+    elif figure_type == "pgfplots-line":
+        # Parse data for line plot
+        if data:
+            lines = data.strip().split("\n")
+            headers = lines[0].split(",") if lines else ["x", "y"]
+
+            coords = []
+            for line in lines[1:]:
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    coords.append(f"({parts[0]}, {parts[1]})")
+
+            # Validate that we have data rows
+            if not coords:
+                return "Error: No data rows found. Provide data with at least one data row after the header."
+
+            coords_str = " ".join(coords)
+        else:
+            headers = ["x", "y"]
+            coords_str = "(0, 0) (1, 2) (2, 4) (3, 3) (4, 5)"
+
+        # Escape LaTeX special characters in axis labels
+        xlabel_text = escape_latex(headers[0]) if headers else 'x'
+        ylabel_text = escape_latex(headers[1]) if len(headers) > 1 else 'y'
+
+        figure_code = rf"""
+\begin{{figure}}[htbp]
+    \centering
+    \begin{{tikzpicture}}
+        \begin{{axis}}[
+            xlabel={{{xlabel_text}}},
+            ylabel={{{ylabel_text}}},
+            legend pos=north west,
+            grid=major,
+            width=0.8\textwidth,
+            height=6cm,
+        ]
+            \addplot[color=blue, mark=*] coordinates {{{coords_str}}};
+            \legend{{Data}}
+        \end{{axis}}
+    \end{{tikzpicture}}
+    \caption{{CAPTION_PLACEHOLDER}}
+    \label{{fig:LABEL_PLACEHOLDER}}
+\end{{figure}}
+"""
+    elif figure_type == "pgfplots-scatter":
+        coords_str = "(1, 2) (2, 3) (3, 2.5) (4, 4) (5, 4.5)"
+        if data:
+            lines = data.strip().split("\n")
+            coords = []
+            for line in lines[1:]:
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    coords.append(f"({parts[0]}, {parts[1]})")
+            if coords:
+                coords_str = " ".join(coords)
+
+        figure_code = rf"""
+\begin{{figure}}[htbp]
+    \centering
+    \begin{{tikzpicture}}
+        \begin{{axis}}[
+            xlabel={{X}},
+            ylabel={{Y}},
+            only marks,
+            width=0.8\textwidth,
+            height=6cm,
+        ]
+            \addplot[color=blue, mark=o] coordinates {{{coords_str}}};
+        \end{{axis}}
+    \end{{tikzpicture}}
+    \caption{{CAPTION_PLACEHOLDER}}
+    \label{{fig:LABEL_PLACEHOLDER}}
+\end{{figure}}
+"""
+    else:
+        return f"Error: Unknown figure type '{figure_type}'. Use: tikz, pgfplots-bar, pgfplots-line, pgfplots-scatter"
+
+    # Replace placeholders
+    if caption:
+        figure_code = figure_code.replace("CAPTION_PLACEHOLDER", escape_latex(caption))
+    else:
+        figure_code = figure_code.replace("CAPTION_PLACEHOLDER", escape_latex(description[:50]))
+
+    if label:
+        figure_code = figure_code.replace("LABEL_PLACEHOLDER", label)
+    else:
+        # Generate label from description
+        label_text = re.sub(r"[^a-z0-9]+", "-", description.lower())[:20]
+        figure_code = figure_code.replace("LABEL_PLACEHOLDER", label_text)
+
+    return figure_code.strip()
+
+
+@aura_agent.tool
+async def create_algorithm(
+    ctx: RunContext[AuraDeps],
+    name: str,
+    inputs: str,
+    outputs: str,
+    steps: str,
+    caption: str = "",
+    label: str = "",
+) -> str:
+    """
+    Generate an algorithm/pseudocode block.
+
+    Args:
+        name: Algorithm name
+        inputs: Input parameters (comma-separated)
+        outputs: Output values (comma-separated)
+        steps: Algorithm steps (one per line, use indentation for nesting)
+        caption: Algorithm caption
+        label: Label for referencing
+
+    Returns:
+        Complete algorithm2e LaTeX code
+
+    Example steps format:
+        "Initialize parameters
+        for each epoch:
+            for each batch:
+                Compute loss
+                Update weights
+        return model"
+    """
+    import re
+
+    def escape_latex(text: str) -> str:
+        """Escape LaTeX special characters in text (preserves math mode)."""
+        # Don't escape text inside math mode ($...$)
+        # Split by math mode delimiters and only escape non-math parts
+        parts = re.split(r'(\$[^$]+\$)', text)
+        escaped_parts = []
+        for part in parts:
+            if part.startswith('$') and part.endswith('$'):
+                # Math mode - don't escape
+                escaped_parts.append(part)
+            else:
+                # Regular text - escape special characters
+                replacements = [
+                    ('\\', r'\textbackslash{}'),
+                    ('&', r'\&'),
+                    ('%', r'\%'),
+                    ('#', r'\#'),
+                    ('_', r'\_'),
+                    ('{', r'\{'),
+                    ('}', r'\}'),
+                    ('^', r'\^{}'),
+                    ('~', r'\~{}'),
+                ]
+                for old, new in replacements:
+                    part = part.replace(old, new)
+                escaped_parts.append(part)
+        return ''.join(escaped_parts)
+
+    def escape_caption(text: str) -> str:
+        """Escape caption text (full escaping including $)."""
+        replacements = [
+            ('\\', r'\textbackslash{}'),
+            ('&', r'\&'),
+            ('%', r'\%'),
+            ('$', r'\$'),
+            ('#', r'\#'),
+            ('_', r'\_'),
+            ('{', r'\{'),
+            ('}', r'\}'),
+            ('^', r'\^{}'),
+            ('~', r'\~{}'),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    # Parse steps and convert to algorithm2e syntax
+    step_lines = steps.strip().split("\n")
+    # Filter out empty lines early and validate
+    step_lines = [l for l in step_lines if l.strip()]
+    if not step_lines:
+        return "Error: No algorithm steps provided. Please provide at least one step."
+
+    formatted_steps = []
+
+    for line in step_lines:
+        # Count leading spaces/tabs for indentation level
+        stripped = line.lstrip()
+
+        indent = len(line) - len(stripped)
+        indent_level = indent // 4  # Assume 4 spaces per level
+
+        # Convert common patterns to algorithm2e commands
+        lower = stripped.lower()
+
+        if lower.startswith("for ") and ":" in lower:
+            # for X in Y: or for each X:
+            parts = stripped[4:].split(":")
+            formatted_steps.append(f"\\For{{{escape_latex(parts[0].strip())}}}")
+            formatted_steps.append("{")
+        elif lower.startswith("while ") and ":" in lower:
+            parts = stripped[6:].split(":")
+            formatted_steps.append(f"\\While{{{escape_latex(parts[0].strip())}}}")
+            formatted_steps.append("{")
+        elif lower.startswith("if ") and ":" in lower:
+            parts = stripped[3:].split(":")
+            formatted_steps.append(f"\\If{{{escape_latex(parts[0].strip())}}}")
+            formatted_steps.append("{")
+        elif lower.startswith("else:"):
+            formatted_steps.append("}")
+            formatted_steps.append("\\Else{")
+        elif lower.startswith("return "):
+            formatted_steps.append(f"\\Return{{{escape_latex(stripped[7:])}}}")
+        elif stripped.endswith(":"):
+            # Generic block start
+            formatted_steps.append(f"\\tcp*[l]{{{escape_latex(stripped[:-1])}}}")
+        else:
+            # Regular statement
+            formatted_steps.append(f"    {escape_latex(stripped)}\\;")
+
+    # Close any open blocks (simple heuristic)
+    open_braces = sum(1 for s in formatted_steps if s == "{") - sum(1 for s in formatted_steps if s == "}")
+    formatted_steps.extend(["}"] * open_braces)
+
+    steps_str = "\n        ".join(formatted_steps)
+
+    # Escape caption and name for safe LaTeX output
+    safe_caption = escape_caption(caption) if caption else escape_caption(name)
+    safe_label = label if label else name.lower().replace(' ', '-')
+    # Remove invalid characters (only allow alphanumeric and hyphens)
+    safe_label = re.sub(r'[^a-z0-9-]', '', safe_label)
+    # Ensure not empty after sanitization
+    if not safe_label:
+        safe_label = "algorithm"
+
+    algorithm_code = rf"""
+\begin{{algorithm}}[htbp]
+    \caption{{{safe_caption}}}
+    \label{{alg:{safe_label}}}
+    \KwIn{{{escape_latex(inputs)}}}
+    \KwOut{{{escape_latex(outputs)}}}
+
+        {steps_str}
+\end{{algorithm}}
+"""
+
+    return algorithm_code.strip()
 
 
 # =============================================================================

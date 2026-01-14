@@ -4,7 +4,7 @@
 
 Aura is a **local-first macOS desktop LaTeX IDE** with an embedded AI agent. Think "Overleaf + Claude Code" as a native app.
 
-**Current Status**: Phase 7 complete (Vibe Research Engine).
+**Current Status**: Phase 8 complete (Writing Intelligence).
 
 ## Architecture Summary
 
@@ -24,9 +24,9 @@ Electron (.app) → Next.js UI → FastAPI Backend → Pydantic AI Agent
 |-----------|----------|-------------|
 | FastAPI Backend | `backend/` | `main.py` |
 | Main Agent | `backend/agent/` | `pydantic_agent.py` |
-| Subagents | `backend/agent/subagents/` | `research.py`, `compiler.py`, `planner.py` |
-| Services | `backend/services/` | `docker.py`, `project.py`, `memory.py` |
-| Tools | `backend/agent/tools/` | `pdf_reader.py` |
+| Subagents | `backend/agent/subagents/` | `research.py`, `compiler.py`, `planner.py`, `writing.py` |
+| Services | `backend/services/` | `docker.py`, `project.py`, `memory.py`, `latex_parser.py` |
+| Tools | `backend/agent/tools/` | `pdf_reader.py`, `citations.py` |
 
 ## Colorist API Configuration
 
@@ -221,6 +221,7 @@ Research subagent:
 | 5 | ✅ | Git/Overleaf sync + packaging |
 | 6 | ✅ | Project memory system |
 | 7 | ✅ | Vibe Research Engine (see `docs/plans/2026-01-13-vibe-research-implementation.md`) |
+| 8 | ✅ | Writing Intelligence (tools, subagent, API) |
 
 ## Phase 7: Vibe Research (Complete)
 
@@ -233,6 +234,30 @@ Key components:
 - `SemanticScholarClient` - Citation graph traversal
 - New tools: `explore_citations`, `record_gap`, `generate_hypothesis`, `score_hypothesis`, etc.
 - 5-phase workflow: SCOPING → DISCOVERY → SYNTHESIS → IDEATION → EVALUATION
+
+## Phase 8: Writing Intelligence (Complete)
+
+New tools added to main agent (`pydantic_agent.py`):
+- `analyze_structure` - Parse document structure (sections, elements, citations)
+- `add_citation` - Add paper to .bib and insert \cite{}
+- `create_table` - Generate booktabs table from CSV/markdown
+- `create_figure` - Generate TikZ or pgfplots figure
+- `create_algorithm` - Generate algorithm2e pseudocode
+
+WritingAgent subagent tools (via `delegate_to_subagent("writing", ...)`):
+- `read_document` - Read document with line numbers
+- `analyze_document_structure` - Get section hierarchy
+- `check_consistency` - Find terminology/notation inconsistencies
+- `clean_bibliography` - Find unused .bib entries
+- `suggest_citations` - Find claims needing citations
+
+New services:
+- `services/latex_parser.py` - LaTeX document parsing
+- `agent/tools/citations.py` - BibTeX generation helper
+
+New API endpoints:
+- `POST /api/analyze-structure` - Parse document structure
+- `POST /api/clean-bibliography` - Find unused bibliography entries
 
 ## Git Workflow
 

@@ -20,6 +20,7 @@ import json
 from services.docker import DockerLatex, CompileResult
 from services.project import ProjectService, ProjectInfo
 from services.memory import MemoryService
+from services.latex_parser import parse_document, parse_bib_file_path, find_unused_citations
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1825,6 +1826,134 @@ def mark_session_running(session_id: str):
 def mark_session_stopped(session_id: str):
     """Mark a session as stopped."""
     _running_vibe_sessions.pop(session_id, None)
+
+
+# ============ Writing Intelligence Endpoints ============
+
+class AnalyzeStructureRequest(BaseModel):
+    project_path: str
+    filepath: str = "main.tex"
+
+
+class CreateTableRequest(BaseModel):
+    project_path: str
+    data: str
+    caption: str
+    label: str = ""
+    style: str = "booktabs"
+
+
+class CreateFigureRequest(BaseModel):
+    project_path: str
+    description: str
+    figure_type: str = "tikz"
+    caption: str = ""
+    label: str = ""
+    data: str = ""
+
+
+@app.post("/api/analyze-structure")
+async def api_analyze_structure(request: AnalyzeStructureRequest):
+    """Analyze document structure."""
+    from pathlib import Path
+
+    filepath = Path(request.project_path) / request.filepath
+
+    # SECURITY: Path traversal check
+    try:
+        filepath.resolve().relative_to(Path(request.project_path).resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filepath")
+
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    content = filepath.read_text()
+    structure = parse_document(content)
+
+    return {
+        "sections": [
+            {
+                "name": s.name,
+                "level": s.level,
+                "line_start": s.line_start,
+                "line_end": s.line_end,
+                "label": s.label,
+            }
+            for s in structure.sections
+        ],
+        "elements": [
+            {
+                "type": e.type,
+                "caption": e.caption,
+                "label": e.label,
+                "line_start": e.line_start,
+                "line_end": e.line_end,
+            }
+            for e in structure.elements
+        ],
+        "citations": [
+            {
+                "key": c.key,
+                "locations": c.locations,
+                "command": c.command,
+            }
+            for c in structure.citations
+        ],
+        "citation_style": structure.citation_style,
+        "bib_file": structure.bib_file,
+        "packages": structure.packages,
+    }
+
+
+@app.post("/api/clean-bibliography")
+async def api_clean_bibliography(request: AnalyzeStructureRequest):
+    """Find unused bibliography entries."""
+    from pathlib import Path
+
+    filepath = Path(request.project_path) / request.filepath
+
+    # SECURITY: Path traversal check
+    try:
+        filepath.resolve().relative_to(Path(request.project_path).resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filepath")
+
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    content = filepath.read_text()
+    structure = parse_document(content)
+
+    if not structure.bib_file:
+        return {"unused": [], "message": "No bibliography file detected"}
+
+    bib_path = Path(request.project_path) / structure.bib_file
+
+    # SECURITY: Path traversal check for bib file
+    try:
+        bib_path.resolve().relative_to(Path(request.project_path).resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid bibliography path")
+
+    if not bib_path.exists():
+        raise HTTPException(status_code=404, detail=f"Bibliography file not found: {structure.bib_file}")
+
+    bib_entries = parse_bib_file_path(bib_path)
+    unused = find_unused_citations(structure.citations, bib_entries)
+
+    return {
+        "unused": [
+            {
+                "key": e.key,
+                "title": e.fields.get("title", ""),
+                "year": e.fields.get("year", ""),
+            }
+            for e in unused
+        ],
+        "total_entries": len(bib_entries),
+        "cited_count": len(structure.citations),
+    }
 
 
 # ============ Run Server ============

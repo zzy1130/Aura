@@ -26,6 +26,9 @@ docker>=7.0.0
 # Git
 gitpython>=3.1.41
 
+# LaTeX parsing
+pylatexenc>=2.10
+
 # Utils
 python-multipart>=0.0.6
 python-dotenv>=1.0.0
