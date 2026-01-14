@@ -238,3 +238,87 @@ def parse_elements(content: str) -> list[DocumentElement]:
             env_stack[-1][2].append(line)
 
     return elements
+
+
+# =============================================================================
+# Citation Parsing
+# =============================================================================
+
+# Citation command patterns (BibLaTeX and natbib variants)
+CITATION_COMMANDS = [
+    "cite", "citep", "citet", "citeauthor", "citeyear",
+    "autocite", "textcite", "parencite", "footcite",
+    "fullcite", "nocite",
+]
+CITATION_REGEX = re.compile(
+    r"\\(" + "|".join(CITATION_COMMANDS) + r")\{([^}]+)\}"
+)
+
+# Package detection
+USEPACKAGE_REGEX = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}")
+BIBRESOURCE_REGEX = re.compile(r"\\addbibresource\{([^}]+)\}")
+BIBLIOGRAPHY_REGEX = re.compile(r"\\bibliography\{([^}]+)\}")
+
+
+def find_citations(content: str) -> list[CitationInfo]:
+    """
+    Find all citations in the document.
+
+    Returns list of CitationInfo with keys and their locations.
+    """
+    lines = content.split("\n")
+    citations_map: dict[str, CitationInfo] = {}
+
+    for i, line in enumerate(lines, start=1):
+        for match in CITATION_REGEX.finditer(line):
+            command = match.group(1)
+            keys_str = match.group(2)
+
+            # Handle multiple keys in one citation: \cite{key1,key2}
+            keys = [k.strip() for k in keys_str.split(",")]
+
+            for key in keys:
+                if key in citations_map:
+                    citations_map[key].locations.append(i)
+                else:
+                    citations_map[key] = CitationInfo(
+                        key=key,
+                        locations=[i],
+                        command=command,
+                    )
+
+    return list(citations_map.values())
+
+
+def detect_citation_style(content: str) -> tuple[str, Optional[str]]:
+    """
+    Detect citation style and bibliography file.
+
+    Returns:
+        (style, bib_file) where style is "biblatex" or "bibtex"
+    """
+    # Check for biblatex
+    if "biblatex" in content or BIBRESOURCE_REGEX.search(content):
+        bib_match = BIBRESOURCE_REGEX.search(content)
+        bib_file = bib_match.group(1) if bib_match else None
+        return "biblatex", bib_file
+
+    # Check for natbib or traditional bibtex
+    bib_match = BIBLIOGRAPHY_REGEX.search(content)
+    if bib_match:
+        bib_file = bib_match.group(1)
+        if not bib_file.endswith(".bib"):
+            bib_file += ".bib"
+        return "bibtex", bib_file
+
+    return "unknown", None
+
+
+def find_packages(content: str) -> list[str]:
+    """Find all packages used in the document."""
+    packages = []
+    for match in USEPACKAGE_REGEX.finditer(content):
+        # Handle multiple packages: \usepackage{pkg1,pkg2}
+        pkgs = [p.strip() for p in match.group(1).split(",")]
+        packages.extend(pkgs)
+    return packages
