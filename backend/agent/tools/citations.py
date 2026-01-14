@@ -9,6 +9,21 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+def escape_bibtex(text: str) -> str:
+    """Escape BibTeX special characters in text."""
+    escapes = [
+        ("\\", r"\\"),  # Must be first
+        ("&", r"\&"),
+        ("%", r"\%"),
+        ("$", r"\$"),
+        ("#", r"\#"),
+        ("_", r"\_"),
+    ]
+    for old, new in escapes:
+        text = text.replace(old, new)
+    return text
+
+
 @dataclass
 class PaperMetadata:
     """Paper metadata from arXiv or Semantic Scholar."""
@@ -83,15 +98,17 @@ def generate_bibtex(
     fields = []
 
     # Title (escape special chars)
-    title = paper.title.replace("&", r"\&")
+    title = escape_bibtex(paper.title)
     fields.append(f'    title = {{{title}}}')
 
-    # Authors
+    # Authors (filter out empty/None values)
     if paper.authors:
-        authors_str = " and ".join(paper.authors[:10])  # Limit to 10 authors
-        if len(paper.authors) > 10:
-            authors_str += " and others"
-        fields.append(f'    author = {{{authors_str}}}')
+        valid_authors = [a for a in paper.authors[:10] if a and a.strip()]
+        if valid_authors:
+            authors_str = " and ".join(valid_authors)
+            if len(paper.authors) > 10:
+                authors_str += " and others"
+            fields.append(f'    author = {{{authors_str}}}')
 
     # Year
     fields.append(f'    year = {{{paper.year}}}')
