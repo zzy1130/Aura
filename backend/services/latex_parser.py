@@ -401,3 +401,88 @@ def find_missing_citations(
     """Find citation keys used in document but not in bibliography."""
     bib_keys = {e.key for e in bib_entries}
     return [c.key for c in document_citations if c.key not in bib_keys]
+
+
+# =============================================================================
+# Main Parser Interface
+# =============================================================================
+
+def parse_document(content: str) -> DocumentStructure:
+    """
+    Parse a LaTeX document and return complete structure.
+
+    This is the main entry point for document analysis.
+    """
+    sections = parse_sections(content)
+    elements = parse_elements(content)
+    citations = find_citations(content)
+    packages = find_packages(content)
+    style, bib_file = detect_citation_style(content)
+
+    return DocumentStructure(
+        sections=sections,
+        elements=elements,
+        citations=citations,
+        citation_style=style,
+        bib_file=bib_file,
+        packages=packages,
+    )
+
+
+def parse_document_file(filepath: str | Path) -> DocumentStructure:
+    """Parse a LaTeX document from file path."""
+    path = Path(filepath)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {filepath}")
+
+    content = path.read_text(encoding="utf-8", errors="replace")
+    return parse_document(content)
+
+
+def parse_bib_file_path(filepath: str | Path) -> list[BibEntry]:
+    """Parse a .bib file from file path."""
+    path = Path(filepath)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {filepath}")
+
+    content = path.read_text(encoding="utf-8", errors="replace")
+    return parse_bib_file(content)
+
+
+def get_section_by_name(
+    structure: DocumentStructure,
+    name: str,
+) -> Optional[DocumentSection]:
+    """Find a section by name (case-insensitive partial match)."""
+    name_lower = name.lower()
+    for section in structure.sections:
+        if name_lower in section.name.lower():
+            return section
+    return None
+
+
+def get_section_content(
+    content: str,
+    section: DocumentSection,
+) -> str:
+    """Extract the content of a specific section."""
+    lines = content.split("\n")
+    return "\n".join(lines[section.line_start - 1:section.line_end])
+
+
+def count_citations_per_section(
+    structure: DocumentStructure,
+    content: str,
+) -> dict[str, int]:
+    """Count how many citations appear in each section."""
+    counts: dict[str, int] = {}
+
+    for section in structure.sections:
+        count = 0
+        for citation in structure.citations:
+            for loc in citation.locations:
+                if section.line_start <= loc <= section.line_end:
+                    count += 1
+        counts[section.name] = count
+
+    return counts
