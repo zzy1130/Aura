@@ -266,18 +266,18 @@ export default function Editor({
         onSave();
       });
 
-      // Add context menu actions for AI
+      // Add context menu actions for AI (use 'z_aura' group to put at bottom with separator)
       editor.addAction({
         id: 'aura-polish',
-        label: 'Polish with AI',
-        contextMenuGroupId: 'aura',
+        label: '✨ Polish with AI',
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP],
+        contextMenuGroupId: 'z_aura',
         contextMenuOrder: 1,
-        precondition: 'editorHasSelection',
         run: (ed) => {
           const selection = ed.getSelection();
-          if (selection) {
+          if (selection && !selection.isEmpty()) {
             const selectedText = ed.getModel()?.getValueInRange(selection);
-            if (selectedText && onSendToAgentRef.current) {
+            if (selectedText && selectedText.trim() && onSendToAgentRef.current) {
               onSendToAgentRef.current(selectedText, 'polish');
             }
           }
@@ -286,15 +286,15 @@ export default function Editor({
 
       editor.addAction({
         id: 'aura-ask-ai',
-        label: 'Ask AI',
-        contextMenuGroupId: 'aura',
+        label: '💬 Ask AI',
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyA],
+        contextMenuGroupId: 'z_aura',
         contextMenuOrder: 2,
-        precondition: 'editorHasSelection',
         run: (ed) => {
           const selection = ed.getSelection();
-          if (selection) {
+          if (selection && !selection.isEmpty()) {
             const selectedText = ed.getModel()?.getValueInRange(selection);
-            if (selectedText && onSendToAgentRef.current) {
+            if (selectedText && selectedText.trim() && onSendToAgentRef.current) {
               onSendToAgentRef.current(selectedText, 'ask');
             }
           }

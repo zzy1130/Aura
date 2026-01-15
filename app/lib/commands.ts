@@ -101,7 +101,11 @@ export const commands: SlashCommand[] = [
     requiresArg: true,
     argPlaceholder: 'selected text',
     executionType: 'agent',
-    toAgentMessage: (arg) => `Polish and improve the following text. Make it clearer, more concise, and more academic in tone while preserving the original meaning:\n\n${arg}`,
+    toAgentMessage: (arg) => `Polish ONLY the following text. Do NOT read files, do NOT edit the document, do NOT search for anything. Just return a polished version of this exact text - make it clearer, more concise, and more academic. Reply with ONLY the improved text, nothing else:
+
+"""
+${arg}
+"""`,
   },
   {
     name: 'analyze',

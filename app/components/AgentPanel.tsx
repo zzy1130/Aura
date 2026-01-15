@@ -784,8 +784,11 @@ export default function AgentPanel({
         if (parsed) {
           const cmd = findCommand(parsed.name);
           if (cmd) {
+            // Use quotedText as argument if no argument in input
+            const argument = parsed.argument || quotedText || '';
             setInput('');
-            executeCommand(cmd, parsed.argument);
+            onClearQuote?.(); // Clear the quote
+            executeCommand(cmd, argument);
             return;
           }
         }
@@ -804,7 +807,7 @@ export default function AgentPanel({
         }
       }
     },
-    [sendMessage, queuePendingMessage, isStreaming, showCommandPalette, filteredCommands, selectedCommandIndex, selectCommand, input, executeCommand]
+    [sendMessage, queuePendingMessage, isStreaming, showCommandPalette, filteredCommands, selectedCommandIndex, selectCommand, input, executeCommand, quotedText, onClearQuote]
   );
 
   return (
