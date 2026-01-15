@@ -34,6 +34,8 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 ### AI Agent
 - **Chat Mode**: Quick research assistance, paper searches, writing help
 - **Vibe Research Mode**: Autonomous deep literature exploration with hypothesis generation
+- **Slash Commands**: Quick access to common actions (`/research`, `/polish`, `/compile`, etc.)
+- **Context Menu AI**: Right-click selected text to polish or ask AI about it
 - **Writing Intelligence**: Automated document analysis, citation management, and LaTeX generation
 - **22 Built-in Tools**: File operations, LaTeX compilation, research, planning, writing
 - **Subagent System**: Specialized agents for research, compilation, planning, and writing
@@ -281,6 +283,36 @@ npm run build
 ---
 
 ## Usage Guide
+
+### Slash Commands
+
+Type `/` in the chat input to see available commands:
+
+| Command | Description | Keyboard Shortcut |
+|---------|-------------|-------------------|
+| `/research [topic]` | Search for papers on a topic | - |
+| `/vibe [topic]` | Start deep autonomous research | - |
+| `/cite [ref]` | Add a citation to the document | - |
+| `/polish` | Polish selected text (use with context menu) | ⌘⇧P |
+| `/analyze` | Analyze document structure | - |
+| `/fix` | Fix LaTeX compilation errors | - |
+| `/clean-bib` | Remove unused bibliography entries | - |
+| `/compile` | Compile the LaTeX document | - |
+| `/sync` | Sync with Overleaf | - |
+
+**Navigation:**
+- Use ↑↓ arrow keys to navigate
+- Press Tab or Enter to select
+- Press Escape to close
+
+### Context Menu AI
+
+Select text in the editor and right-click to access AI actions:
+
+- **✨ Polish with AI** (⌘⇧P): Improve clarity, conciseness, and academic tone
+- **💬 Ask AI** (⌘⇧A): Ask questions about the selected text
+
+The selected text appears in a quote box above the chat input, showing the first 10 words. Press Enter to send.
 
 ### Chat Mode
 
