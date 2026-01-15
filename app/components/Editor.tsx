@@ -12,6 +12,8 @@ export interface PendingEdit {
   new_string: string;
 }
 
+export type SendToAgentAction = 'polish' | 'ask';
+
 interface EditorProps {
   content: string;
   filePath: string | null;
@@ -20,6 +22,7 @@ interface EditorProps {
   pendingEdit?: PendingEdit | null;
   onApproveEdit?: (requestId: string) => void;
   onRejectEdit?: (requestId: string) => void;
+  onSendToAgent?: (text: string, action: SendToAgentAction) => void;
 }
 
 // LaTeX language configuration
@@ -131,6 +134,7 @@ export default function Editor({
   pendingEdit,
   onApproveEdit,
   onRejectEdit,
+  onSendToAgent,
 }: EditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
@@ -138,6 +142,12 @@ export default function Editor({
   const viewZoneIdRef = useRef<string | null>(null);
   const [editLocation, setEditLocation] = useState<{ startLine: number; endLine: number } | null>(null);
   const layoutListenerRef = useRef<{ dispose: () => void } | null>(null);
+  const onSendToAgentRef = useRef(onSendToAgent);
+
+  // Keep ref in sync with prop
+  useEffect(() => {
+    onSendToAgentRef.current = onSendToAgent;
+  }, [onSendToAgent]);
 
   // Function to calculate view zone height based on current editor width
   const calculateViewZoneHeight = useCallback((
@@ -254,6 +264,41 @@ export default function Editor({
       // Add save keybinding
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
         onSave();
+      });
+
+      // Add context menu actions for AI
+      editor.addAction({
+        id: 'aura-polish',
+        label: 'Polish with AI',
+        contextMenuGroupId: 'aura',
+        contextMenuOrder: 1,
+        precondition: 'editorHasSelection',
+        run: (ed) => {
+          const selection = ed.getSelection();
+          if (selection) {
+            const selectedText = ed.getModel()?.getValueInRange(selection);
+            if (selectedText && onSendToAgentRef.current) {
+              onSendToAgentRef.current(selectedText, 'polish');
+            }
+          }
+        },
+      });
+
+      editor.addAction({
+        id: 'aura-ask-ai',
+        label: 'Ask AI',
+        contextMenuGroupId: 'aura',
+        contextMenuOrder: 2,
+        precondition: 'editorHasSelection',
+        run: (ed) => {
+          const selection = ed.getSelection();
+          if (selection) {
+            const selectedText = ed.getModel()?.getValueInRange(selection);
+            if (selectedText && onSendToAgentRef.current) {
+              onSendToAgentRef.current(selectedText, 'ask');
+            }
+          }
+        },
       });
 
       // Focus editor

@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import Toolbar from '@/components/Toolbar';
 import FileTree from '@/components/FileTree';
-import Editor, { PendingEdit } from '@/components/Editor';
+import Editor, { PendingEdit, SendToAgentAction } from '@/components/Editor';
 import PDFViewer from '@/components/PDFViewer';
 import AgentPanel from '@/components/AgentPanel';
 import NewProjectModal from '@/components/NewProjectModal';
@@ -66,6 +66,10 @@ export default function Home() {
 
   // Pending edit state (for HITL approval in Editor)
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
+
+  // Quoted text state (for sending selected text to agent)
+  const [quotedText, setQuotedText] = useState<string | null>(null);
+  const [quotedAction, setQuotedAction] = useState<SendToAgentAction | null>(null);
 
   // Panel layout state
   const [fileTreeWidth, setFileTreeWidth] = useState(200);
@@ -489,6 +493,24 @@ export default function Home() {
   }, []);
 
   // =============================================================================
+  // Send to Agent Handler (from Editor context menu)
+  // =============================================================================
+
+  const handleSendToAgent = useCallback((text: string, action: SendToAgentAction) => {
+    setQuotedText(text);
+    setQuotedAction(action);
+    // Open agent panel if closed
+    if (!isAgentPanelOpen) {
+      setIsAgentPanelOpen(true);
+    }
+  }, [isAgentPanelOpen]);
+
+  const handleClearQuote = useCallback(() => {
+    setQuotedText(null);
+    setQuotedAction(null);
+  }, []);
+
+  // =============================================================================
   // Panel Resize Handlers
   // =============================================================================
 
@@ -580,6 +602,7 @@ export default function Home() {
             pendingEdit={pendingEdit}
             onApproveEdit={handleApproveEdit}
             onRejectEdit={handleRejectEdit}
+            onSendToAgent={handleSendToAgent}
           />
         </div>
 
@@ -614,6 +637,9 @@ export default function Home() {
             onApprovalRequest={handleApprovalRequest}
             onApprovalResolved={handleApprovalResolved}
             onOpenFile={handleFileSelect}
+            quotedText={quotedText}
+            quotedAction={quotedAction}
+            onClearQuote={handleClearQuote}
           />
         </div>
 

@@ -17,6 +17,7 @@ import {
   MessageSquare,
   Microscope,
   Plus,
+  X,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
@@ -38,6 +39,9 @@ interface AgentPanelProps {
   onApprovalRequest?: (edit: PendingEdit) => void;
   onApprovalResolved?: () => void;
   onOpenFile?: (filePath: string) => void;
+  quotedText?: string | null;
+  quotedAction?: 'polish' | 'ask' | null;
+  onClearQuote?: () => void;
 }
 
 interface ToolCall {
@@ -189,6 +193,9 @@ export default function AgentPanel({
   onApprovalRequest,
   onApprovalResolved,
   onOpenFile,
+  quotedText,
+  quotedAction,
+  onClearQuote,
 }: AgentPanelProps) {
   // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -214,6 +221,27 @@ export default function AgentPanel({
   const [showNewResearchInput, setShowNewResearchInput] = useState(false);
   const [newResearchTopic, setNewResearchTopic] = useState('');
   const [isStartingResearch, setIsStartingResearch] = useState(false);
+
+  // Handle quoted text from Editor
+  useEffect(() => {
+    if (quotedText && quotedAction) {
+      // Set the input based on the action
+      if (quotedAction === 'polish') {
+        setInput('/polish ');
+      } else {
+        setInput('');
+      }
+      // Focus the input
+      inputRef.current?.focus();
+    }
+  }, [quotedText, quotedAction]);
+
+  // Helper to truncate text to first N words
+  const truncateToWords = (text: string, wordCount: number): string => {
+    const words = text.trim().split(/\s+/);
+    if (words.length <= wordCount) return text.trim();
+    return words.slice(0, wordCount).join(' ') + '...';
+  };
 
   const loadVibeSessions = useCallback(async () => {
     if (!projectPath) return;
@@ -295,8 +323,13 @@ export default function AgentPanel({
 
   // Send message to agent
   const sendMessage = useCallback(async (messageContent?: string) => {
-    const content = messageContent || input.trim();
+    let content = messageContent || input.trim();
     if (!content || isStreaming || !projectPath) return;
+
+    // If there's quoted text, append it to the content
+    if (quotedText) {
+      content = content + '\n\n' + quotedText;
+    }
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -309,6 +342,8 @@ export default function AgentPanel({
     if (!messageContent) {
       setInput('');
     }
+    // Clear the quote after sending
+    onClearQuote?.();
     setIsStreaming(true);
 
     // Create abort controller for this request
@@ -573,7 +608,7 @@ export default function AgentPanel({
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved]);
+  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, onClearQuote]);
 
   // Keep sendMessageRef in sync
   useEffect(() => {
@@ -861,6 +896,26 @@ export default function AgentPanel({
 
           {/* Chat Input */}
           <div className="border-t border-black/6 p-3 bg-white">
+            {/* Quote Box - shows selected text from editor */}
+            {quotedText && (
+              <div className="mb-2 p-2.5 bg-fill-secondary rounded-yw-lg border border-black/6 flex items-start gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="typo-ex-small text-tertiary mb-1">
+                    {quotedAction === 'polish' ? 'Polish this text:' : 'About this text:'}
+                  </div>
+                  <div className="typo-small text-secondary italic truncate">
+                    "{truncateToWords(quotedText, 10)}"
+                  </div>
+                </div>
+                <button
+                  onClick={onClearQuote}
+                  className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-black/6 text-tertiary hover:text-secondary transition-colors"
+                  title="Remove quote"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
             <div className="relative flex gap-2">
               {/* Command Palette */}
               {showCommandPalette && (

@@ -10,6 +10,7 @@ import {
   Trash2,
   Play,
   Cloud,
+  Sparkles,
   LucideIcon,
 } from 'lucide-react';
 import { SlashCommand } from '../lib/commands';
@@ -27,6 +28,7 @@ const iconMap: Record<string, LucideIcon> = {
   Trash2,
   Play,
   Cloud,
+  Sparkles,
 };
 
 // =============================================================================

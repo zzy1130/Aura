@@ -94,6 +94,16 @@ export const commands: SlashCommand[] = [
   // Writing Commands
   // ─────────────────────────────────────────────────────────────────────────
   {
+    name: 'polish',
+    description: 'Polish and improve selected text',
+    icon: 'Sparkles',
+    category: 'writing',
+    requiresArg: true,
+    argPlaceholder: 'selected text',
+    executionType: 'agent',
+    toAgentMessage: (arg) => `Polish and improve the following text. Make it clearer, more concise, and more academic in tone while preserving the original meaning:\n\n${arg}`,
+  },
+  {
     name: 'analyze',
     description: 'Analyze document structure',
     icon: 'FileSearch',
