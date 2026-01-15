@@ -21,7 +21,14 @@ import {
 import { PendingEdit } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
 import VibeResearchView from './VibeResearchView';
+import CommandPalette from './CommandPalette';
 import { api, VibeSessionSummary } from '../lib/api';
+import {
+  filterCommands,
+  parseCommandInput,
+  findCommand,
+  SlashCommand,
+} from '../lib/commands';
 
 // Mode types
 type AgentMode = 'chat' | 'vibe';
@@ -198,6 +205,11 @@ export default function AgentPanel({
   const [mode, setMode] = useState<AgentMode>('chat');
   const [vibeSessions, setVibeSessions] = useState<VibeSessionSummary[]>([]);
   const [selectedVibeSession, setSelectedVibeSession] = useState<string | null>(null);
+
+  // Command palette state
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [filteredCommands, setFilteredCommands] = useState<SlashCommand[]>([]);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [showNewResearchInput, setShowNewResearchInput] = useState(false);
   const [newResearchTopic, setNewResearchTopic] = useState('');
@@ -606,8 +618,148 @@ export default function AgentPanel({
     setPendingMessage(null);
   }, []);
 
+  // Add a system message (for command results)
+  const addSystemMessage = useCallback((content: string, isError: boolean = false) => {
+    const systemMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      parts: [{
+        type: 'text',
+        content: isError ? `**Error:** ${content}` : `*${content}*`,
+      }],
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, systemMessage]);
+  }, []);
+
+  // Handle input change - detect slash commands
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInput(value);
+
+    // Auto-resize textarea
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+
+    // Show/hide command palette based on input
+    if (value.startsWith('/') && !value.includes('\n')) {
+      const query = value.slice(1).split(' ')[0].toLowerCase();
+      const filtered = filterCommands(query);
+      setFilteredCommands(filtered);
+      setShowCommandPalette(filtered.length > 0 && !value.includes(' '));
+      setSelectedCommandIndex(0);
+    } else {
+      setShowCommandPalette(false);
+    }
+  }, []);
+
+  // Execute a slash command
+  const executeCommand = useCallback(async (cmd: SlashCommand, argument: string) => {
+    if (!projectPath) return;
+
+    // Check if argument is required but missing
+    if (cmd.requiresArg && !argument.trim()) {
+      setInput(`/${cmd.name} `);
+      inputRef.current?.focus();
+      return;
+    }
+
+    if (cmd.executionType === 'agent') {
+      // Transform to natural language and send to agent
+      const message = cmd.toAgentMessage?.(argument) || argument;
+      sendMessage(message);
+    } else if (cmd.executionType === 'api' && cmd.execute) {
+      // Direct API execution
+      try {
+        const result = await cmd.execute({ projectPath, argument });
+
+        if (result.switchMode) {
+          setMode(result.switchMode);
+          if (result.vibeSessionId) {
+            setSelectedVibeSession(result.vibeSessionId);
+          }
+        }
+
+        if (result.message) {
+          addSystemMessage(result.message, !result.success);
+        }
+      } catch (error) {
+        addSystemMessage(
+          error instanceof Error ? error.message : 'Command failed',
+          true
+        );
+      }
+    }
+  }, [projectPath, sendMessage, addSystemMessage]);
+
+  // Select a command from the palette
+  const selectCommand = useCallback((cmd: SlashCommand) => {
+    if (cmd.requiresArg) {
+      // Insert command with space, wait for argument
+      setInput(`/${cmd.name} `);
+      setShowCommandPalette(false);
+      inputRef.current?.focus();
+    } else {
+      // Execute immediately
+      setInput('');
+      setShowCommandPalette(false);
+      executeCommand(cmd, '');
+    }
+  }, [executeCommand]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // Command palette navigation
+      if (showCommandPalette) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSelectedCommandIndex((i) => Math.min(i + 1, filteredCommands.length - 1));
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSelectedCommandIndex((i) => Math.max(i - 1, 0));
+          return;
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          if (filteredCommands[selectedCommandIndex]) {
+            selectCommand(filteredCommands[selectedCommandIndex]);
+          }
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setShowCommandPalette(false);
+          return;
+        }
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          if (filteredCommands[selectedCommandIndex]) {
+            selectCommand(filteredCommands[selectedCommandIndex]);
+          }
+          return;
+        }
+      }
+
+      // Handle slash command execution
+      if (e.key === 'Enter' && !e.shiftKey && input.startsWith('/')) {
+        e.preventDefault();
+        const parsed = parseCommandInput(input);
+        if (parsed) {
+          const cmd = findCommand(parsed.name);
+          if (cmd) {
+            setInput('');
+            executeCommand(cmd, parsed.argument);
+            return;
+          }
+        }
+        // If command not found, send as regular message
+        sendMessage();
+        return;
+      }
+
+      // Normal Enter handling
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         if (isStreaming) {
@@ -617,7 +769,7 @@ export default function AgentPanel({
         }
       }
     },
-    [sendMessage, queuePendingMessage, isStreaming]
+    [sendMessage, queuePendingMessage, isStreaming, showCommandPalette, filteredCommands, selectedCommandIndex, selectCommand, input, executeCommand]
   );
 
   return (
@@ -710,22 +862,26 @@ export default function AgentPanel({
           {/* Chat Input */}
           <div className="border-t border-black/6 p-3 bg-white">
             <div className="relative flex gap-2">
+              {/* Command Palette */}
+              {showCommandPalette && (
+                <CommandPalette
+                  commands={filteredCommands}
+                  selectedIndex={selectedCommandIndex}
+                  onSelect={selectCommand}
+                  onHover={setSelectedCommandIndex}
+                />
+              )}
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  // Auto-resize textarea
-                  e.target.style.height = 'auto';
-                  e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
-                }}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder={
                   !projectPath
                     ? "Open a project first"
                     : isStreaming
                     ? "Queue next message..."
-                    : "Ask the assistant..."
+                    : "Type / for commands, or ask anything..."
                 }
                 disabled={!projectPath || !!pendingMessage}
                 className={`flex-1 min-h-[44px] max-h-[200px] rounded-yw-lg border bg-white pl-3 pr-3 py-2.5 typo-body placeholder:text-tertiary focus:outline-none focus:ring-1 transition-colors resize-none overflow-y-auto ${
