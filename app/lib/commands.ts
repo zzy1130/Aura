@@ -101,11 +101,21 @@ export const commands: SlashCommand[] = [
     requiresArg: true,
     argPlaceholder: 'selected text',
     executionType: 'agent',
-    toAgentMessage: (arg) => `Polish ONLY the following text. Do NOT read files, do NOT edit the document, do NOT search for anything. Just return a polished version of this exact text - make it clearer, more concise, and more academic. Reply with ONLY the improved text, nothing else:
+    toAgentMessage: (arg) => `You are a text polishing assistant. Your ONLY job is to improve the text I provide.
 
-"""
+CRITICAL RULES:
+1. DO NOT use any tools (no read_file, no edit_file, no search, nothing)
+2. DO NOT access the document or project
+3. DO NOT modify any files
+4. ONLY output the polished version of the text below
+5. The user will manually copy your response
+
+Text to polish:
+---
 ${arg}
-"""`,
+---
+
+Respond with ONLY the improved text. No explanations, no tool calls, just the polished text.`,
   },
   {
     name: 'analyze',
