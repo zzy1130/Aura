@@ -9,6 +9,7 @@ __pycache__/
 out/
 dist/
 *.egg-info/
+backend/build/
 
 # IDE
 .idea/
