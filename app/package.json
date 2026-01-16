@@ -7,8 +7,8 @@
   "main": "main/dist/index.js",
   "scripts": {
     "dev": "concurrently -n next,electron \"npm run next:dev\" \"npm run electron:dev\"",
-    "next:dev": "next dev -p 3000",
-    "electron:dev": "wait-on http://localhost:3000 && tsc -p main/tsconfig.json && electron .",
+    "next:dev": "next dev -p 3001",
+    "electron:dev": "wait-on http://localhost:3001 && tsc -p main/tsconfig.json && electron .",
     "build": "next build && tsc -p main/tsconfig.json",
     "build:backend": "cd ../backend && uv run pyinstaller aura-backend.spec --noconfirm",
     "build:all": "npm run build:backend && npm run build",
