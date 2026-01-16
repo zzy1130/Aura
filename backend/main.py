@@ -771,6 +771,104 @@ async def get_hitl_config() -> dict:
     }
 
 
+# ============ Research Preference HITL Endpoints ============
+
+class DomainPreferenceSubmitRequest(BaseModel):
+    request_id: str
+    domain: str
+
+
+class VenuePreferenceSubmitRequest(BaseModel):
+    request_id: str
+    venues: list[str] = []
+
+
+@app.post("/api/domain-preferences/submit")
+async def submit_domain_preferences(request: DomainPreferenceSubmitRequest) -> dict:
+    """
+    Submit domain preference for a pending research request.
+
+    Called by the frontend when user submits the domain preference modal.
+    """
+    from agent.venue_hitl import get_research_preference_manager
+
+    manager = get_research_preference_manager()
+    success = await manager.submit_domain_preference(
+        request_id=request.request_id,
+        domain=request.domain,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Request not found or already resolved"
+        )
+
+    return {
+        "success": True,
+        "request_id": request.request_id,
+        "domain": request.domain,
+    }
+
+
+@app.post("/api/venue-preferences/submit")
+async def submit_venue_preferences(request: VenuePreferenceSubmitRequest) -> dict:
+    """
+    Submit venue preferences for a pending research request.
+
+    Called by the frontend when user submits the venue preference modal.
+    """
+    from agent.venue_hitl import get_research_preference_manager
+
+    manager = get_research_preference_manager()
+    success = await manager.submit_venue_preferences(
+        request_id=request.request_id,
+        venues=request.venues,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Request not found or already resolved"
+        )
+
+    return {
+        "success": True,
+        "request_id": request.request_id,
+        "venues": request.venues,
+    }
+
+
+@app.get("/api/domain-preferences/pending")
+async def get_pending_domain_preferences(session_id: Optional[str] = None) -> dict:
+    """
+    Get pending domain preference requests.
+    """
+    from agent.venue_hitl import get_research_preference_manager
+
+    manager = get_research_preference_manager()
+    pending = await manager.get_pending_domain(session_id)
+
+    return {
+        "pending": [req.to_dict() for req in pending],
+    }
+
+
+@app.get("/api/venue-preferences/pending")
+async def get_pending_venue_preferences(session_id: Optional[str] = None) -> dict:
+    """
+    Get pending venue preference requests.
+    """
+    from agent.venue_hitl import get_research_preference_manager
+
+    manager = get_research_preference_manager()
+    pending = await manager.get_pending_venue(session_id)
+
+    return {
+        "pending": [req.to_dict() for req in pending],
+    }
+
+
 # ============ Steering Endpoints ============
 
 class SteeringAddRequest(BaseModel):

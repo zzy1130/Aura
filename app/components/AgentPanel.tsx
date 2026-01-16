@@ -25,6 +25,8 @@ import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
 import VibeResearchView from './VibeResearchView';
 import CommandPalette from './CommandPalette';
 import { api, VibeSessionSummary } from '../lib/api';
+import VenuePreferenceModal from './VenuePreferenceModal';
+import DomainPreferenceModal from './DomainPreferenceModal';
 import {
   filterCommands,
   parseCommandInput,
@@ -204,6 +206,19 @@ export default function AgentPanel({
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
+  const [domainPreferenceModal, setDomainPreferenceModal] = useState<{
+    isOpen: boolean;
+    requestId: string;
+    topic: string;
+    suggestedDomain: string;
+  }>({ isOpen: false, requestId: '', topic: '', suggestedDomain: '' });
+  const [venuePreferenceModal, setVenuePreferenceModal] = useState<{
+    isOpen: boolean;
+    requestId: string;
+    topic: string;
+    domain: string;
+    suggestedVenues: string[];
+  }>({ isOpen: false, requestId: '', topic: '', domain: '', suggestedVenues: [] });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -586,6 +601,25 @@ export default function AgentPanel({
               } else if (data.type === 'plan_completed') {
                 // Plan finished - mark all steps as their final status
                 // Keep the plan visible so user can see completion
+              } else if (data.type === 'domain_preference_request') {
+                // Research agent is requesting domain preference (step 1)
+                console.log('[Agent] Domain preference request:', data);
+                setDomainPreferenceModal({
+                  isOpen: true,
+                  requestId: data.request_id,
+                  topic: data.topic || '',
+                  suggestedDomain: data.suggested_domain || '',
+                });
+              } else if (data.type === 'venue_preference_request') {
+                // Research agent is requesting venue preferences (step 2)
+                console.log('[Agent] Venue preference request:', data);
+                setVenuePreferenceModal({
+                  isOpen: true,
+                  requestId: data.request_id,
+                  topic: data.topic || '',
+                  domain: data.domain || '',
+                  suggestedVenues: data.suggested_venues || [],
+                });
               }
             } catch (e) {
               console.error('[Agent] JSON parse error:', e);
@@ -671,6 +705,45 @@ export default function AgentPanel({
     };
     setMessages((prev) => [...prev, systemMessage]);
   }, []);
+
+  // Handle domain preference submission
+  const handleDomainPreferenceSubmit = useCallback(async (domain: string) => {
+    const { requestId } = domainPreferenceModal;
+    setDomainPreferenceModal({ isOpen: false, requestId: '', topic: '', suggestedDomain: '' });
+
+    try {
+      await api.submitDomainPreference(requestId, domain);
+      console.log('[Agent] Domain preference submitted:', domain);
+    } catch (error) {
+      console.error('[Agent] Failed to submit domain preference:', error);
+    }
+  }, [domainPreferenceModal]);
+
+  // Handle domain preference modal close (cancel)
+  const handleDomainPreferenceClose = useCallback(() => {
+    // On close/cancel, submit the suggested domain
+    const { suggestedDomain } = domainPreferenceModal;
+    handleDomainPreferenceSubmit(suggestedDomain || 'General Science');
+  }, [domainPreferenceModal, handleDomainPreferenceSubmit]);
+
+  // Handle venue preference submission
+  const handleVenuePreferenceSubmit = useCallback(async (venues: string[]) => {
+    const { requestId } = venuePreferenceModal;
+    setVenuePreferenceModal({ isOpen: false, requestId: '', topic: '', domain: '', suggestedVenues: [] });
+
+    try {
+      await api.submitVenuePreferences(requestId, venues);
+      console.log('[Agent] Venue preferences submitted:', venues);
+    } catch (error) {
+      console.error('[Agent] Failed to submit venue preferences:', error);
+    }
+  }, [venuePreferenceModal]);
+
+  // Handle venue preference modal close (cancel)
+  const handleVenuePreferenceClose = useCallback(() => {
+    // On close/cancel, submit empty venues (no filter)
+    handleVenuePreferenceSubmit([]);
+  }, [handleVenuePreferenceSubmit]);
 
   // Handle input change - detect slash commands
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1106,6 +1179,27 @@ export default function AgentPanel({
           )}
         </div>
       )}
+
+      {/* Domain Preference Modal */}
+      <DomainPreferenceModal
+        isOpen={domainPreferenceModal.isOpen}
+        requestId={domainPreferenceModal.requestId}
+        topic={domainPreferenceModal.topic}
+        suggestedDomain={domainPreferenceModal.suggestedDomain}
+        onClose={handleDomainPreferenceClose}
+        onSubmit={handleDomainPreferenceSubmit}
+      />
+
+      {/* Venue Preference Modal */}
+      <VenuePreferenceModal
+        isOpen={venuePreferenceModal.isOpen}
+        requestId={venuePreferenceModal.requestId}
+        topic={venuePreferenceModal.topic}
+        domain={venuePreferenceModal.domain}
+        suggestedVenues={venuePreferenceModal.suggestedVenues}
+        onClose={handleVenuePreferenceClose}
+        onSubmit={handleVenuePreferenceSubmit}
+      />
     </div>
   );
 }

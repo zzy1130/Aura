@@ -5,6 +5,7 @@ Main agent implementation using PydanticAI framework.
 Replaces the raw Anthropic SDK implementation.
 """
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
@@ -14,6 +15,8 @@ from pydantic_ai import Agent, RunContext
 from agent.providers.colorist import get_default_model
 from agent.prompts import get_system_prompt
 from agent.processors import default_history_processor
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from agent.hitl import HITLManager, ApprovalStatus
@@ -66,8 +69,6 @@ async def _check_hitl(
     hitl_manager = ctx.deps.hitl_manager
 
     # Debug logging
-    import logging
-    logger = logging.getLogger(__name__)
     logger.info(f"HITL check for {tool_name}: manager={hitl_manager}, needs_approval={hitl_manager.needs_approval(tool_name) if hitl_manager else 'N/A'}")
 
     if not hitl_manager or not hitl_manager.needs_approval(tool_name):
@@ -679,10 +680,10 @@ async def _fetch_arxiv_metadata(arxiv_id: str) -> Optional["PaperMetadata"]:
     # Clean ID
     arxiv_id = arxiv_id.split("v")[0]  # Remove version
 
-    url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
+    url = f"https://export.arxiv.org/api/query?id_list={arxiv_id}"
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             response = await client.get(url, timeout=10.0)
             response.raise_for_status()
 
@@ -754,10 +755,10 @@ async def _search_arxiv_for_paper(query: str) -> Optional["PaperMetadata"]:
     import urllib.parse
 
     encoded_query = urllib.parse.quote(query)
-    url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&max_results=1"
+    url = f"https://export.arxiv.org/api/query?search_query=all:{encoded_query}&max_results=1"
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             response = await client.get(url, timeout=10.0)
             response.raise_for_status()
 
@@ -765,7 +766,7 @@ async def _search_arxiv_for_paper(query: str) -> Optional["PaperMetadata"]:
             content = response.text
 
             # Extract arXiv ID from first result
-            id_match = re.search(r"<id>http://arxiv.org/abs/([^<]+)</id>", content)
+            id_match = re.search(r"<id>https?://arxiv.org/abs/([^<]+)</id>", content)
             if not id_match:
                 return None
 
@@ -1500,6 +1501,7 @@ async def delegate_to_subagent(
         Result from the subagent's work
     """
     from agent.subagents import get_subagent, list_subagents
+    from agent.venue_hitl import get_research_preference_manager
 
     # Validate subagent name
     available = list_subagents()
@@ -1514,6 +1516,27 @@ async def delegate_to_subagent(
             "project_path": ctx.deps.project_path,
             "project_name": ctx.deps.project_name,
         }
+
+        # For research subagent, request preferences via two-step HITL
+        if subagent == "research":
+            pref_manager = get_research_preference_manager()
+
+            # Check if manager has event callbacks (meaning HITL is set up)
+            if pref_manager._domain_event_callback and pref_manager._venue_event_callback:
+                # Request research preferences through two-step HITL
+                prefs = await pref_manager.request_research_preferences(
+                    topic=task,
+                    session_id=ctx.deps.session_id,
+                )
+                # Pass preferences to research agent
+                context["domain"] = prefs.domain
+                context["venue_filter"] = prefs.venues
+                context["venue_preferences_asked"] = True
+            else:
+                # No HITL callbacks, proceed without filters
+                context["domain"] = ""
+                context["venue_filter"] = []
+                context["venue_preferences_asked"] = False
 
         # Get and run subagent
         agent = get_subagent(subagent, project_path=ctx.deps.project_path)

@@ -324,6 +324,65 @@ class PlanCompletedEvent(StreamEvent):
         }
 
 
+@dataclass
+class DomainPreferenceRequestEvent(StreamEvent):
+    """Research agent requests user's domain/field preference."""
+    type: Literal["domain_preference_request"] = "domain_preference_request"
+    request_id: str = ""
+    topic: str = ""  # The research topic
+    suggested_domain: str = ""  # LLM-suggested domain
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "request_id": self.request_id,
+            "topic": self.topic,
+            "suggested_domain": self.suggested_domain,
+        }
+
+
+@dataclass
+class VenuePreferenceRequestEvent(StreamEvent):
+    """Research agent requests user's venue/conference preferences."""
+    type: Literal["venue_preference_request"] = "venue_preference_request"
+    request_id: str = ""
+    topic: str = ""  # The research topic being searched
+    domain: str = ""  # The selected domain
+    suggested_venues: list = None  # LLM-suggested venues for the domain
+
+    def __post_init__(self):
+        if self.suggested_venues is None:
+            self.suggested_venues = []
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "request_id": self.request_id,
+            "topic": self.topic,
+            "domain": self.domain,
+            "suggested_venues": self.suggested_venues,
+        }
+
+
+@dataclass
+class VenuePreferenceResolvedEvent(StreamEvent):
+    """Venue preference was submitted by user."""
+    type: Literal["venue_preference_resolved"] = "venue_preference_resolved"
+    request_id: str = ""
+    venues: list = None
+
+    def __post_init__(self):
+        if self.venues is None:
+            self.venues = []
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "request_id": self.request_id,
+            "venues": self.venues,
+        }
+
+
 # =============================================================================
 # Streaming Runner
 # =============================================================================
@@ -405,6 +464,32 @@ async def stream_agent_response(
             ))
 
         hitl_manager.set_event_callback(on_approval_request)
+
+    # Set up research preference HITL callbacks (domain + venue)
+    if event_queue:
+        from agent.venue_hitl import get_research_preference_manager
+
+        research_pref_manager = get_research_preference_manager()
+
+        # Domain preference callback
+        async def on_domain_preference_request(request):
+            await event_queue.put(DomainPreferenceRequestEvent(
+                request_id=request.request_id,
+                topic=request.topic,
+                suggested_domain=request.suggested_domain,
+            ))
+
+        # Venue preference callback
+        async def on_venue_preference_request(request):
+            await event_queue.put(VenuePreferenceRequestEvent(
+                request_id=request.request_id,
+                topic=request.topic,
+                domain=request.domain,
+                suggested_venues=request.suggested_venues,
+            ))
+
+        research_pref_manager.set_domain_event_callback(on_domain_preference_request)
+        research_pref_manager.set_venue_event_callback(on_venue_preference_request)
 
     # Set up planning if enabled
     plan_manager = None

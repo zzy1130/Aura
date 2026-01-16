@@ -336,3 +336,154 @@ class SemanticScholarClient:
             current_level = next_level
 
         return all_papers
+
+    async def search_by_author(
+        self,
+        author_name: str,
+        limit: int = 20,
+    ) -> list[Paper]:
+        """
+        Search for papers by a specific author.
+
+        Args:
+            author_name: Author name to search for
+            limit: Maximum results
+
+        Returns:
+            List of papers by this author
+        """
+        async with self._request_semaphore:
+            try:
+                # First, search for the author
+                response = await self.http_client.get(
+                    f"{S2_API_BASE}/author/search",
+                    params={
+                        "query": author_name,
+                        "limit": 5,
+                    },
+                    headers=self._get_headers(),
+                    timeout=30.0,
+                )
+
+                if response.status_code == 429:
+                    logger.warning("Semantic Scholar rate limit hit")
+                    await asyncio.sleep(1.0)
+                    return []
+
+                response.raise_for_status()
+                data = response.json()
+
+                authors = data.get("data", [])
+                if not authors:
+                    return []
+
+                # Get the first matching author's papers
+                author_id = authors[0].get("authorId")
+                if not author_id:
+                    return []
+
+                # Get author's papers
+                response = await self.http_client.get(
+                    f"{S2_API_BASE}/author/{author_id}/papers",
+                    params={
+                        "fields": S2_SEARCH_FIELDS,
+                        "limit": min(limit, 100),
+                    },
+                    headers=self._get_headers(),
+                    timeout=30.0,
+                )
+
+                response.raise_for_status()
+                data = response.json()
+
+                return [Paper.from_api(p) for p in data.get("data", [])]
+
+            except Exception as e:
+                logger.error(f"S2 author search error: {e}")
+                return []
+
+    async def get_recommendations(
+        self,
+        paper_id: str,
+        limit: int = 10,
+    ) -> list[Paper]:
+        """
+        Get paper recommendations based on a given paper.
+
+        Args:
+            paper_id: Semantic Scholar paper ID
+            limit: Maximum results
+
+        Returns:
+            List of recommended similar papers
+        """
+        async with self._request_semaphore:
+            try:
+                response = await self.http_client.get(
+                    f"{S2_API_BASE}/recommendations/v1/papers/forpaper/{paper_id}",
+                    params={
+                        "fields": S2_SEARCH_FIELDS,
+                        "limit": min(limit, 100),
+                    },
+                    headers=self._get_headers(),
+                    timeout=30.0,
+                )
+
+                if response.status_code in (404, 429):
+                    return []
+
+                response.raise_for_status()
+                data = response.json()
+
+                return [Paper.from_api(p) for p in data.get("recommendedPapers", [])]
+
+            except Exception as e:
+                logger.error(f"S2 recommendations error: {e}")
+                return []
+
+    async def search_top_cited(
+        self,
+        query: str,
+        limit: int = 20,
+        min_citations: int = 50,
+    ) -> list[Paper]:
+        """
+        Search for highly-cited papers on a topic.
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            min_citations: Minimum citation count filter
+
+        Returns:
+            List of highly-cited papers, sorted by citations
+        """
+        # Search with a larger limit to filter by citations
+        papers = await self.search(query, limit=100)
+
+        # Filter by minimum citations and sort
+        cited_papers = [p for p in papers if p.citation_count >= min_citations]
+        cited_papers.sort(key=lambda p: p.citation_count, reverse=True)
+
+        return cited_papers[:limit]
+
+    async def search_by_venue(
+        self,
+        query: str,
+        venue: str,
+        limit: int = 20,
+    ) -> list[Paper]:
+        """
+        Search for papers from a specific venue (conference/journal).
+
+        Args:
+            query: Topic query
+            venue: Venue name (e.g., "NeurIPS", "ICML", "Nature")
+            limit: Maximum results
+
+        Returns:
+            List of papers from that venue
+        """
+        # Combine query with venue
+        combined_query = f"{query} {venue}"
+        return await self.search(combined_query, limit=limit)

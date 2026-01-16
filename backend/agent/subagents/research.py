@@ -10,7 +10,7 @@ found through the APIs.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
@@ -54,6 +54,15 @@ class ResearchDeps:
     # Limit results
     max_results: int = 10
 
+    # Research domain (e.g., "Computer Science", "Physiology")
+    domain: str = ""
+
+    # Venue/conference filter (optional)
+    venue_filter: list[str] = field(default_factory=list)
+
+    # Whether venue preferences have been asked
+    venue_preferences_asked: bool = False
+
     # Vibe mode only
     project_path: str = ""
     vibe_state: VibeResearchState | None = None
@@ -64,6 +73,95 @@ class ResearchDeps:
 # =============================================================================
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+
+
+async def search_web_for_papers(
+    query: str,
+    http_client: httpx.AsyncClient,
+    max_results: int = 10,
+) -> list[dict]:
+    """
+    Search the web for academic papers using DuckDuckGo.
+
+    Searches Google Scholar, ACM, IEEE, PubMed, and other sources.
+
+    Args:
+        query: Search query
+        http_client: HTTP client (unused, kept for API compatibility)
+        max_results: Maximum number of results
+
+    Returns:
+        List of paper dictionaries with title, url, snippet, source
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _sync_search():
+        from ddgs import DDGS
+
+        results = []
+        try:
+            # Search with academic keywords to focus on papers
+            enhanced_query = f"{query} paper pdf"
+
+            with DDGS(timeout=20) as ddgs:
+                for r in ddgs.text(enhanced_query, max_results=max_results * 2):
+                    url = r.get("href", "")
+                    title = r.get("title", "")
+                    snippet = r.get("body", "")
+
+                    # Skip non-paper results
+                    if not url or not title:
+                        continue
+                    if len(title) < 10:
+                        continue
+
+                    # Determine source from URL
+                    source = "web"
+                    url_lower = url.lower()
+                    if "arxiv.org" in url_lower:
+                        source = "arxiv"
+                    elif "scholar.google" in url_lower:
+                        source = "google_scholar"
+                    elif "acm.org" in url_lower or "dl.acm.org" in url_lower:
+                        source = "acm"
+                    elif "ieee.org" in url_lower or "ieeexplore" in url_lower:
+                        source = "ieee"
+                    elif "pubmed" in url_lower or "ncbi.nlm.nih.gov" in url_lower:
+                        source = "pubmed"
+                    elif "openreview.net" in url_lower:
+                        source = "openreview"
+                    elif "semanticscholar.org" in url_lower:
+                        source = "semantic_scholar"
+                    elif "researchgate.net" in url_lower:
+                        source = "researchgate"
+                    elif "springer" in url_lower:
+                        source = "springer"
+                    elif "sciencedirect" in url_lower or "elsevier" in url_lower:
+                        source = "elsevier"
+
+                    results.append({
+                        "title": title,
+                        "url": url,
+                        "snippet": snippet[:500] if snippet else "",
+                        "source": source,
+                    })
+
+                    if len(results) >= max_results:
+                        break
+
+        except Exception as e:
+            logger.error(f"DuckDuckGo search error: {e}")
+            raise
+
+        return results
+
+    # Run synchronous search in thread pool to not block event loop
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as executor:
+        results = await loop.run_in_executor(executor, _sync_search)
+
+    return results
 
 
 async def search_arxiv_api(
@@ -218,39 +316,72 @@ async def search_semantic_scholar_api(
 
 RESEARCH_SYSTEM_PROMPT_CHAT = """You are a specialized academic research assistant.
 
-Your capabilities:
-- Search arXiv for relevant papers
-- Search Semantic Scholar for papers and citations
-- Read and extract text from academic PDFs
-- Summarize paper abstracts and full text
-- Extract key findings and contributions
-- Find related work for a topic
+## CRITICAL REQUIREMENTS
 
-CRITICAL RULES:
-1. NEVER make up citations or paper titles - only cite papers found through the APIs
-2. Always include paper titles, authors, and years when citing
-3. Focus on relevance to the user's research topic
-4. If no papers are found, say so honestly
-5. Provide concise summaries of key points
+1. **ALWAYS USE SEARCH TOOLS** - You MUST call search tools to find real papers. NEVER generate summaries without first searching.
+2. **ALWAYS INCLUDE HYPERLINKS** - Every paper you mention MUST have a clickable URL/link.
+3. **NEVER FABRICATE** - Only cite papers you found through the search tools.
 
-Tools for reading papers:
-- Use `read_arxiv_paper` to read full text of arXiv papers by ID
-- Use `read_pdf_url` to read PDFs from other URLs (preprints, etc.)
+## SCOPE LIMITS (Important for Efficiency)
 
-When reporting papers, format them as:
-- **Title** by Authors (Year)
-  Brief summary of key contribution
-  [arXiv:ID] or [Semantic Scholar link]
+To provide timely results, follow these limits:
+- **1-2 search queries** - Be specific and targeted, don't do exhaustive searches
+- **5-8 papers max** - Focus on the most relevant/cited papers
+- **Read 0-2 PDFs only** - Only read full papers if specifically asked for detailed analysis
+- **Complete quickly** - Aim to return results within 1-2 tool calls
+
+## Research Preferences
+
+The user has already provided their domain and venue preferences via the preference modal.
+- Domain: Check ctx.deps.domain for the selected research domain
+- Venues: Check ctx.deps.venue_filter for any venue restrictions
+
+## Your Workflow
+
+1. **SEARCH** (1-2 queries max): Pick the most relevant search tool
+   - `search_arxiv` - arXiv preprints (CS, physics, math, etc.)
+   - `search_semantic_scholar` - Academic papers with citation data
+   - `search_web` - Google Scholar, ACM, IEEE, PubMed, etc.
+
+2. **SUMMARIZE**: Report the top 5-8 papers found with links
+
+3. **READ ONLY IF NEEDED**: Only use read tools if user asks for detailed analysis
+   - `read_arxiv_paper` - Read arXiv papers by ID
+   - `read_pdf_url` - Read PDFs from URLs
+
+## Output Format (REQUIRED)
+
+For EVERY paper, include:
+- **[Paper Title](URL)** by Authors (Year)
+  Brief summary of the key contribution
+
+Example:
+- **[Attention Is All You Need](https://arxiv.org/abs/1706.03762)** by Vaswani et al. (2017)
+  Introduced the Transformer architecture using self-attention instead of recurrence.
+
+## Critical Rules
+
+1. BE EFFICIENT - Don't over-search. 1-2 targeted queries is enough.
+2. REAL LINKS ONLY - Every paper must have a real URL
+3. NO FABRICATION - If you can't find papers, say so honestly
+4. RETURN QUICKLY - Provide results after initial search, don't keep searching
 """
 
 RESEARCH_SYSTEM_PROMPT_VIBE = """You are an autonomous research agent conducting deep literature exploration.
 
 {state_context}
 
-## CRITICAL: Tool Usage Required
+## CRITICAL: Tool Usage & Links Required
 
-You MUST use tools to perform actions. DO NOT just describe what you would do - ACTUALLY CALL THE TOOLS.
-Every action should result in a tool call, not just text output.
+1. **ALWAYS USE SEARCH TOOLS** - You MUST call search tools to find real papers.
+2. **ALWAYS INCLUDE HYPERLINKS** - Every paper you mention MUST have a clickable URL/link.
+3. **NEVER FABRICATE** - Only cite papers you found through the search tools.
+
+## Research Preferences (Already Set via Modal)
+
+The user has already provided their domain and venue preferences via the preference modal.
+- Domain: Check ctx.deps.domain for the selected research domain
+- Venues: Check ctx.deps.venue_filter for any venue restrictions
 
 ## Your Mission
 
@@ -260,18 +391,23 @@ Autonomously explore the literature on the given topic, identify research gaps, 
 
 ### Phase 1: SCOPING (Current if phase is scoping)
 Clarify the research parameters:
-- Domain focus (NLP, vision, robotics, etc.)
+- Domain focus (from user preferences)
 - Specific constraints (efficiency, accuracy, scale, etc.)
 - Desired output (survey, novel angle, idea validation)
 
 **REQUIRED ACTION**: Call `define_scope` with the clarified parameters, then call `advance_phase` to move to DISCOVERY.
 
 ### Phase 2: DISCOVERY
-Search comprehensively using tools:
+Search comprehensively using ALL available tools:
 1. Call `search_arxiv` with multiple query variations (at least 5-10 different queries)
 2. Call `search_semantic_scholar` for citation-rich papers
-3. Call `explore_citations` to follow seminal paper trails
-4. Goal: Find 50-100+ relevant papers
+3. Call `search_web` for papers from ACM, IEEE, PubMed, Google Scholar, OpenReview
+4. Call `search_top_cited` to find seminal/foundational papers (100+ citations)
+5. Call `search_by_author` to find work by key researchers you discover
+6. Call `search_venue` to find papers from top venues (NeurIPS, ICML, ICLR, ACL, CVPR, etc.)
+7. Call `explore_citations` to follow seminal paper trails
+8. Call `find_related_papers` to discover related work for key papers
+9. Goal: Find 50-100+ relevant papers from diverse sources
 
 **REQUIRED**: After each search, call `update_progress` to track findings.
 When you have enough papers (50+), call `advance_phase` to move to SYNTHESIS.
@@ -346,6 +482,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
     Tools (CHAT mode):
         - search_arxiv: Search arXiv for papers
         - search_semantic_scholar: Search Semantic Scholar
+        - search_web: Search web for papers from ACM, IEEE, PubMed, Google Scholar, etc.
         - read_arxiv_paper: Read full paper text
         - read_pdf_url: Read PDF from URL
         - think: Reasoning tool
@@ -353,6 +490,10 @@ class ResearchAgent(Subagent[ResearchDeps]):
     Additional tools (VIBE mode):
         - define_scope: Clarify research parameters
         - explore_citations: Follow citation trails
+        - search_by_author: Find papers by specific researchers
+        - find_related_papers: Get similar papers to a given paper
+        - search_top_cited: Find highly-cited/influential papers
+        - search_venue: Search papers from specific conferences/journals
         - record_theme: Track identified themes
         - record_gap: Document research gaps
         - generate_hypothesis: Propose novel ideas
@@ -380,9 +521,9 @@ class ResearchAgent(Subagent[ResearchDeps]):
             config = SubagentConfig(
                 name="research",
                 description="Search and analyze academic papers from arXiv and Semantic Scholar",
-                max_iterations=10,
-                timeout=90.0,
-                use_haiku=True,  # Cheaper model for quick queries
+                max_iterations=5,   # Limited iterations for focused search
+                timeout=60.0,       # 1 minute should be enough for targeted search
+                use_haiku=True,     # Cheaper model for quick queries
             )
 
         super().__init__(config)
@@ -448,6 +589,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=5.0),
+                follow_redirects=True,
             )
         return self._http_client
 
@@ -479,12 +621,20 @@ class ResearchAgent(Subagent[ResearchDeps]):
                 if vibe_state is None:
                     vibe_state = VibeResearchState(topic=context.get("topic", ""))
 
+        # Get research preferences from context (passed by delegate_to_subagent)
+        domain = context.get("domain", "")
+        venue_filter = context.get("venue_filter", [])
+        venue_preferences_asked = context.get("venue_preferences_asked", False)
+
         return ResearchDeps(
             http_client=self._get_http_client(),
             max_results=context.get("max_results", 10),
             mode=mode,
             project_path=context.get("project_path", ""),
             vibe_state=vibe_state,
+            domain=domain,
+            venue_filter=venue_filter,
+            venue_preferences_asked=venue_preferences_asked,
         )
 
     def _create_agent(self) -> Agent[ResearchDeps, str]:
@@ -527,6 +677,43 @@ class ResearchAgent(Subagent[ResearchDeps]):
         """Register core research tools (existing tools)."""
 
         @agent.tool
+        async def get_research_preferences(
+            ctx: RunContext[ResearchDeps],
+        ) -> str:
+            """
+            Get the current research preferences (domain and venue filter).
+
+            Preferences are set by the user via a modal before research begins.
+
+            Returns:
+                Current domain and venue preferences
+            """
+            domain = ctx.deps.domain or "Not specified"
+            venues = ctx.deps.venue_filter
+
+            if venues:
+                venues_str = ", ".join(venues)
+                return f"""Research Preferences:
+- Domain: {domain}
+- Venue filter: {venues_str}
+
+Searches will prioritize papers from these venues."""
+            else:
+                return f"""Research Preferences:
+- Domain: {domain}
+- Venue filter: None (searching all venues)
+
+Proceed with broad search across all venues."""
+
+        def _apply_venue_filter(query: str, venue_filter: list[str]) -> str:
+            """Helper to enhance query with venue filter."""
+            if not venue_filter:
+                return query
+            # Add venue names to query for better results
+            venues_str = " OR ".join(venue_filter)
+            return f"{query} ({venues_str})"
+
+        @agent.tool
         async def search_arxiv(
             ctx: RunContext[ResearchDeps],
             query: str,
@@ -544,6 +731,9 @@ class ResearchAgent(Subagent[ResearchDeps]):
             """
             max_results = min(max(1, max_results), 10)
 
+            # Apply venue filter if set
+            enhanced_query = _apply_venue_filter(query, ctx.deps.venue_filter)
+
             # Set activity before starting
             if ctx.deps.vibe_state and ctx.deps.project_path:
                 ctx.deps.vibe_state.set_activity(f"Searching arXiv for '{query}'...")
@@ -551,7 +741,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
 
             try:
                 papers = await search_arxiv_api(
-                    query=query,
+                    query=enhanced_query,
                     http_client=ctx.deps.http_client,
                     max_results=max_results,
                 )
@@ -581,10 +771,11 @@ class ResearchAgent(Subagent[ResearchDeps]):
                     if len(paper["authors"]) > 3:
                         authors_str += " et al."
 
-                    lines.append(f"{i}. **{paper['title']}**")
+                    arxiv_url = f"https://arxiv.org/abs/{paper['arxiv_id']}"
+                    lines.append(f"{i}. **[{paper['title']}]({arxiv_url})**")
                     lines.append(f"   Authors: {authors_str}")
                     lines.append(f"   Published: {paper['published']}")
-                    lines.append(f"   arXiv: {paper['arxiv_id']}")
+                    lines.append(f"   Link: {arxiv_url}")
 
                     abstract = paper["abstract"][:300]
                     if len(paper["abstract"]) > 300:
@@ -617,6 +808,9 @@ class ResearchAgent(Subagent[ResearchDeps]):
             """
             max_results = min(max(1, max_results), 10)
 
+            # Apply venue filter if set
+            enhanced_query = _apply_venue_filter(query, ctx.deps.venue_filter)
+
             # Set activity before starting
             if ctx.deps.vibe_state and ctx.deps.project_path:
                 ctx.deps.vibe_state.set_activity(f"Searching Semantic Scholar for '{query}'...")
@@ -624,7 +818,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
 
             try:
                 papers = await search_semantic_scholar_api(
-                    query=query,
+                    query=enhanced_query,
                     http_client=ctx.deps.http_client,
                     max_results=max_results,
                 )
@@ -655,11 +849,12 @@ class ResearchAgent(Subagent[ResearchDeps]):
                         authors_str += " et al."
 
                     year_str = f" ({paper['year']})" if paper["year"] else ""
+                    s2_url = f"https://www.semanticscholar.org/paper/{paper['paper_id']}"
 
-                    lines.append(f"{i}. **{paper['title']}**{year_str}")
+                    lines.append(f"{i}. **[{paper['title']}]({s2_url})**{year_str}")
                     lines.append(f"   Authors: {authors_str}")
                     lines.append(f"   Citations: {paper['citation_count']}")
-                    lines.append(f"   S2 ID: {paper['paper_id']}")
+                    lines.append(f"   Link: {s2_url}")
 
                     if paper["abstract"]:
                         abstract = paper["abstract"][:300]
@@ -672,6 +867,88 @@ class ResearchAgent(Subagent[ResearchDeps]):
 
             except Exception as e:
                 return f"Error searching Semantic Scholar: {str(e)}"
+
+        @agent.tool
+        async def search_web(
+            ctx: RunContext[ResearchDeps],
+            query: str,
+            max_results: int = 10,
+        ) -> str:
+            """
+            Search the web for academic papers from multiple sources.
+
+            Use this to find papers from Google Scholar, ACM, IEEE, PubMed,
+            OpenReview, and other sources beyond arXiv and Semantic Scholar.
+
+            Best for:
+            - Finding papers from specific venues (ACM, IEEE conferences)
+            - Searching medical/biology papers (PubMed)
+            - Discovering workshop papers and preprints
+            - Broader coverage when arXiv/S2 results are insufficient
+
+            Args:
+                query: Search query (e.g., "attention mechanism transformers")
+                max_results: Maximum number of results (1-15)
+
+            Returns:
+                List of papers with titles, sources, and snippets
+            """
+            max_results = min(max(1, max_results), 15)
+
+            # Apply venue filter if set
+            enhanced_query = _apply_venue_filter(query, ctx.deps.venue_filter)
+
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Searching web for '{query}'...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            try:
+                papers = await search_web_for_papers(
+                    query=enhanced_query,
+                    http_client=ctx.deps.http_client,
+                    max_results=max_results,
+                )
+
+                if not papers:
+                    return f"No papers found on the web for query: '{query}'"
+
+                # In vibe mode, add to state and save
+                if ctx.deps.mode == ResearchMode.VIBE and ctx.deps.vibe_state:
+                    for paper in papers:
+                        ctx.deps.vibe_state.add_paper({
+                            "paper_id": paper["url"],  # Use URL as ID
+                            "title": paper["title"],
+                            "authors": [],
+                            "year": None,
+                            "citation_count": 0,
+                            "abstract": paper["snippet"],
+                        }, source=f"web:{paper['source']}")
+                    # Save state so UI can show progress
+                    if ctx.deps.project_path:
+                        ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+                # Format results
+                lines = [f"Found {len(papers)} papers from web search for '{query}':\n"]
+                for i, paper in enumerate(papers, 1):
+                    source_label = paper["source"].upper().replace("_", " ")
+                    url = paper['url']
+
+                    lines.append(f"{i}. **[{paper['title']}]({url})**")
+                    lines.append(f"   Source: {source_label}")
+                    lines.append(f"   Link: {url}")
+
+                    if paper["snippet"]:
+                        snippet = paper["snippet"][:300]
+                        if len(paper["snippet"]) > 300:
+                            snippet += "..."
+                        lines.append(f"   Snippet: {snippet}")
+                    lines.append("")
+
+                return "\n".join(lines)
+
+            except Exception as e:
+                return f"Error searching the web: {str(e)}"
 
         @agent.tool
         async def think(ctx: RunContext[ResearchDeps], thought: str) -> str:
@@ -872,6 +1149,227 @@ class ResearchAgent(Subagent[ResearchDeps]):
             # Format results
             lines = [f"Found {len(papers)} connected papers:\n"]
             for i, paper in enumerate(papers[:max_results], 1):
+                year_str = f" ({paper.year})" if paper.year else ""
+                lines.append(f"{i}. **{paper.title}**{year_str}")
+                lines.append(f"   Citations: {paper.citation_count}")
+                lines.append(f"   S2 ID: {paper.paper_id}")
+                lines.append("")
+
+            return "\n".join(lines)
+
+        @agent.tool
+        async def search_by_author(
+            ctx: RunContext[ResearchDeps],
+            author_name: str,
+            max_results: int = 15,
+        ) -> str:
+            """
+            Search for papers by a specific author/researcher.
+
+            Use this when you want to find work by a key researcher in the field.
+
+            Args:
+                author_name: Name of the author (e.g., "Yoshua Bengio", "Geoffrey Hinton")
+                max_results: Maximum papers to return (1-20)
+
+            Returns:
+                List of papers by this author
+            """
+            max_results = min(max(1, max_results), 20)
+
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Searching papers by {author_name}...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            s2_client = SemanticScholarClient(ctx.deps.http_client)
+
+            try:
+                papers = await s2_client.search_by_author(author_name, limit=max_results)
+            except Exception as e:
+                return f"Error searching by author: {str(e)}"
+
+            if not papers:
+                return f"No papers found for author: {author_name}"
+
+            # Add to state if in vibe mode and save
+            if ctx.deps.vibe_state:
+                for paper in papers:
+                    ctx.deps.vibe_state.add_paper(paper.to_dict(), source="author_search")
+                if ctx.deps.project_path:
+                    ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            # Format results
+            lines = [f"Found {len(papers)} papers by {author_name}:\n"]
+            for i, paper in enumerate(papers, 1):
+                year_str = f" ({paper.year})" if paper.year else ""
+                lines.append(f"{i}. **{paper.title}**{year_str}")
+                lines.append(f"   Citations: {paper.citation_count}")
+                lines.append(f"   S2 ID: {paper.paper_id}")
+                lines.append("")
+
+            return "\n".join(lines)
+
+        @agent.tool
+        async def find_related_papers(
+            ctx: RunContext[ResearchDeps],
+            paper_id: str,
+            max_results: int = 10,
+        ) -> str:
+            """
+            Find papers similar/related to a given paper.
+
+            Use this to discover related work that might not show up in keyword search.
+
+            Args:
+                paper_id: Semantic Scholar paper ID to find related papers for
+                max_results: Maximum papers to return (1-15)
+
+            Returns:
+                List of related/similar papers
+            """
+            max_results = min(max(1, max_results), 15)
+
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Finding papers related to {paper_id}...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            s2_client = SemanticScholarClient(ctx.deps.http_client)
+
+            try:
+                papers = await s2_client.get_recommendations(paper_id, limit=max_results)
+            except Exception as e:
+                return f"Error finding related papers: {str(e)}"
+
+            if not papers:
+                return f"No related papers found for: {paper_id}"
+
+            # Add to state if in vibe mode and save
+            if ctx.deps.vibe_state:
+                for paper in papers:
+                    ctx.deps.vibe_state.add_paper(paper.to_dict(), source="recommendations")
+                if ctx.deps.project_path:
+                    ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            # Format results
+            lines = [f"Found {len(papers)} related papers:\n"]
+            for i, paper in enumerate(papers, 1):
+                year_str = f" ({paper.year})" if paper.year else ""
+                lines.append(f"{i}. **{paper.title}**{year_str}")
+                lines.append(f"   Citations: {paper.citation_count}")
+                lines.append(f"   S2 ID: {paper.paper_id}")
+                if paper.abstract:
+                    abstract = paper.abstract[:200] + "..." if len(paper.abstract) > 200 else paper.abstract
+                    lines.append(f"   Abstract: {abstract}")
+                lines.append("")
+
+            return "\n".join(lines)
+
+        @agent.tool
+        async def search_top_cited(
+            ctx: RunContext[ResearchDeps],
+            query: str,
+            min_citations: int = 100,
+            max_results: int = 15,
+        ) -> str:
+            """
+            Find the most influential/highly-cited papers on a topic.
+
+            Use this to identify seminal work and key papers in a field.
+
+            Args:
+                query: Topic to search for
+                min_citations: Minimum citation count (default: 100)
+                max_results: Maximum papers to return (1-20)
+
+            Returns:
+                Highly-cited papers sorted by citation count
+            """
+            max_results = min(max(1, max_results), 20)
+
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Finding top-cited papers on '{query}'...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            s2_client = SemanticScholarClient(ctx.deps.http_client)
+
+            try:
+                papers = await s2_client.search_top_cited(
+                    query, limit=max_results, min_citations=min_citations
+                )
+            except Exception as e:
+                return f"Error finding top-cited papers: {str(e)}"
+
+            if not papers:
+                return f"No papers found with {min_citations}+ citations for: {query}. Try lowering min_citations."
+
+            # Add to state if in vibe mode and save
+            if ctx.deps.vibe_state:
+                for paper in papers:
+                    ctx.deps.vibe_state.add_paper(paper.to_dict(), source="top_cited")
+                if ctx.deps.project_path:
+                    ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            # Format results
+            lines = [f"Found {len(papers)} highly-cited papers on '{query}':\n"]
+            for i, paper in enumerate(papers, 1):
+                year_str = f" ({paper.year})" if paper.year else ""
+                lines.append(f"{i}. **{paper.title}**{year_str}")
+                lines.append(f"   Citations: {paper.citation_count}")
+                lines.append(f"   S2 ID: {paper.paper_id}")
+                lines.append("")
+
+            return "\n".join(lines)
+
+        @agent.tool
+        async def search_venue(
+            ctx: RunContext[ResearchDeps],
+            query: str,
+            venue: str,
+            max_results: int = 15,
+        ) -> str:
+            """
+            Search for papers from a specific venue (conference or journal).
+
+            Use this to find work from specific top venues.
+
+            Args:
+                query: Topic to search for
+                venue: Venue name (e.g., "NeurIPS", "ICML", "ICLR", "Nature", "ACL", "CVPR")
+                max_results: Maximum papers to return (1-20)
+
+            Returns:
+                Papers from that venue on the topic
+            """
+            max_results = min(max(1, max_results), 20)
+
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Searching {venue} for '{query}'...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            s2_client = SemanticScholarClient(ctx.deps.http_client)
+
+            try:
+                papers = await s2_client.search_by_venue(query, venue, limit=max_results)
+            except Exception as e:
+                return f"Error searching venue: {str(e)}"
+
+            if not papers:
+                return f"No papers found at {venue} for: {query}"
+
+            # Add to state if in vibe mode and save
+            if ctx.deps.vibe_state:
+                for paper in papers:
+                    ctx.deps.vibe_state.add_paper(paper.to_dict(), source=f"venue:{venue}")
+                if ctx.deps.project_path:
+                    ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            # Format results
+            lines = [f"Found {len(papers)} papers from {venue} on '{query}':\n"]
+            for i, paper in enumerate(papers, 1):
                 year_str = f" ({paper.year})" if paper.year else ""
                 lines.append(f"{i}. **{paper.title}**{year_str}")
                 lines.append(f"   Citations: {paper.citation_count}")

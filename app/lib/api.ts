@@ -1166,6 +1166,59 @@ class ApiClient {
   }
 
   // ===========================================================================
+  // Venue Preferences HITL
+  // ===========================================================================
+
+  /**
+   * Submit venue preferences for a research request
+   */
+  async submitDomainPreference(
+    requestId: string,
+    domain: string
+  ): Promise<{ success: boolean; request_id: string; domain: string }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/domain-preferences/submit`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request_id: requestId,
+        domain,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to submit domain preference: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  async submitVenuePreferences(
+    requestId: string,
+    venues: string[]
+  ): Promise<{ success: boolean; request_id: string; venues: string[] }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/venue-preferences/submit`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request_id: requestId,
+        venues,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to submit venue preferences: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // ===========================================================================
   // Health Check
   // ===========================================================================
 

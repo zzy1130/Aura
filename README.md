@@ -52,6 +52,10 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 - **Bibliography Cleanup**: Identify unused BibTeX entries
 
 ### Research Capabilities
+- **Research Preferences Modal**: Two-step HITL for domain and venue selection
+  - LLM-suggested domain based on your query
+  - Dynamically generated venue suggestions (conferences/journals)
+  - Custom domain and venue input support
 - **arXiv Search**: Find papers by topic, author, or ID
 - **Semantic Scholar**: Citation-aware search with impact metrics
 - **PDF Reading**: Full-text extraction from arXiv and URLs
@@ -318,6 +322,23 @@ The selected text appears in a quote box above the chat input, showing the first
 
 Chat mode provides quick, interactive research assistance:
 
+#### Research Preferences
+
+When you trigger a research query (e.g., `/research` or asking the agent to find papers), a two-step preference modal appears:
+
+1. **Domain Selection**:
+   - The AI suggests a domain based on your query (e.g., "Machine Learning", "Physiology")
+   - You can accept the suggestion or select from common domains
+   - Option to enter a custom domain
+
+2. **Venue Selection**:
+   - The AI dynamically suggests relevant conferences and journals for your domain + query
+   - Select venues to focus your search (e.g., NeurIPS, ICML, ICLR)
+   - Option to add custom venues
+   - Skip to search all venues
+
+This ensures research results are targeted to your specific academic context.
+
 **Example prompts:**
 - "Search arXiv for papers on efficient attention mechanisms"
 - "Read the paper 2301.07041 and summarize the key findings"
@@ -500,6 +521,15 @@ The Writing Agent scans your document for:
 | `/api/analyze-structure` | POST | Parse LaTeX document structure |
 | `/api/clean-bibliography` | POST | Find unused BibTeX entries |
 
+### Research Preference Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/domain-preferences/submit` | POST | Submit domain preference |
+| `/api/domain-preferences/pending` | GET | Get pending domain requests |
+| `/api/venue-preferences/submit` | POST | Submit venue preferences |
+| `/api/venue-preferences/pending` | GET | Get pending venue requests |
+
 ---
 
 ## Project Structure
@@ -510,6 +540,8 @@ Aura/
 │   ├── components/               # React components
 │   │   ├── AgentPanel.tsx        # Chat/Vibe toggle and interface
 │   │   ├── VibeResearchView.tsx  # Vibe research display
+│   │   ├── DomainPreferenceModal.tsx  # Domain selection HITL modal
+│   │   ├── VenuePreferenceModal.tsx   # Venue selection HITL modal
 │   │   ├── Editor.tsx            # Monaco editor wrapper
 │   │   └── PDFViewer.tsx         # PDF preview component
 │   ├── lib/
@@ -524,6 +556,7 @@ Aura/
 │   │   ├── streaming.py          # SSE streaming
 │   │   ├── compression.py        # Message compression
 │   │   ├── hitl.py               # Human-in-the-loop
+│   │   ├── venue_hitl.py         # Research preference HITL (domain/venue)
 │   │   ├── steering.py           # Mid-conversation steering
 │   │   ├── planning.py           # Structured planning
 │   │   ├── vibe_state.py         # Vibe research state
