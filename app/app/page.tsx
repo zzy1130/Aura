@@ -432,7 +432,8 @@ export default function Home() {
     setPendingEdit(edit);
 
     // If the edit is for a different file, switch to it
-    if (project.path && edit.filepath) {
+    // But only for edits to existing files (old_string has content), not new file creations
+    if (project.path && edit.filepath && edit.old_string) {
       const editFilename = edit.filepath.split('/').pop();
       const currentFilename = project.currentFile?.split('/').pop();
 
@@ -445,6 +446,9 @@ export default function Home() {
 
   const handleApproveEdit = useCallback(async (requestId: string) => {
     console.log('[Page] Approving edit:', requestId);
+
+    // Capture the pending edit info before clearing it
+    const editInfo = pendingEdit;
 
     try {
       let backendUrl = 'http://127.0.0.1:8001';
@@ -460,8 +464,18 @@ export default function Home() {
 
       setPendingEdit(null);
 
-      // Reload the file to show the changes, then auto-compile
-      if (project.path && project.currentFile) {
+      // Refresh file list to show new/modified files
+      if (project.path) {
+        await fetchFileList(project.path);
+      }
+
+      // For new file creations (no old_string), select the new file
+      if (editInfo && !editInfo.old_string && editInfo.filepath) {
+        setTimeout(async () => {
+          await handleFileSelect(editInfo.filepath);
+        }, 300);
+      } else if (project.path && project.currentFile) {
+        // Reload the file to show the changes, then auto-compile
         setTimeout(async () => {
           await handleFileSelect(project.currentFile!);
           // Auto-compile after edit is applied
@@ -475,7 +489,7 @@ export default function Home() {
       console.error('Failed to approve:', error);
       setError(`Failed to approve edit: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [project.path, project.currentFile, handleFileSelect, handleCompile]);
+  }, [project.path, project.currentFile, pendingEdit, handleFileSelect, handleCompile, fetchFileList]);
 
   const handleRejectEdit = useCallback(async (requestId: string) => {
     console.log('[Page] Rejecting edit:', requestId);
