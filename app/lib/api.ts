@@ -259,6 +259,32 @@ export interface VibeIterationResult {
 }
 
 // =============================================================================
+// Chat Session Types
+// =============================================================================
+
+export interface ChatSession {
+  session_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatSessionList {
+  count: number;
+  sessions: ChatSession[];
+}
+
+export interface ChatSessionMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatSessionDetail extends ChatSession {
+  messages: ChatSessionMessage[];
+}
+
+// =============================================================================
 // API Client
 // =============================================================================
 
@@ -1213,6 +1239,131 @@ class ApiClient {
 
     if (!response.ok) {
       throw new Error(`Failed to submit venue preferences: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // ===========================================================================
+  // Chat Session Operations
+  // ===========================================================================
+
+  /**
+   * Create a new chat session
+   */
+  async createChatSession(
+    projectPath: string,
+    name?: string
+  ): Promise<ChatSession> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/chat/sessions/create`;
+    console.log('[API] createChatSession:', url, { projectPath, name });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        name: name || null,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * List all chat sessions for a project
+   */
+  async listChatSessions(projectPath: string): Promise<ChatSessionList> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/chat/sessions?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] listChatSessions:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get a chat session with its messages
+   */
+  async getChatSession(projectPath: string, sessionId: string): Promise<ChatSessionDetail> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/chat/session/${sessionId}?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] getChatSession:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Delete a chat session
+   */
+  async deleteChatSession(
+    projectPath: string,
+    sessionId: string
+  ): Promise<{ success: boolean; message: string }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/chat/session/${sessionId}?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] deleteChatSession:', url);
+
+    const response = await fetch(url, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Rename a chat session
+   */
+  async renameChatSession(
+    projectPath: string,
+    sessionId: string,
+    name: string
+  ): Promise<ChatSession> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/chat/session/${sessionId}/rename`;
+    console.log('[API] renameChatSession:', url, { name });
+
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        name,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
     }
 
     return response.json();
