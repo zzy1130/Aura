@@ -36,3 +36,27 @@ npm-debug.log*
 
 # Git worktrees
 .worktrees/
+
+# LaTeX auxiliary files
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex
+*.nav
+*.snm
+*.vrb
+*.lof
+*.lot
+*.idx
+*.ind
+*.ilg
+*.glo
+*.gls
+*.glg
+*.bcf
+*.run.xml
