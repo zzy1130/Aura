@@ -232,7 +232,7 @@ function createWindow(): void {
     minHeight: 700,
     title: 'Aura',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 15, y: 15 },
+    trafficLightPosition: { x: 15, y: 4 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -26,6 +26,7 @@ import { PendingEdit } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
 import VibeResearchView from './VibeResearchView';
 import CommandPalette from './CommandPalette';
+import TaskList, { Task } from './TaskList';
 import { api, VibeSessionSummary, ChatSession } from '../lib/api';
 import VenuePreferenceModal from './VenuePreferenceModal';
 import DomainPreferenceModal from './DomainPreferenceModal';
@@ -58,9 +59,14 @@ interface ToolCall {
 }
 
 interface MessagePart {
-  type: 'text' | 'tool';
+  type: 'text' | 'tool' | 'taskList';
   content?: string;
   toolCall?: ToolCall;
+  taskList?: {
+    mainTask: string;
+    tasks: Task[];
+    planId?: string;
+  };
 }
 
 interface Message {
@@ -181,6 +187,12 @@ function MessageDisplay({ message }: { message: Message }) {
               {message.parts.map((part, index) => (
                 part.type === 'text' ? (
                   <TextPartDisplay key={index} content={part.content || ''} />
+                ) : part.type === 'taskList' && part.taskList ? (
+                  <TaskList
+                    key={index}
+                    mainTask={part.taskList.mainTask}
+                    tasks={part.taskList.tasks}
+                  />
                 ) : part.toolCall ? (
                   <ToolCallDisplay key={index} toolCall={part.toolCall} />
                 ) : null
@@ -694,22 +706,48 @@ export default function AgentPanel({
               } else if (data.type === 'approval_resolved') {
                 onApprovalResolved?.();
               } else if (data.type === 'plan_created') {
-                // A new plan was created
+                // A new plan was created - add TaskList to current message
                 console.log('[Agent] Plan created event:', data);
+                const planSteps = (data.steps || []).map((s: { step_number: number; title: string; description?: string; status?: string; files?: string[] }) => ({
+                  step_number: s.step_number,
+                  title: s.title,
+                  description: s.description || '',
+                  status: (s.status || 'pending') as PlanStep['status'],
+                  files: s.files || [],
+                }));
+
                 setCurrentPlan({
                   plan_id: data.plan_id,
                   goal: data.goal,
                   complexity: data.complexity,
-                  steps: (data.steps || []).map((s: { step_number: number; title: string; description?: string; status?: string; files?: string[] }) => ({
-                    step_number: s.step_number,
-                    title: s.title,
-                    description: s.description || '',
-                    status: (s.status || 'pending') as PlanStep['status'],
-                    files: s.files || [],
-                  })),
+                  steps: planSteps,
+                });
+
+                // Add TaskList part to current assistant message
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  const last = updated[lastIndex];
+                  if (last && last.role === 'assistant') {
+                    const tasks: Task[] = planSteps.map((s: { step_number: number; title: string; status: string }) => ({
+                      id: `step-${s.step_number}`,
+                      title: s.title,
+                      status: s.status === 'in_progress' ? 'in_progress' : s.status === 'completed' ? 'completed' : 'pending',
+                    }));
+                    const parts = [...last.parts, {
+                      type: 'taskList' as const,
+                      taskList: {
+                        mainTask: data.goal,
+                        tasks,
+                        planId: data.plan_id,
+                      },
+                    }];
+                    updated[lastIndex] = { ...last, parts };
+                  }
+                  return updated;
                 });
               } else if (data.type === 'plan_step') {
-                // A plan step status changed
+                // A plan step status changed - update both plan and TaskList
                 console.log('[Agent] Plan step event:', data);
                 setCurrentPlan((prev) => {
                   if (!prev || prev.plan_id !== data.plan_id) return prev;
@@ -721,6 +759,36 @@ export default function AgentPanel({
                         : step
                     ),
                   };
+                });
+
+                // Update TaskList in messages
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  for (let i = updated.length - 1; i >= 0; i--) {
+                    const msg = updated[i];
+                    if (msg.role === 'assistant') {
+                      const parts = msg.parts.map((part) => {
+                        if (part.type === 'taskList' && part.taskList && part.taskList.planId === data.plan_id) {
+                          const updatedTasks = part.taskList.tasks.map((task) =>
+                            task.id === `step-${data.step_number}`
+                              ? { ...task, status: data.status === 'in_progress' ? 'in_progress' as const : data.status === 'completed' ? 'completed' as const : 'pending' as const }
+                              : task
+                          );
+                          return {
+                            ...part,
+                            taskList: {
+                              ...part.taskList,
+                              tasks: updatedTasks,
+                            },
+                          };
+                        }
+                        return part;
+                      });
+                      updated[i] = { ...msg, parts };
+                      break; // Found and updated the TaskList
+                    }
+                  }
+                  return updated;
                 });
               } else if (data.type === 'plan_completed') {
                 // Plan finished - mark all steps as their final status

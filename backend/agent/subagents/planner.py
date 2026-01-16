@@ -57,29 +57,23 @@ class PlannerDeps:
 # Planner Agent
 # =============================================================================
 
-PLANNER_SYSTEM_PROMPT = """You are a planning assistant for LaTeX editing tasks.
+PLANNER_SYSTEM_PROMPT = """You are a planning assistant. Analyze tasks and create structured execution plans.
 
-## ABSOLUTE REQUIREMENT
-You MUST call `create_structured_plan` tool before your response ends. This is non-negotiable.
+WORKFLOW:
+1. Use think() to briefly analyze the task (1 call max)
+2. Optionally use list_files() if you need file info (1 call max)
+3. Call create_structured_plan() to output the plan
 
-If files don't exist or can't be read, create a plan based on the task description with assumptions.
+IMPORTANT: You MUST call create_structured_plan within your first 2-3 responses. Do not over-analyze.
 
-## Workflow
-1. Try to list/read files (optional, may fail)
-2. ALWAYS call `create_structured_plan` with your plan
+When calling create_structured_plan, provide:
+- goal: Brief summary of what to achieve
+- context: Relevant background
+- steps: 3-5 concrete steps, each with {title, description, type, files, depends_on, verification}
+- risks: 1-2 potential issues
+- assumptions: What you assumed about the project
 
-## Step Types
-analysis, edit, create, compile, verify
-
-## Output Format
-Call `create_structured_plan` with:
-- goal: What the plan achieves
-- context: Background info or "Files not accessible"
-- steps: List of {title, description, type, files[], depends_on[], verification}
-- risks: Potential issues
-- assumptions: What you assumed
-
-DO NOT ask questions. DO NOT explain why you can't proceed. JUST CREATE THE PLAN.
+Step types: analysis, edit, create, compile, verify
 """
 
 
@@ -92,9 +86,8 @@ class PlannerAgent(Subagent[PlannerDeps]):
     that can be executed by the main agent.
 
     Tools:
-        - read_file: Read project files
-        - list_files: List project contents
-        - analyze_task_complexity: Estimate task complexity
+        - think: Reason through the task
+        - list_files: List project files
         - create_structured_plan: Output the final plan
     """
 
@@ -102,9 +95,9 @@ class PlannerAgent(Subagent[PlannerDeps]):
         config = SubagentConfig(
             name="planner",
             description="Analyze complex tasks and create structured execution plans",
-            max_iterations=10,
-            timeout=180.0,  # 3 minutes for planning
-            use_haiku=False,  # Use Sonnet for better instruction following
+            max_iterations=4,  # Limited iterations
+            timeout=45.0,  # 45 seconds max
+            use_haiku=True,  # Use Haiku for speed
         )
         super().__init__(config)
         self._default_project_path = project_path
@@ -151,51 +144,26 @@ class PlannerAgent(Subagent[PlannerDeps]):
             model=self._get_model(),
             system_prompt=self.system_prompt,
             deps_type=PlannerDeps,
-            retries=2,
+            retries=1,  # Reduced retries for speed
         )
 
         @agent.tool
-        async def read_file(
-            ctx: RunContext[PlannerDeps],
-            filepath: str,
-        ) -> str:
+        async def think(ctx: RunContext[PlannerDeps], thought: str) -> str:
             """
-            Read a file from the project.
+            Briefly reason about the task before creating a plan.
 
-            Use this to understand current content before planning changes.
+            Use this ONCE to analyze:
+            - What the task requires
+            - How to break it down into steps
+            - What files might be involved
 
             Args:
-                filepath: Path relative to project root
+                thought: Your brief analysis
 
             Returns:
-                File contents with line numbers
+                Acknowledgment - now create the plan
             """
-            project_path = ctx.deps.project_path
-            if not project_path:
-                return "Error: No project path available"
-
-            full_path = Path(project_path) / filepath
-
-            if not full_path.exists():
-                return f"Error: File not found: {filepath}"
-
-            # Security check
-            try:
-                full_path.resolve().relative_to(Path(project_path).resolve())
-            except ValueError:
-                return f"Error: Path escapes project directory"
-
-            try:
-                content = full_path.read_text()
-                lines = content.split('\n')
-                # Truncate if too long
-                if len(lines) > 200:
-                    lines = lines[:200]
-                    lines.append(f"... [truncated, {len(content.split(chr(10))) - 200} more lines]")
-                numbered = [f"{i+1:4}│ {line}" for i, line in enumerate(lines)]
-                return f"File: {filepath}\n" + "\n".join(numbered)
-            except Exception as e:
-                return f"Error reading file: {e}"
+            return "Analysis noted. Now call create_structured_plan to output your plan."
 
         @agent.tool
         async def list_files(
@@ -204,26 +172,27 @@ class PlannerAgent(Subagent[PlannerDeps]):
             pattern: str = "*",
         ) -> str:
             """
-            List files in the project.
+            List files in the project directory.
+
+            Use this ONCE if you need to know what files exist.
+            After getting file info, immediately call create_structured_plan.
 
             Args:
                 directory: Directory relative to project root
-                pattern: Glob pattern to filter (e.g., "*.tex")
+                pattern: Glob pattern (e.g., "*.tex")
 
             Returns:
-                List of matching files
+                List of files
             """
             project_path = ctx.deps.project_path
             if not project_path:
-                # Return cached files if available
                 if ctx.deps.existing_files:
-                    return "Project files:\n" + "\n".join(f"  {f}" for f in ctx.deps.existing_files[:50])
-                return "No project path available"
+                    return "Files: " + ", ".join(ctx.deps.existing_files[:20])
+                return "No project path. Make assumptions about files."
 
             full_path = Path(project_path) / directory
-
             if not full_path.exists():
-                return f"Directory not found: {directory}"
+                return f"Directory not found. Make assumptions."
 
             try:
                 if pattern == "*":
@@ -232,63 +201,14 @@ class PlannerAgent(Subagent[PlannerDeps]):
                     files = list(full_path.glob(pattern))
 
                 items = []
-                for f in sorted(files)[:50]:
+                for f in sorted(files)[:20]:
                     if f.name.startswith('.'):
                         continue
-                    if f.is_dir():
-                        items.append(f"📁 {f.name}/")
-                    else:
-                        items.append(f"📄 {f.name}")
+                    items.append(f.name)
 
-                return f"Contents of {directory}:\n" + "\n".join(items)
+                return "Files: " + ", ".join(items) if items else "No matching files."
             except Exception as e:
                 return f"Error listing files: {e}"
-
-        @agent.tool
-        async def analyze_task_complexity(
-            ctx: RunContext[PlannerDeps],
-            task: str,
-            files_involved: list[str],
-        ) -> str:
-            """
-            Analyze the complexity of a task.
-
-            Args:
-                task: Description of the task
-                files_involved: List of files that will be affected
-
-            Returns:
-                Complexity analysis
-            """
-            # Simple heuristic-based analysis
-            complexity = 1
-
-            # File count
-            file_count = len(files_involved)
-            if file_count > 5:
-                complexity += 2
-            elif file_count > 2:
-                complexity += 1
-
-            # Task keywords
-            complex_keywords = ["refactor", "migrate", "redesign", "implement", "create new"]
-            for kw in complex_keywords:
-                if kw in task.lower():
-                    complexity += 1
-
-            # Estimate steps
-            estimated_steps = max(file_count * 2, 3)
-
-            complexity = min(complexity, 5)  # Cap at 5
-
-            return f"""Task Complexity Analysis:
-
-Complexity Level: {complexity}/5
-Files Involved: {file_count}
-Estimated Steps: {estimated_steps}
-
-Recommendation: {"Create detailed plan" if complexity >= 3 else "Simple task, brief plan sufficient"}
-"""
 
         @agent.tool
         async def create_structured_plan(
@@ -358,25 +278,6 @@ Files: {len(plan_data['estimated_files'])}
 Risks: {len(risks)}
 
 The plan has been saved and is ready for execution."""
-
-        @agent.tool
-        async def think(ctx: RunContext[PlannerDeps], thought: str) -> str:
-            """
-            Think through the planning process.
-
-            Use this to reason about:
-            - What the task requires
-            - How to break it down
-            - What order to do things in
-            - What could go wrong
-
-            Args:
-                thought: Your reasoning process
-
-            Returns:
-                Acknowledgment to continue
-            """
-            return "Thinking recorded. Continue with your planning."
 
         return agent
 
