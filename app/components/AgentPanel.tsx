@@ -332,10 +332,24 @@ export default function AgentPanel({
     setCurrentPlan(null);
   }, [projectPath]);
 
-  // Load chat sessions when project changes or mode becomes chat
+  // Create a new chat session when entering a project in chat mode
   useEffect(() => {
     if (mode === 'chat' && projectPath) {
-      loadChatSessions(true); // Auto-select most recent session
+      // Create a new session by default when entering a project
+      const initNewSession = async () => {
+        try {
+          const session = await api.createChatSession(projectPath);
+          setSelectedChatSession(session.session_id);
+          setMessages([]);
+          // Load the full session list for the dropdown
+          await loadChatSessions(false);
+        } catch (e) {
+          console.error('Failed to create initial chat session:', e);
+          // Fall back to loading existing sessions
+          loadChatSessions(true);
+        }
+      };
+      initNewSession();
     }
   }, [mode, projectPath, loadChatSessions]);
 
