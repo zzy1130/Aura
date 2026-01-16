@@ -8,7 +8,7 @@
  * - Manage app lifecycle
  */
 
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -316,6 +316,11 @@ function setupIpcHandlers(): void {
     }
 
     return projectsDir;
+  });
+
+  // Reveal file in Finder/Explorer
+  ipcMain.handle('reveal-in-finder', async (_event, filePath: string) => {
+    shell.showItemInFolder(filePath);
   });
 }
 

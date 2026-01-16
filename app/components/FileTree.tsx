@@ -12,6 +12,24 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
+import ContextMenu, { createFileContextMenuItems } from './ContextMenu';
+
+interface FileContextMenuHandlers {
+  onOpenToSide?: (path: string) => void;
+  onRevealInFinder?: (path: string) => void;
+  onOpenInTerminal?: (path: string) => void;
+  onAddToChat?: (path: string) => void;
+  onAddToNewChat?: (path: string) => void;
+  onCut?: (path: string) => void;
+  onCopy?: (path: string) => void;
+  onCopyPath?: (path: string) => void;
+  onCopyRelativePath?: (path: string) => void;
+  onCompile?: (path: string) => void;
+  onCheckSyntax?: (path: string) => void;
+  onPreviewPDF?: (path: string) => void;
+  onRename?: (path: string) => void;
+  onDelete?: (path: string) => void;
+}
 
 interface FileTreeProps {
   projectPath: string | null;
@@ -19,6 +37,7 @@ interface FileTreeProps {
   currentFile: string | null;
   onFileSelect: (filePath: string) => void;
   onRefresh?: () => void;
+  contextMenuHandlers?: FileContextMenuHandlers;
 }
 
 interface FileNode {
@@ -81,11 +100,13 @@ function TreeNode({
   depth,
   currentFile,
   onFileSelect,
+  onContextMenu,
 }: {
   node: FileNode;
   depth: number;
   currentFile: string | null;
   onFileSelect: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, node: FileNode) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(depth < 2);
   const isSelected = currentFile === node.path;
@@ -97,6 +118,12 @@ function TreeNode({
       onFileSelect(node.path);
     }
   }, [node, isExpanded, onFileSelect]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onContextMenu(e, node);
+  }, [node, onContextMenu]);
 
   return (
     <div>
@@ -111,6 +138,7 @@ function TreeNode({
         `}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}
+        onContextMenu={handleContextMenu}
       >
         {/* Expand icon for directories */}
         {node.type === 'directory' ? (
@@ -147,6 +175,7 @@ function TreeNode({
               depth={depth + 1}
               currentFile={currentFile}
               onFileSelect={onFileSelect}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>
@@ -161,9 +190,31 @@ export default function FileTree({
   currentFile,
   onFileSelect,
   onRefresh,
+  contextMenuHandlers,
 }: FileTreeProps) {
   const [tree, setTree] = useState<FileNode[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    node: FileNode;
+  } | null>(null);
+
+  // Handle right-click on a node
+  const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode) => {
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      node,
+    });
+  }, []);
+
+  // Close context menu
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
 
   // Build tree from file list
   const buildTree = useCallback((filePaths: string[]): FileNode[] => {
@@ -292,6 +343,7 @@ export default function FileTree({
                 depth={0}
                 currentFile={currentFile}
                 onFileSelect={onFileSelect}
+                onContextMenu={handleContextMenu}
               />
             ))
           ) : (
@@ -310,6 +362,35 @@ export default function FileTree({
           </div>
         )}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={createFileContextMenuItems(
+            contextMenu.node.path,
+            contextMenu.node.type,
+            {
+              onOpenToSide: () => contextMenuHandlers?.onOpenToSide?.(contextMenu.node.path),
+              onRevealInFinder: () => contextMenuHandlers?.onRevealInFinder?.(contextMenu.node.path),
+              onOpenInTerminal: () => contextMenuHandlers?.onOpenInTerminal?.(contextMenu.node.path),
+              onAddToChat: () => contextMenuHandlers?.onAddToChat?.(contextMenu.node.path),
+              onAddToNewChat: () => contextMenuHandlers?.onAddToNewChat?.(contextMenu.node.path),
+              onCut: () => contextMenuHandlers?.onCut?.(contextMenu.node.path),
+              onCopy: () => contextMenuHandlers?.onCopy?.(contextMenu.node.path),
+              onCopyPath: () => contextMenuHandlers?.onCopyPath?.(contextMenu.node.path),
+              onCopyRelativePath: () => contextMenuHandlers?.onCopyRelativePath?.(contextMenu.node.path),
+              onCompile: () => contextMenuHandlers?.onCompile?.(contextMenu.node.path),
+              onCheckSyntax: () => contextMenuHandlers?.onCheckSyntax?.(contextMenu.node.path),
+              onPreviewPDF: () => contextMenuHandlers?.onPreviewPDF?.(contextMenu.node.path),
+              onRename: () => contextMenuHandlers?.onRename?.(contextMenu.node.path),
+              onDelete: () => contextMenuHandlers?.onDelete?.(contextMenu.node.path),
+            }
+          )}
+          onClose={closeContextMenu}
+        />
+      )}
     </div>
   );
 }

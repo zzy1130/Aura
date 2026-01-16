@@ -511,6 +511,114 @@ export default function Home() {
   }, []);
 
   // =============================================================================
+  // File Tree Context Menu Handlers
+  // =============================================================================
+
+  const handleRevealInFinder = useCallback(async (relativePath: string) => {
+    if (!project.path || !window.aura) return;
+    const fullPath = `${project.path}/${relativePath}`;
+    await window.aura.revealInFinder(fullPath);
+  }, [project.path]);
+
+  const handleCopyPath = useCallback(async (relativePath: string) => {
+    if (!project.path) return;
+    const fullPath = `${project.path}/${relativePath}`;
+    await navigator.clipboard.writeText(fullPath);
+  }, [project.path]);
+
+  const handleCopyRelativePath = useCallback(async (relativePath: string) => {
+    await navigator.clipboard.writeText(relativePath);
+  }, []);
+
+  const handleAddFileToChat = useCallback((relativePath: string) => {
+    // Send the file content to the agent chat
+    setQuotedText(`[File: ${relativePath}]`);
+    setQuotedAction('explain');
+    if (!isAgentPanelOpen) {
+      setIsAgentPanelOpen(true);
+    }
+  }, [isAgentPanelOpen]);
+
+  const handleCompileFile = useCallback(async (relativePath: string) => {
+    if (!project.path || !relativePath.endsWith('.tex')) return;
+
+    // Save current file first if dirty
+    if (isDirty && project.currentFile) {
+      await handleSave();
+    }
+
+    setIsCompiling(true);
+    setCompileStatus('idle');
+    setCompileLog('');
+
+    try {
+      const result = await api.compile(project.path, relativePath);
+      setCompileLog(result.log_output || '');
+
+      if (result.success) {
+        setCompileStatus('success');
+        const pdfName = relativePath.replace(/\.tex$/, '.pdf');
+        try {
+          const pdfBlob = await api.fetchPdfBlob(project.path, pdfName);
+          if (pdfUrl) {
+            URL.revokeObjectURL(pdfUrl);
+          }
+          setPdfUrl(URL.createObjectURL(pdfBlob));
+        } catch (pdfErr) {
+          console.error('Failed to load PDF:', pdfErr);
+        }
+      } else {
+        setCompileStatus('error');
+        if (result.docker_not_available) {
+          setDockerIsInstalled(result.error_summary.includes('not running'));
+          setShowDockerGuide(true);
+        } else {
+          setError(result.error_summary || 'Compilation failed');
+        }
+      }
+    } catch (err) {
+      console.error('Compilation error:', err);
+      setCompileStatus('error');
+      setError(`Compilation error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsCompiling(false);
+    }
+  }, [project.path, project.currentFile, isDirty, handleSave, pdfUrl]);
+
+  const handleDeleteFile = useCallback(async (relativePath: string) => {
+    if (!project.path) return;
+
+    const confirmed = window.confirm(`Are you sure you want to delete "${relativePath}"?`);
+    if (!confirmed) return;
+
+    try {
+      await api.deleteFile(project.path, relativePath);
+      // Refresh file list
+      await fetchFileList(project.path);
+      // Clear editor if deleted file was open
+      if (project.currentFile === relativePath) {
+        setProject(prev => ({ ...prev, currentFile: null }));
+        setEditorContent('');
+        setIsDirty(false);
+      }
+    } catch (err) {
+      console.error('Failed to delete file:', err);
+      setError(`Failed to delete: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [project.path, project.currentFile, fetchFileList]);
+
+  const fileContextMenuHandlers = {
+    onRevealInFinder: handleRevealInFinder,
+    onCopyPath: handleCopyPath,
+    onCopyRelativePath: handleCopyRelativePath,
+    onAddToChat: handleAddFileToChat,
+    onAddToNewChat: handleAddFileToChat, // Same behavior for now
+    onCompile: handleCompileFile,
+    onDelete: handleDeleteFile,
+    onOpenToSide: handleFileSelect, // Open in editor
+  };
+
+  // =============================================================================
   // Panel Resize Handlers
   // =============================================================================
 
@@ -586,6 +694,7 @@ export default function Home() {
             currentFile={project.currentFile}
             onFileSelect={handleFileSelect}
             onRefresh={handleRefreshFiles}
+            contextMenuHandlers={fileContextMenuHandlers}
           />
         </div>
 

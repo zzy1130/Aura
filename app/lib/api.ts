@@ -367,6 +367,30 @@ class ApiClient {
   }
 
   /**
+   * Delete a file from a project
+   */
+  async deleteFile(projectPath: string, filename: string): Promise<void> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/files/delete`;
+    console.log('[API] deleteFile:', url, { projectPath, filename });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        filename: filename,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+  }
+
+  /**
    * Get file list for a project by name (only works for ~/aura-projects/)
    * @deprecated Use listFiles() instead for arbitrary paths
    */

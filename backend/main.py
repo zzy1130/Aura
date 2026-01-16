@@ -109,6 +109,11 @@ class FileWriteRequest(BaseModel):
     content: str
 
 
+class FileDeleteRequest(BaseModel):
+    project_path: str
+    filename: str
+
+
 class FileListRequest(BaseModel):
     project_path: str
 
@@ -356,6 +361,32 @@ async def write_file(request: FileWriteRequest) -> dict:
         request.filename,
         request.content,
     )
+    return {"success": True}
+
+
+@app.post("/api/files/delete")
+async def delete_file(request: FileDeleteRequest) -> dict:
+    """Delete a file from a project."""
+    from pathlib import Path
+
+    project_path = Path(request.project_path)
+    file_path = project_path / request.filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {request.filename}")
+
+    # Safety check: ensure file is within project directory
+    try:
+        file_path.resolve().relative_to(project_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if file_path.is_dir():
+        import shutil
+        shutil.rmtree(file_path)
+    else:
+        file_path.unlink()
+
     return {"success": True}
 
 

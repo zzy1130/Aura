@@ -20,6 +20,9 @@ export interface AuraAPI {
   newProject: (name: string) => Promise<string | null>;
   getProjectsDir: () => Promise<string>;
 
+  // File operations
+  revealInFinder: (path: string) => Promise<void>;
+
   // Platform info
   platform: NodeJS.Platform;
 }
@@ -36,6 +39,9 @@ const auraAPI: AuraAPI = {
   openProject: () => ipcRenderer.invoke('open-project'),
   newProject: (name: string) => ipcRenderer.invoke('new-project', name),
   getProjectsDir: () => ipcRenderer.invoke('get-projects-dir'),
+
+  // File operations
+  revealInFinder: (path: string) => ipcRenderer.invoke('reveal-in-finder', path),
 
   // Platform
   platform: process.platform,
