@@ -27,7 +27,7 @@ except ImportError:
 
 @dataclass
 class TestConfig:
-    base_url: str = "http://127.0.0.1:8000"
+    base_url: str = "http://127.0.0.1:8001"
     verbose: bool = False
     test_project_name: str = ""
 
@@ -540,7 +540,7 @@ class TestSuite:
 async def main():
     parser = argparse.ArgumentParser(description="Aura Backend API Test Suite")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Backend base URL")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8001", help="Backend base URL")
     args = parser.parse_args()
 
     config = TestConfig(
@@ -560,7 +560,7 @@ async def main():
         print(f"Error: Cannot connect to backend at {config.base_url}")
         print(f"       {e}")
         print("\nPlease start the backend first:")
-        print("  cd backend && uvicorn main:app --port 8000")
+        print("  cd backend && uvicorn main:app --port 8001")
         sys.exit(1)
 
     async with TestSuite(config) as suite:

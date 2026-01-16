@@ -171,7 +171,7 @@ chmod +x scripts/start.sh
 ```
 
 This starts:
-- Backend server on `http://localhost:8000`
+- Backend server on `http://localhost:8001`
 - Electron desktop app with embedded Next.js frontend
 
 ### Web Development Mode
@@ -181,10 +181,10 @@ This starts:
 ```
 
 This starts:
-- Backend server on `http://localhost:8000`
-- Web frontend on `http://localhost:3000`
+- Backend server on `http://localhost:8001`
+- Web frontend on `http://localhost:3001`
 
-Open http://localhost:3000 in your browser.
+Open http://localhost:3001 in your browser.
 
 ### Other Options
 
@@ -209,7 +209,7 @@ Open http://localhost:3000 in your browser.
 
 1. **Checks dependencies** - Verifies Python 3.11+, Node.js 18+, npm are installed
 2. **Auto-installs packages** - Runs `pip install` and `npm install` if needed
-3. **Kills conflicting ports** - Clears ports 8000 and 3000 if occupied
+3. **Kills conflicting ports** - Clears ports 8001 and 3001 if occupied
 4. **Starts services** - Launches backend and frontend with proper health checks
 5. **Cleanup on exit** - Gracefully stops all services on Ctrl+C
 
@@ -223,11 +223,11 @@ cd backend
 
 # Using uv (recommended)
 uv sync
-uv run uvicorn main:app --reload --port 8000
+uv run uvicorn main:app --reload --port 8001
 
 # Or using pip (fallback)
 pip install -r requirements.txt
-python3 -m uvicorn main:app --reload --port 8000
+python3 -m uvicorn main:app --reload --port 8001
 ```
 
 **Terminal 2 - Frontend:**
@@ -658,8 +658,8 @@ By default, LaTeX projects are stored in:
 
 ```bash
 # The start script handles this automatically, but if needed:
-lsof -ti:8000 | xargs kill -9  # Kill backend
-lsof -ti:3000 | xargs kill -9  # Kill frontend
+lsof -ti:8001 | xargs kill -9  # Kill backend
+lsof -ti:3001 | xargs kill -9  # Kill frontend
 ```
 
 ### Docker Not Running
@@ -702,8 +702,8 @@ npm install
 ### API Connection Failed
 
 If the frontend can't reach the backend:
-1. Ensure backend is running on port 8000
-2. Check `http://localhost:8000/docs` in browser
+1. Ensure backend is running on port 8001
+2. Check `http://localhost:8001/docs` in browser
 3. Look for CORS errors in browser console
 
 ---

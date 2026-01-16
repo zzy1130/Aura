@@ -433,7 +433,7 @@ export default function Home() {
     console.log('[Page] Approving edit:', requestId);
 
     try {
-      let backendUrl = 'http://127.0.0.1:8000';
+      let backendUrl = 'http://127.0.0.1:8001';
       if (typeof window !== 'undefined' && window.aura) {
         backendUrl = await window.aura.getBackendUrl();
       }
@@ -467,7 +467,7 @@ export default function Home() {
     console.log('[Page] Rejecting edit:', requestId);
 
     try {
-      let backendUrl = 'http://127.0.0.1:8000';
+      let backendUrl = 'http://127.0.0.1:8001';
       if (typeof window !== 'undefined' && window.aura) {
         backendUrl = await window.aura.getBackendUrl();
       }

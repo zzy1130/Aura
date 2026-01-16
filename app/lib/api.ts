@@ -263,7 +263,7 @@ export interface VibeIterationResult {
 // =============================================================================
 
 class ApiClient {
-  private baseUrl: string = 'http://127.0.0.1:8000';
+  private baseUrl: string = 'http://127.0.0.1:8001';
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
 

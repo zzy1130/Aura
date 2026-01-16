@@ -16,8 +16,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-BACKEND_PORT=8000
-FRONTEND_PORT=3000
+BACKEND_PORT=8001
+FRONTEND_PORT=3001
 BACKEND_DIR="$(dirname "$0")/../backend"
 FRONTEND_DIR="$(dirname "$0")/../app"
 BACKEND_PID=""

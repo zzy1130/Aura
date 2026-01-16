@@ -20,8 +20,8 @@ import * as fs from 'fs';
 // Use app.isPackaged for reliable production detection
 // NODE_ENV isn't always set correctly in packaged apps
 const isDev = !app.isPackaged;
-const BACKEND_PORT = 8000;
-const FRONTEND_URL = 'http://localhost:3000';  // Only used in dev mode
+const BACKEND_PORT = 8001;
+const FRONTEND_URL = 'http://localhost:3001';  // Only used in dev mode
 
 // =============================================================================
 // Global State

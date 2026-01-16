@@ -358,7 +358,7 @@ export default function AgentPanel({
     setMessages((prev) => [...prev, assistantMessage]);
 
     try {
-      let backendUrl = 'http://127.0.0.1:8000';
+      let backendUrl = 'http://127.0.0.1:8001';
       if (typeof window !== 'undefined' && window.aura) {
         backendUrl = await window.aura.getBackendUrl();
       }
