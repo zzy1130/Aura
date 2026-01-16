@@ -532,8 +532,8 @@ export default function Home() {
 
   const handleAddFileToChat = useCallback((relativePath: string) => {
     // Send the file content to the agent chat
-    setQuotedText(`[File: ${relativePath}]`);
-    setQuotedAction('explain');
+    setQuotedText(relativePath);
+    setQuotedAction('file');
     if (!isAgentPanelOpen) {
       setIsAgentPanelOpen(true);
     }

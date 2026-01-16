@@ -18,6 +18,7 @@ import {
   Microscope,
   Plus,
   X,
+  FileCode,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
@@ -40,7 +41,7 @@ interface AgentPanelProps {
   onApprovalResolved?: () => void;
   onOpenFile?: (filePath: string) => void;
   quotedText?: string | null;
-  quotedAction?: 'polish' | 'ask' | null;
+  quotedAction?: 'polish' | 'ask' | 'file' | null;
   onClearQuote?: () => void;
 }
 
@@ -326,9 +327,13 @@ export default function AgentPanel({
     let content = messageContent || input.trim();
     if (!content || isStreaming || !projectPath) return;
 
-    // If there's quoted text, append it to the content
+    // If there's quoted text/file, append it to the content
     if (quotedText) {
-      content = content + '\n\n' + quotedText;
+      if (quotedAction === 'file') {
+        content = content + '\n\n[Regarding file: ' + quotedText + ']';
+      } else {
+        content = content + '\n\n' + quotedText;
+      }
     }
 
     const userMessage: Message = {
@@ -608,7 +613,7 @@ export default function AgentPanel({
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, onClearQuote]);
+  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, quotedAction, onClearQuote]);
 
   // Keep sendMessageRef in sync
   useEffect(() => {
@@ -899,21 +904,35 @@ export default function AgentPanel({
 
           {/* Chat Input */}
           <div className="border-t border-black/6 p-3 bg-white">
-            {/* Quote Box - shows selected text from editor */}
+            {/* Quote Box - shows selected text from editor or file reference */}
             {quotedText && (
               <div className="mb-2 p-2.5 bg-fill-secondary rounded-yw-lg border border-black/6 flex items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="typo-ex-small text-tertiary mb-1">
-                    {quotedAction === 'polish' ? 'Polish this text:' : 'About this text:'}
+                {quotedAction === 'file' ? (
+                  <>
+                    <FileCode size={16} className="flex-shrink-0 text-green1 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="typo-ex-small text-tertiary mb-0.5">
+                        About this file:
+                      </div>
+                      <div className="typo-small text-primary font-medium truncate">
+                        {quotedText}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 min-w-0">
+                    <div className="typo-ex-small text-tertiary mb-1">
+                      {quotedAction === 'polish' ? 'Polish this text:' : 'About this text:'}
+                    </div>
+                    <div className="typo-small text-secondary italic truncate">
+                      "{truncateToWords(quotedText, 10)}"
+                    </div>
                   </div>
-                  <div className="typo-small text-secondary italic truncate">
-                    "{truncateToWords(quotedText, 10)}"
-                  </div>
-                </div>
+                )}
                 <button
                   onClick={onClearQuote}
                   className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-black/6 text-tertiary hover:text-secondary transition-colors"
-                  title="Remove quote"
+                  title="Remove"
                 >
                   <X size={12} />
                 </button>

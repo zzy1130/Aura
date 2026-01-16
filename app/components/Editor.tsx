@@ -12,7 +12,7 @@ export interface PendingEdit {
   new_string: string;
 }
 
-export type SendToAgentAction = 'polish' | 'ask';
+export type SendToAgentAction = 'polish' | 'ask' | 'file';
 
 interface EditorProps {
   content: string;
