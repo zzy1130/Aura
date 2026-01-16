@@ -121,8 +121,9 @@ class ChatSession:
                     elif isinstance(part, ToolCallPart):
                         try:
                             args = part.args_as_dict()
-                        except Exception:
-                            args = {}
+                        except Exception as e:
+                            logger.error(f"Failed to serialize tool call args: {e}")
+                            args = {"_parse_error": str(e)}
                         parts_data.append({
                             "type": "tool_call",
                             "tool_name": part.tool_name,
@@ -945,8 +946,13 @@ async def _stream_standard(
                     if isinstance(part, ToolCallPart):
                         try:
                             args = part.args_as_dict()
-                        except Exception:
-                            args = {}
+                        except Exception as e:
+                            logger.error(f"Failed to parse tool call args for {part.tool_name}: {e}")
+                            # Try to get raw args for debugging
+                            raw_args = getattr(part, 'args', None)
+                            if raw_args:
+                                logger.error(f"Raw args (first 200 chars): {str(raw_args)[:200]}")
+                            args = {"_parse_error": str(e)}
                         tool_call_id = part.tool_call_id or ""
                         pending_tool_calls.append((part.tool_name, tool_call_id))
                         yield ToolCallEvent(
@@ -1033,8 +1039,12 @@ async def _stream_with_hitl(
                             if isinstance(part, ToolCallPart):
                                 try:
                                     args = part.args_as_dict()
-                                except Exception:
-                                    args = {}
+                                except Exception as e:
+                                    logger.error(f"Failed to parse tool call args for {part.tool_name}: {e}")
+                                    raw_args = getattr(part, 'args', None)
+                                    if raw_args:
+                                        logger.error(f"Raw args (first 200 chars): {str(raw_args)[:200]}")
+                                    args = {"_parse_error": str(e)}
                                 tool_call_id = part.tool_call_id or ""
                                 pending_tool_calls.append((part.tool_name, tool_call_id))
                                 await event_queue.put(ToolCallEvent(
