@@ -419,6 +419,42 @@ class ApiClient {
   }
 
   /**
+   * Copy a file or directory in a project
+   */
+  async copyFile(projectPath: string, sourceFilename: string, destFilename: string): Promise<string> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/files/copy`;
+    console.log('[API] copyFile:', url, { projectPath, sourceFilename, destFilename });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        source_filename: sourceFilename,
+        dest_filename: destFilename,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result.new_path;
+  }
+
+  /**
+   * Move a file or directory in a project (rename to different location)
+   */
+  async moveFile(projectPath: string, sourceFilename: string, destFilename: string): Promise<string> {
+    // Move is just a rename to a different path
+    return this.renameFile(projectPath, sourceFilename, destFilename);
+  }
+
+  /**
    * Get file list for a project by name (only works for ~/aura-projects/)
    * @deprecated Use listFiles() instead for arbitrary paths
    */
@@ -920,6 +956,25 @@ class ApiClient {
       `${this.baseUrl}/api/memory/${entryType}/${entryId}?project_path=${encodeURIComponent(projectPath)}`,
       { method: 'DELETE' }
     );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+  }
+
+  /**
+   * Clear all memory entries for a project
+   */
+  async clearMemory(projectPath: string): Promise<void> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/memory/clear`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_path: projectPath }),
+    });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));

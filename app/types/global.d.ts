@@ -12,6 +12,9 @@ interface AuraAPI {
   newProject: (name: string) => Promise<string | null>;
   getProjectsDir: () => Promise<string>;
 
+  // File operations
+  revealInFinder: (path: string) => Promise<void>;
+
   // Platform info
   platform: NodeJS.Platform;
 }

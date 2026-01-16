@@ -120,6 +120,12 @@ class FileRenameRequest(BaseModel):
     new_filename: str
 
 
+class FileCopyRequest(BaseModel):
+    project_path: str
+    source_filename: str
+    dest_filename: str
+
+
 class FileListRequest(BaseModel):
     project_path: str
 
@@ -424,6 +430,40 @@ async def rename_file(request: FileRenameRequest) -> dict:
     old_path.rename(new_path)
 
     return {"success": True, "new_path": str(new_path.relative_to(project_path))}
+
+
+@app.post("/api/files/copy")
+async def copy_file(request: FileCopyRequest) -> dict:
+    """Copy a file or directory in a project."""
+    from pathlib import Path
+    import shutil
+
+    project_path = Path(request.project_path)
+    source_path = project_path / request.source_filename
+    dest_path = project_path / request.dest_filename
+
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail=f"Source not found: {request.source_filename}")
+
+    if dest_path.exists():
+        raise HTTPException(status_code=400, detail=f"Destination already exists: {request.dest_filename}")
+
+    # Safety check: ensure both paths are within project directory
+    try:
+        source_path.resolve().relative_to(project_path.resolve())
+        dest_path.resolve().relative_to(project_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    # Create parent directory if needed
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if source_path.is_dir():
+        shutil.copytree(source_path, dest_path)
+    else:
+        shutil.copy2(source_path, dest_path)
+
+    return {"success": True, "new_path": str(dest_path.relative_to(project_path))}
 
 
 @app.post("/api/files/list")
@@ -1322,6 +1362,23 @@ async def delete_memory_entry(
         raise HTTPException(status_code=404, detail="Entry not found")
 
     return {"success": True}
+
+
+class ClearMemoryRequest(BaseModel):
+    project_path: str
+
+
+@app.post("/api/memory/clear")
+async def clear_memory(request: ClearMemoryRequest):
+    """Clear all memory entries for a project."""
+    from services.memory import MemoryData
+
+    service = MemoryService(request.project_path)
+    # Create a fresh empty memory
+    empty_memory = MemoryData()
+    service.save(empty_memory)
+
+    return {"success": True, "message": "Memory cleared"}
 
 
 # ============ Git/Overleaf Sync Endpoints ============

@@ -138,6 +138,22 @@ export default function MemoryModal({
     }
   };
 
+  const handleClearAll = async () => {
+    if (!projectPath) return;
+
+    const confirmed = window.confirm(
+      'Are you sure you want to clear ALL memory entries? This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    try {
+      await api.clearMemory(projectPath);
+      loadMemory();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to clear memory');
+    }
+  };
+
   const handleUpdate = async (entryType: MemoryEntryType, entryId: string) => {
     if (!projectPath) return;
 
@@ -224,7 +240,7 @@ export default function MemoryModal({
     return (
       <div
         key={entry.id as string}
-        className="p-3 bg-black/3 rounded-yw-lg group"
+        className="p-3 bg-black/5 rounded-yw-lg border border-black/8"
       >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
@@ -288,7 +304,14 @@ export default function MemoryModal({
 
             {entryType === 'notes' && (
               <>
-                <div className="typo-body">{(entry as NoteEntry).content}</div>
+                <div className="typo-body line-clamp-4 whitespace-pre-wrap break-words">
+                  {(entry as NoteEntry).content}
+                </div>
+                {(entry as NoteEntry).content.length > 300 && (
+                  <div className="typo-ex-small text-tertiary mt-1">
+                    ({(entry as NoteEntry).content.length} characters)
+                  </div>
+                )}
                 {(entry as NoteEntry).tags.length > 0 && (
                   <div className="flex gap-1 mt-2 flex-wrap">
                     {(entry as NoteEntry).tags.map(tag => (
@@ -300,17 +323,17 @@ export default function MemoryModal({
             )}
           </div>
 
-          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex gap-1 flex-shrink-0">
             <button
               onClick={() => startEdit(entry)}
-              className="p-1 hover:bg-black/5 rounded"
+              className="p-1.5 hover:bg-black/5 rounded-yw-sm"
               title="Edit"
             >
               <Edit2 size={14} className="text-secondary" />
             </button>
             <button
               onClick={() => handleDelete(entryType, entry.id as string)}
-              className="p-1 hover:bg-error/10 rounded"
+              className="p-1.5 hover:bg-error/10 rounded-yw-sm"
               title="Delete"
             >
               <Trash2 size={14} className="text-error" />
@@ -483,7 +506,7 @@ export default function MemoryModal({
       {/* Modal */}
       <div className="relative z-10 w-full max-w-2xl max-h-[80vh] bg-white rounded-yw-2xl shadow-xl flex flex-col animate-fadeInUp">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-black/6">
+        <div className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-b border-black/6">
           <h2 className="typo-h2">Project Memory</h2>
           <button onClick={onClose} className="btn-icon">
             <X size={18} className="text-secondary" />
@@ -491,7 +514,7 @@ export default function MemoryModal({
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 px-6 py-3 border-b border-black/6 overflow-x-auto">
+        <div className="flex-shrink-0 flex gap-1 px-6 py-3 border-b border-black/6 overflow-x-auto">
           {TABS.map(tab => (
             <button
               key={tab.id}
@@ -548,14 +571,26 @@ export default function MemoryModal({
         </div>
 
         {/* Footer with token counter */}
-        <div className="px-6 py-3 border-t border-black/6 flex items-center justify-between">
+        <div className="flex-shrink-0 px-6 py-3 border-t border-black/6 flex items-center justify-between">
           <div className={`flex items-center gap-2 typo-small ${tokenWarning ? 'text-warn' : 'text-tertiary'}`}>
             {tokenWarning && <AlertTriangle size={14} />}
             Memory size: {tokenCount.toLocaleString()} / {tokenThreshold.toLocaleString()} tokens
           </div>
-          <button onClick={onClose} className="btn-ghost">
-            Close
-          </button>
+          <div className="flex gap-2">
+            {tokenCount > 0 && (
+              <button
+                onClick={handleClearAll}
+                className="btn-ghost text-error hover:bg-error/10"
+                title="Clear all memory entries"
+              >
+                <Trash2 size={14} />
+                Clear All
+              </button>
+            )}
+            <button onClick={onClose} className="btn-ghost">
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

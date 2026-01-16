@@ -5,12 +5,16 @@ import {
   Columns,
   FolderOpen,
   MessageSquare,
+  Scissors,
+  Copy,
+  ClipboardPaste,
   Link,
   FileText,
   Play,
   Eye,
   Pencil,
   Trash2,
+  ChevronRight,
 } from 'lucide-react';
 
 export interface ContextMenuItem {
@@ -162,13 +166,17 @@ export function createFileContextMenuItems(
     onOpenToSide?: () => void;
     onRevealInFinder?: () => void;
     onAddToChat?: () => void;
+    onCut?: () => void;
+    onCopy?: () => void;
+    onPaste?: () => void;
     onCopyPath?: () => void;
     onCopyRelativePath?: () => void;
     onCompile?: () => void;
     onPreviewPDF?: () => void;
     onRename?: () => void;
     onDelete?: () => void;
-  }
+  },
+  clipboardHasContent?: boolean
 ): ContextMenuItem[] {
   const isTexFile = filePath.endsWith('.tex');
   const isPdfFile = filePath.endsWith('.pdf');
@@ -203,7 +211,32 @@ export function createFileContextMenuItems(
     },
     { id: 'sep2', label: '', separator: true },
 
-    // Clipboard actions
+    // Cut/Copy/Paste
+    {
+      id: 'cut',
+      label: 'Cut',
+      icon: <Scissors size={14} />,
+      shortcut: '⌘X',
+      onClick: handlers.onCut,
+    },
+    {
+      id: 'copy',
+      label: 'Copy',
+      icon: <Copy size={14} />,
+      shortcut: '⌘C',
+      onClick: handlers.onCopy,
+    },
+    {
+      id: 'paste',
+      label: 'Paste',
+      icon: <ClipboardPaste size={14} />,
+      shortcut: '⌘V',
+      disabled: !clipboardHasContent,
+      onClick: handlers.onPaste,
+    },
+    { id: 'sep3', label: '', separator: true },
+
+    // Copy path actions
     {
       id: 'copy-path',
       label: 'Copy Path',
@@ -218,7 +251,7 @@ export function createFileContextMenuItems(
       shortcut: '⇧⌥⌘C',
       onClick: handlers.onCopyRelativePath,
     },
-    { id: 'sep3', label: '', separator: true },
+    { id: 'sep4', label: '', separator: true },
   ];
 
   // LaTeX-specific actions
@@ -230,7 +263,7 @@ export function createFileContextMenuItems(
         icon: <Play size={14} />,
         onClick: handlers.onCompile,
       },
-      { id: 'sep4', label: '', separator: true },
+      { id: 'sep5', label: '', separator: true },
     );
   }
 
@@ -243,7 +276,7 @@ export function createFileContextMenuItems(
         icon: <Eye size={14} />,
         onClick: handlers.onPreviewPDF,
       },
-      { id: 'sep5', label: '', separator: true },
+      { id: 'sep6', label: '', separator: true },
     );
   }
 

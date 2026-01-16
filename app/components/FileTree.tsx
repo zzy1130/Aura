@@ -18,6 +18,9 @@ interface FileContextMenuHandlers {
   onOpenToSide?: (path: string) => void;
   onRevealInFinder?: (path: string) => void;
   onAddToChat?: (path: string) => void;
+  onCut?: (path: string) => void;
+  onCopy?: (path: string) => void;
+  onPaste?: (path: string, isDirectory: boolean) => void;
   onCopyPath?: (path: string) => void;
   onCopyRelativePath?: (path: string) => void;
   onCompile?: (path: string) => void;
@@ -33,6 +36,7 @@ interface FileTreeProps {
   onFileSelect: (filePath: string) => void;
   onRefresh?: () => void;
   contextMenuHandlers?: FileContextMenuHandlers;
+  clipboardHasContent?: boolean;
 }
 
 interface FileNode {
@@ -186,6 +190,7 @@ export default function FileTree({
   onFileSelect,
   onRefresh,
   contextMenuHandlers,
+  clipboardHasContent,
 }: FileTreeProps) {
   const [tree, setTree] = useState<FileNode[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -370,13 +375,17 @@ export default function FileTree({
               onOpenToSide: () => contextMenuHandlers?.onOpenToSide?.(contextMenu.node.path),
               onRevealInFinder: () => contextMenuHandlers?.onRevealInFinder?.(contextMenu.node.path),
               onAddToChat: () => contextMenuHandlers?.onAddToChat?.(contextMenu.node.path),
+              onCut: () => contextMenuHandlers?.onCut?.(contextMenu.node.path),
+              onCopy: () => contextMenuHandlers?.onCopy?.(contextMenu.node.path),
+              onPaste: () => contextMenuHandlers?.onPaste?.(contextMenu.node.path, contextMenu.node.type === 'directory'),
               onCopyPath: () => contextMenuHandlers?.onCopyPath?.(contextMenu.node.path),
               onCopyRelativePath: () => contextMenuHandlers?.onCopyRelativePath?.(contextMenu.node.path),
               onCompile: () => contextMenuHandlers?.onCompile?.(contextMenu.node.path),
               onPreviewPDF: () => contextMenuHandlers?.onPreviewPDF?.(contextMenu.node.path),
               onRename: () => contextMenuHandlers?.onRename?.(contextMenu.node.path),
               onDelete: () => contextMenuHandlers?.onDelete?.(contextMenu.node.path),
-            }
+            },
+            clipboardHasContent
           )}
           onClose={closeContextMenu}
         />

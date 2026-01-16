@@ -10,6 +10,7 @@ import NewProjectModal from '@/components/NewProjectModal';
 import SettingsModal from '@/components/SettingsModal';
 import MemoryModal from '@/components/MemoryModal';
 import DockerGuide from '@/components/DockerGuide';
+import RenameModal from '@/components/RenameModal';
 import ResizeHandle from '@/components/ResizeHandle';
 import { api, SyncStatus } from '@/lib/api';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
@@ -66,6 +67,19 @@ export default function Home() {
 
   // Pending edit state (for HITL approval in Editor)
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
+
+  // File clipboard state (for cut/copy/paste)
+  const [fileClipboard, setFileClipboard] = useState<{
+    path: string;
+    operation: 'cut' | 'copy';
+  } | null>(null);
+
+  // Rename modal state
+  const [renameModal, setRenameModal] = useState<{
+    isOpen: boolean;
+    path: string;
+    name: string;
+  }>({ isOpen: false, path: '', name: '' });
 
   // Quoted text state (for sending selected text to agent)
   const [quotedText, setQuotedText] = useState<string | null>(null);
@@ -607,13 +621,22 @@ export default function Home() {
     }
   }, [project.path, project.currentFile, fetchFileList]);
 
-  const handleRenameFile = useCallback(async (relativePath: string) => {
-    if (!project.path) return;
-
+  const handleRenameFile = useCallback((relativePath: string) => {
     const currentName = relativePath.split('/').pop() || '';
-    const newName = window.prompt('Enter new name:', currentName);
+    setRenameModal({
+      isOpen: true,
+      path: relativePath,
+      name: currentName,
+    });
+  }, []);
 
-    if (!newName || newName === currentName) return;
+  const handleRenameConfirm = useCallback(async (newName: string) => {
+    if (!project.path || !renameModal.path) return;
+
+    const relativePath = renameModal.path;
+    const currentName = relativePath.split('/').pop() || '';
+
+    if (newName === currentName) return;
 
     // Construct new path (same directory, new name)
     const directory = relativePath.includes('/')
@@ -633,13 +656,67 @@ export default function Home() {
       console.error('Failed to rename file:', err);
       setError(`Failed to rename: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
-  }, [project.path, project.currentFile, fetchFileList]);
+  }, [project.path, project.currentFile, renameModal.path, fetchFileList]);
+
+  const handleCutFile = useCallback((relativePath: string) => {
+    setFileClipboard({ path: relativePath, operation: 'cut' });
+  }, []);
+
+  const handleCopyFile = useCallback((relativePath: string) => {
+    setFileClipboard({ path: relativePath, operation: 'copy' });
+  }, []);
+
+  const handlePasteFile = useCallback(async (targetPath: string, isDirectory: boolean) => {
+    if (!project.path || !fileClipboard) return;
+
+    // Get the filename from the clipboard path
+    const filename = fileClipboard.path.split('/').pop() || '';
+    // Construct destination path (paste into target directory or next to target file)
+    let destPath: string;
+    if (isDirectory) {
+      destPath = `${targetPath}/${filename}`;
+    } else {
+      // Paste next to the file (in the same directory)
+      const directory = targetPath.includes('/')
+        ? targetPath.substring(0, targetPath.lastIndexOf('/'))
+        : '';
+      destPath = directory ? `${directory}/${filename}` : filename;
+    }
+
+    try {
+      if (fileClipboard.operation === 'cut') {
+        // Move file
+        await api.moveFile(project.path, fileClipboard.path, destPath);
+        // Update current file if it was moved
+        if (project.currentFile === fileClipboard.path) {
+          setProject(prev => ({ ...prev, currentFile: destPath }));
+        }
+      } else {
+        // Copy file
+        await api.copyFile(project.path, fileClipboard.path, destPath);
+      }
+
+      // Clear clipboard after cut (but not after copy)
+      if (fileClipboard.operation === 'cut') {
+        setFileClipboard(null);
+      }
+
+      // Refresh file list
+      await fetchFileList(project.path);
+    } catch (err) {
+      console.error('Failed to paste file:', err);
+      setError(`Failed to paste: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [project.path, project.currentFile, fileClipboard, fetchFileList]);
 
   const fileContextMenuHandlers = {
     onRevealInFinder: handleRevealInFinder,
     onCopyPath: handleCopyPath,
     onCopyRelativePath: handleCopyRelativePath,
     onAddToChat: handleAddFileToChat,
+    onCut: handleCutFile,
+    onCopy: handleCopyFile,
+    onPaste: handlePasteFile,
     onCompile: handleCompileFile,
     onDelete: handleDeleteFile,
     onRename: handleRenameFile,
@@ -723,6 +800,7 @@ export default function Home() {
             onFileSelect={handleFileSelect}
             onRefresh={handleRefreshFiles}
             contextMenuHandlers={fileContextMenuHandlers}
+            clipboardHasContent={!!fileClipboard}
           />
         </div>
 
@@ -868,6 +946,14 @@ export default function Home() {
         isOpen={showDockerGuide}
         onClose={() => setShowDockerGuide(false)}
         isInstalled={dockerIsInstalled}
+      />
+
+      {/* Rename Modal */}
+      <RenameModal
+        isOpen={renameModal.isOpen}
+        currentName={renameModal.name}
+        onClose={() => setRenameModal({ isOpen: false, path: '', name: '' })}
+        onRename={handleRenameConfirm}
       />
     </div>
   );
