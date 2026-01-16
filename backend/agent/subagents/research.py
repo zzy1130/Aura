@@ -1421,10 +1421,12 @@ class ResearchAgent(Subagent[ResearchDeps]):
                         ])
 
             # Bibliography
+            # Use the report filename for bibliography reference
+            report_base = state.get_report_filename()
             latex_lines.extend([
                 r"",
                 r"\bibliographystyle{plainnat}",
-                f"\\bibliography{{vibe_research_{state.session_id}}}",
+                f"\\bibliography{{{report_base}}}",
                 r"",
                 r"\end{document}",
             ])
@@ -1447,13 +1449,16 @@ class ResearchAgent(Subagent[ResearchDeps]):
                 report_dir = Path(ctx.deps.project_path) / "report"
                 report_dir.mkdir(exist_ok=True)
 
+                # Use topic-based filename from state
+                base_filename = state.get_report_filename()
+
                 # Save .tex file
-                tex_filename = f"vibe_research_{state.session_id}.tex"
+                tex_filename = f"{base_filename}.tex"
                 tex_path = report_dir / tex_filename
                 tex_path.write_text(report_tex, encoding="utf-8")
 
                 # Save .bib file
-                bib_filename = f"vibe_research_{state.session_id}.bib"
+                bib_filename = f"{base_filename}.bib"
                 bib_path = report_dir / bib_filename
                 bib_path.write_text(report_bib, encoding="utf-8")
 

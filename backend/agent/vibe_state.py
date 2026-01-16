@@ -9,12 +9,50 @@ This state is injected into the agent's system prompt and updated via tools.
 """
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+
+def generate_slug(topic: str, max_length: int = 50) -> str:
+    """
+    Generate a filesystem-safe slug from a research topic.
+
+    Args:
+        topic: The research topic string
+        max_length: Maximum length of the slug
+
+    Returns:
+        A lowercase, hyphen-separated slug suitable for filenames
+    """
+    if not topic:
+        return "untitled"
+
+    # Lowercase and replace common separators with spaces
+    slug = topic.lower()
+    slug = re.sub(r'[/\\:,;]', ' ', slug)
+
+    # Remove non-alphanumeric characters except spaces and hyphens
+    slug = re.sub(r'[^a-z0-9\s-]', '', slug)
+
+    # Replace whitespace with hyphens
+    slug = re.sub(r'\s+', '-', slug.strip())
+
+    # Remove consecutive hyphens
+    slug = re.sub(r'-+', '-', slug)
+
+    # Truncate to max length, but don't cut in the middle of a word
+    if len(slug) > max_length:
+        slug = slug[:max_length]
+        # Try to end at a word boundary
+        if '-' in slug:
+            slug = slug.rsplit('-', 1)[0]
+
+    return slug.strip('-') or "untitled"
 
 
 class ResearchPhase(str, Enum):
@@ -40,6 +78,7 @@ class VibeResearchState:
     # === IDENTITY ===
     session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    report_slug: str = ""  # Generated from topic, used for output filenames
 
     # === TASK LEDGER ===
     topic: str = ""
@@ -71,6 +110,23 @@ class VibeResearchState:
     max_papers: int = 100
     max_papers_to_read: int = 30
     target_hypotheses: int = 5
+
+    def __post_init__(self):
+        """Auto-generate report_slug from topic if not provided."""
+        if self.topic and not self.report_slug:
+            self.report_slug = generate_slug(self.topic)
+
+    def set_topic(self, topic: str) -> None:
+        """Set the research topic and generate the report slug."""
+        self.topic = topic
+        self.report_slug = generate_slug(topic)
+
+    def get_report_filename(self) -> str:
+        """Get the base filename for report files (without extension)."""
+        if self.report_slug:
+            return self.report_slug
+        # Fallback to session_id if no slug
+        return f"vibe_research_{self.session_id}"
 
     def add_paper(self, paper: dict, source: str = "") -> str:
         """Add a paper to the discovered list."""
@@ -273,6 +329,7 @@ class VibeResearchState:
         return {
             "session_id": self.session_id,
             "created_at": self.created_at,
+            "report_slug": self.report_slug,
             "topic": self.topic,
             "scope": self.scope,
             "papers": self.papers,
@@ -297,10 +354,15 @@ class VibeResearchState:
     @classmethod
     def from_dict(cls, data: dict) -> "VibeResearchState":
         """Deserialize from dictionary."""
+        topic = data.get("topic", "")
+        # Generate slug from topic if not present (backward compatibility)
+        report_slug = data.get("report_slug") or generate_slug(topic) if topic else ""
+
         state = cls(
             session_id=data.get("session_id", str(uuid.uuid4())[:8]),
             created_at=data.get("created_at", datetime.now().isoformat()),
-            topic=data.get("topic", ""),
+            report_slug=report_slug,
+            topic=topic,
             scope=data.get("scope", {}),
             papers=data.get("papers", []),
             papers_read=data.get("papers_read", []),

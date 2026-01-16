@@ -1561,8 +1561,9 @@ async def get_vibe_report(session_id: str, project_path: str) -> dict:
 
     # Check if report files exist
     report_dir = Path(project_path) / "report"
-    tex_filename = f"vibe_research_{session_id}.tex"
-    bib_filename = f"vibe_research_{session_id}.bib"
+    base_filename = state.get_report_filename()
+    tex_filename = f"{base_filename}.tex"
+    bib_filename = f"{base_filename}.bib"
     tex_path = report_dir / tex_filename
     bib_path = report_dir / bib_filename
 
