@@ -44,7 +44,7 @@ const COMMON_DOMAINS = [
 
 export default function DomainPreferenceModal({
   isOpen,
-  requestId,
+  requestId: _requestId,
   topic,
   suggestedDomain,
   onClose,

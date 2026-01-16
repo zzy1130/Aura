@@ -15,7 +15,7 @@ interface VenuePreferenceModalProps {
 
 export default function VenuePreferenceModal({
   isOpen,
-  requestId,
+  requestId: _requestId,
   topic,
   domain,
   suggestedVenues,
