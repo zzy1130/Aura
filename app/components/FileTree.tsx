@@ -28,6 +28,39 @@ interface FileNode {
   children?: FileNode[];
 }
 
+// LaTeX auxiliary file extensions to hide
+const HIDDEN_EXTENSIONS = [
+  '.aux',
+  '.bbl',
+  '.blg',
+  '.log',
+  '.out',
+  '.toc',
+  '.fls',
+  '.fdb_latexmk',
+  '.synctex.gz',
+  '.synctex',
+  '.nav',
+  '.snm',
+  '.vrb',
+  '.lof',
+  '.lot',
+  '.idx',
+  '.ind',
+  '.ilg',
+  '.glo',
+  '.gls',
+  '.glg',
+  '.bcf',
+  '.run.xml',
+];
+
+// Check if a file should be hidden
+function isHiddenFile(filename: string): boolean {
+  const lowerName = filename.toLowerCase();
+  return HIDDEN_EXTENSIONS.some(ext => lowerName.endsWith(ext));
+}
+
 // Get icon for file type - YouWare green palette
 function getFileIcon(name: string) {
   if (name.endsWith('.tex')) return <FileCode size={14} className="text-green1" />;
@@ -134,9 +167,15 @@ export default function FileTree({
 
   // Build tree from file list
   const buildTree = useCallback((filePaths: string[]): FileNode[] => {
+    // Filter out hidden auxiliary files
+    const visibleFiles = filePaths.filter(path => {
+      const filename = path.split('/').pop() || '';
+      return !isHiddenFile(filename);
+    });
+
     const root: Map<string, FileNode> = new Map();
 
-    for (const filePath of filePaths) {
+    for (const filePath of visibleFiles) {
       const parts = filePath.split('/').filter(Boolean);
       let currentPath = '';
 
