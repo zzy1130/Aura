@@ -294,27 +294,48 @@ export default function AgentPanel({
   }, [mode, projectPath, loadVibeSessions]);
 
   // Load chat sessions
-  const loadChatSessions = useCallback(async () => {
+  const loadChatSessions = useCallback(async (autoSelect: boolean = false) => {
     if (!projectPath) return;
     setIsLoadingChatSessions(true);
     try {
       const result = await api.listChatSessions(projectPath);
       setChatSessions(result.sessions);
-      // Auto-select the most recent session if none selected
-      if (!selectedChatSession && result.sessions.length > 0) {
+      // Auto-select the most recent session if requested
+      if (autoSelect && result.sessions.length > 0) {
         setSelectedChatSession(result.sessions[0].session_id);
+        // Load messages for the auto-selected session
+        try {
+          const session = await api.getChatSession(projectPath, result.sessions[0].session_id);
+          const uiMessages: Message[] = session.messages.map((msg, index) => ({
+            id: `loaded-${index}`,
+            role: msg.role,
+            parts: [{ type: 'text', content: msg.content }],
+            timestamp: new Date(),
+          }));
+          setMessages(uiMessages);
+        } catch (e) {
+          console.error('Failed to load auto-selected session:', e);
+        }
       }
     } catch (e) {
       console.error('Failed to load chat sessions:', e);
     } finally {
       setIsLoadingChatSessions(false);
     }
-  }, [projectPath, selectedChatSession]);
+  }, [projectPath]);
+
+  // Reset chat state when project changes
+  useEffect(() => {
+    setSelectedChatSession(null);
+    setMessages([]);
+    setChatSessions([]);
+    setCurrentPlan(null);
+  }, [projectPath]);
 
   // Load chat sessions when project changes or mode becomes chat
   useEffect(() => {
     if (mode === 'chat' && projectPath) {
-      loadChatSessions();
+      loadChatSessions(true); // Auto-select most recent session
     }
   }, [mode, projectPath, loadChatSessions]);
 
@@ -351,7 +372,8 @@ export default function AgentPanel({
       setSelectedChatSession(session.session_id);
       setMessages([]);
       setCurrentPlan(null);
-      await loadChatSessions();
+      // Refresh the session list without auto-selecting (we already selected the new one)
+      await loadChatSessions(false);
     } catch (e) {
       console.error('Failed to create chat session:', e);
     }
@@ -366,7 +388,8 @@ export default function AgentPanel({
       setSelectedChatSession(null);
       setMessages([]);
       setCurrentPlan(null);
-      await loadChatSessions();
+      // Refresh the session list without auto-selecting
+      await loadChatSessions(false);
     } catch (e) {
       console.error('Failed to delete chat session:', e);
     }
