@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Send,
   User,
@@ -19,12 +20,13 @@ import {
   Plus,
   X,
   FileCode,
+  Trash2,
 } from 'lucide-react';
 import { PendingEdit } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
 import VibeResearchView from './VibeResearchView';
 import CommandPalette from './CommandPalette';
-import { api, VibeSessionSummary } from '../lib/api';
+import { api, VibeSessionSummary, ChatSession } from '../lib/api';
 import VenuePreferenceModal from './VenuePreferenceModal';
 import DomainPreferenceModal from './DomainPreferenceModal';
 import {
@@ -136,8 +138,8 @@ function TextPartDisplay({ content }: { content: string }) {
   if (!content.trim()) return null;
 
   return (
-    <div className="typo-body prose prose-sm max-w-none prose-headings:text-primary prose-p:text-primary prose-strong:text-primary prose-code:text-green1 prose-code:bg-green3/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-fill-secondary prose-pre:border prose-pre:border-black/6 prose-ul:text-primary prose-ol:text-primary prose-li:text-primary my-1">
-      <ReactMarkdown>{content}</ReactMarkdown>
+    <div className="typo-body prose prose-sm max-w-none prose-headings:text-primary prose-p:text-primary prose-strong:text-primary prose-code:text-green1 prose-code:bg-green3/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-fill-secondary prose-pre:border prose-pre:border-black/6 prose-ul:text-primary prose-ol:text-primary prose-li:text-primary prose-table:w-full prose-th:bg-fill-secondary prose-th:border prose-th:border-black/12 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-td:border prose-td:border-black/12 prose-td:px-3 prose-td:py-2 my-1">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
 }
@@ -229,6 +231,11 @@ export default function AgentPanel({
   const [vibeSessions, setVibeSessions] = useState<VibeSessionSummary[]>([]);
   const [selectedVibeSession, setSelectedVibeSession] = useState<string | null>(null);
 
+  // Chat session state
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [selectedChatSession, setSelectedChatSession] = useState<string | null>(null);
+  const [isLoadingChatSessions, setIsLoadingChatSessions] = useState(false);
+
   // Command palette state
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [filteredCommands, setFilteredCommands] = useState<SlashCommand[]>([]);
@@ -285,6 +292,85 @@ export default function AgentPanel({
       loadVibeSessions();
     }
   }, [mode, projectPath, loadVibeSessions]);
+
+  // Load chat sessions
+  const loadChatSessions = useCallback(async () => {
+    if (!projectPath) return;
+    setIsLoadingChatSessions(true);
+    try {
+      const result = await api.listChatSessions(projectPath);
+      setChatSessions(result.sessions);
+      // Auto-select the most recent session if none selected
+      if (!selectedChatSession && result.sessions.length > 0) {
+        setSelectedChatSession(result.sessions[0].session_id);
+      }
+    } catch (e) {
+      console.error('Failed to load chat sessions:', e);
+    } finally {
+      setIsLoadingChatSessions(false);
+    }
+  }, [projectPath, selectedChatSession]);
+
+  // Load chat sessions when project changes or mode becomes chat
+  useEffect(() => {
+    if (mode === 'chat' && projectPath) {
+      loadChatSessions();
+    }
+  }, [mode, projectPath, loadChatSessions]);
+
+  // Handle chat session change - load messages for selected session
+  const handleChatSessionChange = useCallback(async (sessionId: string | null) => {
+    setSelectedChatSession(sessionId);
+    if (!sessionId || !projectPath) {
+      setMessages([]);
+      return;
+    }
+
+    try {
+      const session = await api.getChatSession(projectPath, sessionId);
+      // Convert stored messages to UI format
+      const uiMessages: Message[] = session.messages.map((msg, index) => ({
+        id: `loaded-${index}`,
+        role: msg.role,
+        parts: [{ type: 'text', content: msg.content }],
+        timestamp: new Date(),
+      }));
+      setMessages(uiMessages);
+    } catch (e) {
+      console.error('Failed to load chat session:', e);
+      setMessages([]);
+    }
+  }, [projectPath]);
+
+  // Create new chat session
+  const createNewChatSession = useCallback(async () => {
+    if (!projectPath) return;
+
+    try {
+      const session = await api.createChatSession(projectPath);
+      setSelectedChatSession(session.session_id);
+      setMessages([]);
+      setCurrentPlan(null);
+      await loadChatSessions();
+    } catch (e) {
+      console.error('Failed to create chat session:', e);
+    }
+  }, [projectPath, loadChatSessions]);
+
+  // Delete current chat session
+  const deleteCurrentChatSession = useCallback(async () => {
+    if (!projectPath || !selectedChatSession) return;
+
+    try {
+      await api.deleteChatSession(projectPath, selectedChatSession);
+      setSelectedChatSession(null);
+      setMessages([]);
+      setCurrentPlan(null);
+      await loadChatSessions();
+    } catch (e) {
+      console.error('Failed to delete chat session:', e);
+    }
+  }, [projectPath, selectedChatSession, loadChatSessions]);
 
   const startNewResearch = async () => {
     if (!projectPath || !newResearchTopic.trim()) return;
@@ -389,6 +475,7 @@ export default function AgentPanel({
         body: JSON.stringify({
           message: content,
           project_path: projectPath,
+          session_id: selectedChatSession || undefined,
           history: messages.map((m) => ({
             role: m.role,
             content: m.parts
@@ -647,7 +734,7 @@ export default function AgentPanel({
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, quotedAction, onClearQuote]);
+  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, quotedAction, onClearQuote, selectedChatSession]);
 
   // Keep sendMessageRef in sync
   useEffect(() => {
@@ -926,6 +1013,41 @@ export default function AgentPanel({
       {/* Content based on mode */}
       {mode === 'chat' ? (
         <>
+          {/* Chat Session Selector */}
+          <div className="p-3 border-b border-black/6 bg-white flex items-center gap-2">
+            <select
+              value={selectedChatSession || ''}
+              onChange={(e) => handleChatSessionChange(e.target.value || null)}
+              className="flex-1 rounded-yw-md border border-black/12 bg-white px-3 py-2 typo-small focus:outline-none focus:ring-1 focus:ring-green2/20"
+              disabled={isLoadingChatSessions || isStreaming}
+            >
+              <option value="">Select a chat session...</option>
+              {chatSessions.map((session) => (
+                <option key={session.session_id} value={session.session_id}>
+                  {session.name} ({session.message_count} messages)
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={createNewChatSession}
+              disabled={isStreaming}
+              className="flex h-[36px] w-[36px] items-center justify-center rounded-yw-md bg-green1 text-white hover:opacity-90 transition-all flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="New chat"
+            >
+              <Plus size={14} />
+            </button>
+            {selectedChatSession && (
+              <button
+                onClick={deleteCurrentChatSession}
+                disabled={isStreaming}
+                className="flex h-[36px] w-[36px] items-center justify-center rounded-yw-md bg-error/10 text-error hover:bg-error/20 transition-all flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Delete session"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
+
           {/* Chat Messages */}
           <div className="flex-1 overflow-auto p-3 space-y-3">
         {messages.length === 0 && !currentPlan ? (
@@ -998,7 +1120,7 @@ export default function AgentPanel({
                       {quotedAction === 'polish' ? 'Polish this text:' : 'About this text:'}
                     </div>
                     <div className="typo-small text-secondary italic truncate">
-                      "{truncateToWords(quotedText, 10)}"
+                      &ldquo;{truncateToWords(quotedText, 10)}&rdquo;
                     </div>
                   </div>
                 )}
