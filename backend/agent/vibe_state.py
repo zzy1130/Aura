@@ -121,6 +121,48 @@ class VibeResearchState:
         self.topic = topic
         self.report_slug = generate_slug(topic)
 
+    def generate_summary_title(self) -> str:
+        """
+        Generate a descriptive summary title from research findings.
+
+        Uses themes, scope, and topic to create a meaningful title
+        that reflects what was actually researched.
+        """
+        parts = []
+
+        # Use top themes if available (most descriptive of actual findings)
+        if self.themes:
+            # Get up to 2 theme names
+            theme_names = [t.get('name', '') for t in self.themes[:2] if t.get('name')]
+            if theme_names:
+                parts.extend(theme_names)
+
+        # Add scope domain if available and not redundant
+        if self.scope and self.scope.get('domain'):
+            domain = self.scope.get('domain', '')
+            # Only add if not already covered by themes
+            if domain and not any(domain.lower() in p.lower() for p in parts):
+                parts.append(domain)
+
+        # Fall back to topic if nothing else
+        if not parts and self.topic:
+            return self.topic
+
+        # Combine parts into a title
+        if parts:
+            return ' - '.join(parts[:3])  # Limit to 3 parts
+
+        return self.topic or "Research Report"
+
+    def finalize_report_slug(self) -> None:
+        """
+        Generate and set the report slug based on research findings.
+
+        Call this when the research is complete to get a descriptive filename.
+        """
+        summary = self.generate_summary_title()
+        self.report_slug = generate_slug(summary)
+
     def get_report_filename(self) -> str:
         """Get the base filename for report files (without extension)."""
         if self.report_slug:

@@ -1171,6 +1171,9 @@ class ResearchAgent(Subagent[ResearchDeps]):
 
             state = ctx.deps.vibe_state
 
+            # Generate summary-based filename from research findings
+            state.finalize_report_slug()
+
             # Set activity
             state.set_activity("Generating final research report...")
             if ctx.deps.project_path:
