@@ -209,6 +209,18 @@ Respond with ONLY the improved text. No explanations, no tool calls, just the po
       }
     },
   },
+  {
+    name: 'plan',
+    description: 'Create a structured plan for a task',
+    icon: 'ListChecks',
+    category: 'project',
+    requiresArg: true,
+    argPlaceholder: 'task description',
+    executionType: 'agent',
+    toAgentMessage: (arg) => `Create a detailed plan for this task: ${arg}
+
+Use the plan_task tool to create a structured execution plan with clear steps. Break down the task into manageable steps that can be executed one by one.`,
+  },
 ];
 
 // =============================================================================
