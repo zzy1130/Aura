@@ -134,6 +134,7 @@ class ChatRequest(BaseModel):
     message: str
     project_path: str
     history: Optional[list] = None
+    session_id: Optional[str] = None  # Optional session ID for persistence
 
 
 # ============ Memory Models ============
@@ -498,8 +499,8 @@ async def chat_stream(request: ChatRequest):
     """
     from agent.streaming import stream_agent_sse
 
-    # Use project_path as session_id for conversation continuity
-    session_id = request.project_path or "default"
+    # Use session_id from request, or fall back to "default"
+    session_id = request.session_id or "default"
 
     async def event_generator():
         try:
@@ -537,8 +538,8 @@ async def chat_simple(request: ChatRequest) -> dict:
     """
     from agent.streaming import run_agent
 
-    # Use project_path as session_id for conversation continuity
-    session_id = request.project_path or "default"
+    # Use session_id from request, or fall back to "default"
+    session_id = request.session_id or "default"
 
     try:
         result = await run_agent(
@@ -560,6 +561,16 @@ class ClearChatRequest(BaseModel):
     project_path: str
 
 
+class CreateChatSessionRequest(BaseModel):
+    project_path: str
+    name: Optional[str] = None  # Optional session name, auto-generated if not provided
+
+
+class RenameChatSessionRequest(BaseModel):
+    project_path: str
+    name: str
+
+
 @app.post("/api/chat/clear")
 async def clear_chat_history(request: ClearChatRequest) -> dict:
     """
@@ -576,6 +587,122 @@ async def clear_chat_history(request: ClearChatRequest) -> dict:
         "success": True,
         "message": f"Cleared chat history for session: {session_id}",
     }
+
+
+# ============ Chat Session CRUD Endpoints ============
+
+@app.post("/api/chat/sessions/create")
+async def create_chat_session(request: CreateChatSessionRequest) -> dict:
+    """
+    Create a new chat session.
+
+    Returns the created session info.
+    """
+    from agent.streaming import ChatSession
+
+    session = ChatSession(
+        project_path=request.project_path,
+        name=request.name or "",
+    )
+    # Initialize with empty messages and save
+    session.messages = []
+    session.message_count = 0
+    session.save()
+
+    return session.to_summary()
+
+
+@app.get("/api/chat/sessions")
+async def list_chat_sessions(project_path: str) -> dict:
+    """
+    List all chat sessions for a project.
+
+    Returns sessions sorted by updated_at (newest first).
+    """
+    from agent.streaming import ChatSession
+
+    sessions = ChatSession.list_sessions(project_path)
+
+    return {
+        "count": len(sessions),
+        "sessions": sessions,
+    }
+
+
+@app.get("/api/chat/session/{session_id}")
+async def get_chat_session(session_id: str, project_path: str) -> dict:
+    """
+    Get a chat session with its messages.
+
+    Returns the session info and message history.
+    """
+    from agent.streaming import ChatSession
+
+    session = ChatSession.load(project_path, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    # Convert messages to UI-friendly format
+    ui_messages = []
+    for msg in session.messages:
+        msg_type = msg.get("type", "")
+        if msg_type == "ModelRequest":
+            for part in msg.get("parts", []):
+                if part.get("type") == "user_prompt":
+                    ui_messages.append({
+                        "role": "user",
+                        "content": part.get("content", ""),
+                    })
+        elif msg_type == "ModelResponse":
+            content_parts = []
+            for part in msg.get("parts", []):
+                if part.get("type") == "text":
+                    content_parts.append(part.get("content", ""))
+            if content_parts:
+                ui_messages.append({
+                    "role": "assistant",
+                    "content": "\n".join(content_parts),
+                })
+
+    return {
+        **session.to_summary(),
+        "messages": ui_messages,
+    }
+
+
+@app.delete("/api/chat/session/{session_id}")
+async def delete_chat_session(session_id: str, project_path: str) -> dict:
+    """
+    Delete a chat session.
+    """
+    from agent.streaming import ChatSession
+
+    success = ChatSession.delete(project_path, session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    return {
+        "success": True,
+        "message": f"Deleted session: {session_id}",
+    }
+
+
+@app.put("/api/chat/session/{session_id}/rename")
+async def rename_chat_session(session_id: str, request: RenameChatSessionRequest) -> dict:
+    """
+    Rename a chat session.
+    """
+    from agent.streaming import ChatSession
+
+    session = ChatSession.load(request.project_path, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    session.name = request.name
+    session.project_path = request.project_path
+    session.save()
+
+    return session.to_summary()
 
 
 @app.get("/api/tools")
