@@ -1448,12 +1448,12 @@ class ResearchAgent(Subagent[ResearchDeps]):
 
                 state.save(ctx.deps.project_path)
 
-                # Create report directory
-                report_dir = Path(ctx.deps.project_path) / "report"
-                report_dir.mkdir(exist_ok=True)
-
                 # Use topic-based filename from state
                 base_filename = state.get_report_filename()
+
+                # Create subdirectory for this research: report/<base_filename>/
+                report_dir = Path(ctx.deps.project_path) / "report" / base_filename
+                report_dir.mkdir(parents=True, exist_ok=True)
 
                 # Save .tex file
                 tex_filename = f"{base_filename}.tex"
@@ -1468,7 +1468,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
                 logger.info(f"Report saved to: {tex_path}")
                 logger.info(f"Bibliography saved to: {bib_path}")
 
-                return f"Report generated successfully!\n\nFiles created:\n- report/{tex_filename}\n- report/{bib_filename}\n\nThe report includes {len(bib_entries)} citations from the analyzed papers."
+                return f"Report generated successfully!\n\nFiles created:\n- report/{base_filename}/{tex_filename}\n- report/{base_filename}/{bib_filename}\n\nThe report includes {len(bib_entries)} citations from the analyzed papers."
 
             return "Report generated but could not save files (no project path)"
 

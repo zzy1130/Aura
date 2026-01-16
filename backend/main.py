@@ -1559,9 +1559,9 @@ async def get_vibe_report(session_id: str, project_path: str) -> dict:
             "hypotheses": [],
         }
 
-    # Check if report files exist
-    report_dir = Path(project_path) / "report"
+    # Check if report files exist in subdirectory
     base_filename = state.get_report_filename()
+    report_dir = Path(project_path) / "report" / base_filename
     tex_filename = f"{base_filename}.tex"
     bib_filename = f"{base_filename}.bib"
     tex_path = report_dir / tex_filename
@@ -1573,9 +1573,9 @@ async def get_vibe_report(session_id: str, project_path: str) -> dict:
         "topic": state.topic,
         "report": state.report,
         "report_path": str(tex_path) if tex_path.exists() else None,
-        "report_filename": f"report/{tex_filename}",
+        "report_filename": f"report/{base_filename}/{tex_filename}",
         "bib_path": str(bib_path) if bib_path.exists() else None,
-        "bib_filename": f"report/{bib_filename}",
+        "bib_filename": f"report/{base_filename}/{bib_filename}",
         "hypotheses": state.get_ranked_hypotheses(),
         "papers_count": len(state.papers),
         "themes_count": len(state.themes),
