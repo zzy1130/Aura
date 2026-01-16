@@ -110,12 +110,24 @@ wait_for_frontend() {
     return 1
 }
 
+install_with_brew() {
+    local package=$1
+    if command -v brew &> /dev/null; then
+        log_info "Installing $package via Homebrew..."
+        brew install "$package"
+        return $?
+    else
+        return 1
+    fi
+}
+
 check_dependencies() {
     log_info "Checking dependencies..."
 
     # Check Python
     if ! command -v python3 &> /dev/null; then
         log_error "Python3 is not installed"
+        log_info "Install with: brew install python3"
         exit 1
     fi
     log_success "Python3 found: $(python3 --version)"
@@ -126,19 +138,28 @@ check_dependencies() {
         USE_UV=true
     else
         log_warn "uv not found, falling back to pip"
+        log_info "  To install uv (recommended): curl -LsSf https://astral.sh/uv/install.sh | sh"
         USE_UV=false
     fi
 
     # Check Node.js
     if ! command -v node &> /dev/null; then
         log_error "Node.js is not installed"
-        exit 1
+        if install_with_brew node; then
+            log_success "Node.js installed via Homebrew"
+        else
+            log_info "Install manually:"
+            log_info "  - Homebrew: brew install node"
+            log_info "  - Or download from: https://nodejs.org/"
+            exit 1
+        fi
     fi
     log_success "Node.js found: $(node --version)"
 
     # Check npm
     if ! command -v npm &> /dev/null; then
-        log_error "npm is not installed"
+        log_error "npm is not installed (usually comes with Node.js)"
+        log_info "Reinstall Node.js to get npm"
         exit 1
     fi
     log_success "npm found: $(npm --version)"
