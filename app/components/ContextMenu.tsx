@@ -3,24 +3,14 @@
 import { useEffect, useRef, useCallback } from 'react';
 import {
   Columns,
-  ExternalLink,
   FolderOpen,
-  Terminal,
-  Share2,
-  GitCompare,
-  MessageSquarePlus,
   MessageSquare,
-  History,
-  Scissors,
-  Copy,
   Link,
   FileText,
   Play,
-  CheckCircle,
   Eye,
   Pencil,
   Trash2,
-  ChevronRight,
 } from 'lucide-react';
 
 export interface ContextMenuItem {
@@ -171,15 +161,10 @@ export function createFileContextMenuItems(
   handlers: {
     onOpenToSide?: () => void;
     onRevealInFinder?: () => void;
-    onOpenInTerminal?: () => void;
     onAddToChat?: () => void;
-    onAddToNewChat?: () => void;
-    onCut?: () => void;
-    onCopy?: () => void;
     onCopyPath?: () => void;
     onCopyRelativePath?: () => void;
     onCompile?: () => void;
-    onCheckSyntax?: () => void;
     onPreviewPDF?: () => void;
     onRename?: () => void;
     onDelete?: () => void;
@@ -187,7 +172,6 @@ export function createFileContextMenuItems(
 ): ContextMenuItem[] {
   const isTexFile = filePath.endsWith('.tex');
   const isPdfFile = filePath.endsWith('.pdf');
-  const isBibFile = filePath.endsWith('.bib');
   const isDirectory = fileType === 'directory';
 
   const items: ContextMenuItem[] = [
@@ -207,12 +191,6 @@ export function createFileContextMenuItems(
       shortcut: '⌥⌘R',
       onClick: handlers.onRevealInFinder,
     },
-    {
-      id: 'open-terminal',
-      label: 'Open in Terminal',
-      icon: <Terminal size={14} />,
-      onClick: handlers.onOpenInTerminal,
-    },
     { id: 'sep1', label: '', separator: true },
 
     // Aura Chat integration
@@ -223,31 +201,9 @@ export function createFileContextMenuItems(
       disabled: isDirectory,
       onClick: handlers.onAddToChat,
     },
-    {
-      id: 'add-to-new-chat',
-      label: 'Add to New Chat',
-      icon: <MessageSquarePlus size={14} />,
-      disabled: isDirectory,
-      onClick: handlers.onAddToNewChat,
-    },
     { id: 'sep2', label: '', separator: true },
 
     // Clipboard actions
-    {
-      id: 'cut',
-      label: 'Cut',
-      icon: <Scissors size={14} />,
-      shortcut: '⌘X',
-      onClick: handlers.onCut,
-    },
-    {
-      id: 'copy',
-      label: 'Copy',
-      icon: <Copy size={14} />,
-      shortcut: '⌘C',
-      onClick: handlers.onCopy,
-    },
-    { id: 'sep3', label: '', separator: true },
     {
       id: 'copy-path',
       label: 'Copy Path',
@@ -262,7 +218,7 @@ export function createFileContextMenuItems(
       shortcut: '⇧⌥⌘C',
       onClick: handlers.onCopyRelativePath,
     },
-    { id: 'sep4', label: '', separator: true },
+    { id: 'sep3', label: '', separator: true },
   ];
 
   // LaTeX-specific actions
@@ -274,13 +230,7 @@ export function createFileContextMenuItems(
         icon: <Play size={14} />,
         onClick: handlers.onCompile,
       },
-      {
-        id: 'check-syntax',
-        label: 'Check Syntax',
-        icon: <CheckCircle size={14} />,
-        onClick: handlers.onCheckSyntax,
-      },
-      { id: 'sep5', label: '', separator: true },
+      { id: 'sep4', label: '', separator: true },
     );
   }
 

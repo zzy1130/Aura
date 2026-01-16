@@ -17,15 +17,10 @@ import ContextMenu, { createFileContextMenuItems } from './ContextMenu';
 interface FileContextMenuHandlers {
   onOpenToSide?: (path: string) => void;
   onRevealInFinder?: (path: string) => void;
-  onOpenInTerminal?: (path: string) => void;
   onAddToChat?: (path: string) => void;
-  onAddToNewChat?: (path: string) => void;
-  onCut?: (path: string) => void;
-  onCopy?: (path: string) => void;
   onCopyPath?: (path: string) => void;
   onCopyRelativePath?: (path: string) => void;
   onCompile?: (path: string) => void;
-  onCheckSyntax?: (path: string) => void;
   onPreviewPDF?: (path: string) => void;
   onRename?: (path: string) => void;
   onDelete?: (path: string) => void;
@@ -374,15 +369,10 @@ export default function FileTree({
             {
               onOpenToSide: () => contextMenuHandlers?.onOpenToSide?.(contextMenu.node.path),
               onRevealInFinder: () => contextMenuHandlers?.onRevealInFinder?.(contextMenu.node.path),
-              onOpenInTerminal: () => contextMenuHandlers?.onOpenInTerminal?.(contextMenu.node.path),
               onAddToChat: () => contextMenuHandlers?.onAddToChat?.(contextMenu.node.path),
-              onAddToNewChat: () => contextMenuHandlers?.onAddToNewChat?.(contextMenu.node.path),
-              onCut: () => contextMenuHandlers?.onCut?.(contextMenu.node.path),
-              onCopy: () => contextMenuHandlers?.onCopy?.(contextMenu.node.path),
               onCopyPath: () => contextMenuHandlers?.onCopyPath?.(contextMenu.node.path),
               onCopyRelativePath: () => contextMenuHandlers?.onCopyRelativePath?.(contextMenu.node.path),
               onCompile: () => contextMenuHandlers?.onCompile?.(contextMenu.node.path),
-              onCheckSyntax: () => contextMenuHandlers?.onCheckSyntax?.(contextMenu.node.path),
               onPreviewPDF: () => contextMenuHandlers?.onPreviewPDF?.(contextMenu.node.path),
               onRename: () => contextMenuHandlers?.onRename?.(contextMenu.node.path),
               onDelete: () => contextMenuHandlers?.onDelete?.(contextMenu.node.path),

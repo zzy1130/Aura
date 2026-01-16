@@ -114,6 +114,12 @@ class FileDeleteRequest(BaseModel):
     filename: str
 
 
+class FileRenameRequest(BaseModel):
+    project_path: str
+    old_filename: str
+    new_filename: str
+
+
 class FileListRequest(BaseModel):
     project_path: str
 
@@ -388,6 +394,36 @@ async def delete_file(request: FileDeleteRequest) -> dict:
         file_path.unlink()
 
     return {"success": True}
+
+
+@app.post("/api/files/rename")
+async def rename_file(request: FileRenameRequest) -> dict:
+    """Rename a file in a project."""
+    from pathlib import Path
+
+    project_path = Path(request.project_path)
+    old_path = project_path / request.old_filename
+    new_path = project_path / request.new_filename
+
+    if not old_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {request.old_filename}")
+
+    if new_path.exists():
+        raise HTTPException(status_code=400, detail=f"File already exists: {request.new_filename}")
+
+    # Safety check: ensure both paths are within project directory
+    try:
+        old_path.resolve().relative_to(project_path.resolve())
+        new_path.resolve().relative_to(project_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    # Create parent directory if needed
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+
+    old_path.rename(new_path)
+
+    return {"success": True, "new_path": str(new_path.relative_to(project_path))}
 
 
 @app.post("/api/files/list")

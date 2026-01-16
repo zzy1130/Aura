@@ -607,14 +607,42 @@ export default function Home() {
     }
   }, [project.path, project.currentFile, fetchFileList]);
 
+  const handleRenameFile = useCallback(async (relativePath: string) => {
+    if (!project.path) return;
+
+    const currentName = relativePath.split('/').pop() || '';
+    const newName = window.prompt('Enter new name:', currentName);
+
+    if (!newName || newName === currentName) return;
+
+    // Construct new path (same directory, new name)
+    const directory = relativePath.includes('/')
+      ? relativePath.substring(0, relativePath.lastIndexOf('/') + 1)
+      : '';
+    const newPath = directory + newName;
+
+    try {
+      await api.renameFile(project.path, relativePath, newPath);
+      // Refresh file list
+      await fetchFileList(project.path);
+      // Update current file if it was renamed
+      if (project.currentFile === relativePath) {
+        setProject(prev => ({ ...prev, currentFile: newPath }));
+      }
+    } catch (err) {
+      console.error('Failed to rename file:', err);
+      setError(`Failed to rename: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [project.path, project.currentFile, fetchFileList]);
+
   const fileContextMenuHandlers = {
     onRevealInFinder: handleRevealInFinder,
     onCopyPath: handleCopyPath,
     onCopyRelativePath: handleCopyRelativePath,
     onAddToChat: handleAddFileToChat,
-    onAddToNewChat: handleAddFileToChat, // Same behavior for now
     onCompile: handleCompileFile,
     onDelete: handleDeleteFile,
+    onRename: handleRenameFile,
     onOpenToSide: handleFileSelect, // Open in editor
   };
 

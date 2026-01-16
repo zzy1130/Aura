@@ -391,6 +391,34 @@ class ApiClient {
   }
 
   /**
+   * Rename a file in a project
+   */
+  async renameFile(projectPath: string, oldFilename: string, newFilename: string): Promise<string> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/files/rename`;
+    console.log('[API] renameFile:', url, { projectPath, oldFilename, newFilename });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        old_filename: oldFilename,
+        new_filename: newFilename,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result.new_path;
+  }
+
+  /**
    * Get file list for a project by name (only works for ~/aura-projects/)
    * @deprecated Use listFiles() instead for arbitrary paths
    */
