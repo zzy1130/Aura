@@ -13,10 +13,13 @@ Features:
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator, Literal, Optional
+from datetime import datetime
+from pathlib import Path
 import json
 import logging
+import uuid
 
 from pydantic_ai.agent import ModelRequestNode, CallToolsNode, UserPromptNode
 from pydantic_ai.run import End
@@ -51,6 +54,294 @@ def clear_session_history(session_id: str) -> None:
     """Clear message history for a session."""
     if session_id in _session_histories:
         del _session_histories[session_id]
+
+
+# =============================================================================
+# ChatSession - Persistent Chat Sessions
+# =============================================================================
+
+@dataclass
+class ChatSession:
+    """
+    Represents a persistent chat session stored in {projectPath}/.aura/chat_session_{id}.json.
+
+    Each session stores the full PydanticAI message history for conversation continuity.
+    """
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    name: str = ""
+    project_path: str = ""
+    messages: list[dict] = field(default_factory=list)
+    updated_at: str = ""
+    message_count: int = 0
+
+    def __post_init__(self):
+        if not self.updated_at:
+            self.updated_at = self.created_at
+        if not self.name:
+            self.name = f"Chat {self.session_id}"
+
+    def set_messages(self, pydantic_messages: list) -> None:
+        """
+        Serialize PydanticAI messages to storable dicts.
+
+        Converts ModelRequest/ModelResponse to JSON-serializable format.
+        """
+        serialized = []
+        for msg in pydantic_messages:
+            if isinstance(msg, ModelRequest):
+                parts_data = []
+                for part in msg.parts:
+                    if isinstance(part, UserPromptPart):
+                        parts_data.append({
+                            "type": "user_prompt",
+                            "content": part.content,
+                            "timestamp": part.timestamp.isoformat() if part.timestamp else None,
+                        })
+                    elif hasattr(part, "to_dict"):
+                        parts_data.append(part.to_dict())
+                    else:
+                        # Tool return parts etc
+                        parts_data.append({
+                            "type": part.__class__.__name__,
+                            "data": str(part),
+                        })
+                serialized.append({
+                    "type": "ModelRequest",
+                    "parts": parts_data,
+                })
+            elif isinstance(msg, ModelResponse):
+                parts_data = []
+                for part in msg.parts:
+                    if isinstance(part, TextPart):
+                        parts_data.append({
+                            "type": "text",
+                            "content": part.content,
+                        })
+                    elif isinstance(part, ToolCallPart):
+                        try:
+                            args = part.args_as_dict()
+                        except Exception:
+                            args = {}
+                        parts_data.append({
+                            "type": "tool_call",
+                            "tool_name": part.tool_name,
+                            "tool_call_id": part.tool_call_id,
+                            "args": args,
+                        })
+                    elif hasattr(part, "to_dict"):
+                        parts_data.append(part.to_dict())
+                    else:
+                        parts_data.append({
+                            "type": part.__class__.__name__,
+                            "data": str(part),
+                        })
+                serialized.append({
+                    "type": "ModelResponse",
+                    "parts": parts_data,
+                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
+                    "model_name": getattr(msg, "model_name", None),
+                })
+            else:
+                # Fallback for unknown types
+                serialized.append({
+                    "type": msg.__class__.__name__,
+                    "data": str(msg),
+                })
+
+        self.messages = serialized
+        self.message_count = len(serialized)
+        self.updated_at = datetime.now().isoformat()
+
+    def get_pydantic_messages(self) -> list:
+        """
+        Reconstruct PydanticAI messages from stored dicts.
+        """
+        from datetime import timezone
+
+        reconstructed = []
+        for msg in self.messages:
+            msg_type = msg.get("type", "")
+
+            if msg_type == "ModelRequest":
+                parts = []
+                for part_data in msg.get("parts", []):
+                    part_type = part_data.get("type", "")
+                    if part_type == "user_prompt":
+                        ts = part_data.get("timestamp")
+                        timestamp = datetime.fromisoformat(ts) if ts else datetime.now(timezone.utc)
+                        parts.append(UserPromptPart(
+                            content=part_data.get("content", ""),
+                            timestamp=timestamp,
+                        ))
+                    # Skip other part types for now (tool return parts etc.)
+
+                if parts:
+                    reconstructed.append(ModelRequest(parts=parts))
+
+            elif msg_type == "ModelResponse":
+                parts = []
+                for part_data in msg.get("parts", []):
+                    part_type = part_data.get("type", "")
+                    if part_type == "text":
+                        parts.append(TextPart(content=part_data.get("content", "")))
+                    # Skip tool calls for now - they're already executed
+
+                if parts:
+                    ts = msg.get("timestamp")
+                    timestamp = datetime.fromisoformat(ts) if ts else datetime.now(timezone.utc)
+                    reconstructed.append(ModelResponse(
+                        parts=parts,
+                        timestamp=timestamp,
+                        model_name=msg.get("model_name", "history"),
+                    ))
+
+        # Ensure proper alternation
+        if reconstructed and isinstance(reconstructed[-1], ModelResponse):
+            reconstructed = reconstructed[:-1]
+
+        return reconstructed
+
+    def save(self) -> None:
+        """Save session to disk at {project_path}/.aura/chat_session_{id}.json"""
+        if not self.project_path:
+            raise ValueError("project_path is required to save session")
+
+        aura_dir = Path(self.project_path) / ".aura"
+        aura_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = aura_dir / f"chat_session_{self.session_id}.json"
+
+        data = {
+            "session_id": self.session_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "name": self.name,
+            "message_count": self.message_count,
+            "messages": self.messages,
+        }
+
+        session_file.write_text(json.dumps(data, indent=2))
+        logger.info(f"Saved chat session {self.session_id} with {self.message_count} messages")
+
+    @classmethod
+    def load(cls, project_path: str, session_id: str) -> Optional["ChatSession"]:
+        """Load a session from disk."""
+        session_file = Path(project_path) / ".aura" / f"chat_session_{session_id}.json"
+
+        if not session_file.exists():
+            return None
+
+        try:
+            data = json.loads(session_file.read_text())
+            session = cls(
+                session_id=data.get("session_id", session_id),
+                created_at=data.get("created_at", ""),
+                updated_at=data.get("updated_at", ""),
+                name=data.get("name", ""),
+                project_path=project_path,
+                messages=data.get("messages", []),
+                message_count=data.get("message_count", 0),
+            )
+            return session
+        except Exception as e:
+            logger.error(f"Failed to load chat session {session_id}: {e}")
+            return None
+
+    @classmethod
+    def list_sessions(cls, project_path: str) -> list[dict]:
+        """List all chat sessions for a project (sorted by updated_at, newest first)."""
+        aura_dir = Path(project_path) / ".aura"
+        if not aura_dir.exists():
+            return []
+
+        sessions = []
+        for session_file in aura_dir.glob("chat_session_*.json"):
+            try:
+                data = json.loads(session_file.read_text())
+                sessions.append({
+                    "session_id": data.get("session_id", ""),
+                    "name": data.get("name", ""),
+                    "created_at": data.get("created_at", ""),
+                    "updated_at": data.get("updated_at", ""),
+                    "message_count": data.get("message_count", 0),
+                })
+            except Exception as e:
+                logger.warning(f"Failed to read session file {session_file}: {e}")
+
+        # Sort by updated_at descending
+        sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
+        return sessions
+
+    @classmethod
+    def delete(cls, project_path: str, session_id: str) -> bool:
+        """Delete a session file."""
+        session_file = Path(project_path) / ".aura" / f"chat_session_{session_id}.json"
+
+        if not session_file.exists():
+            return False
+
+        try:
+            session_file.unlink()
+            # Also clear from in-memory cache
+            if session_id in _session_histories:
+                del _session_histories[session_id]
+            logger.info(f"Deleted chat session {session_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete chat session {session_id}: {e}")
+            return False
+
+    def to_summary(self) -> dict:
+        """Return a summary dict (without full messages)."""
+        return {
+            "session_id": self.session_id,
+            "name": self.name,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "message_count": self.message_count,
+        }
+
+
+def get_session_history_from_disk(project_path: str, session_id: str) -> list:
+    """
+    Get session history, loading from disk if not in memory.
+    """
+    # Check in-memory cache first
+    if session_id in _session_histories:
+        return _session_histories[session_id]
+
+    # Try loading from disk
+    session = ChatSession.load(project_path, session_id)
+    if session:
+        messages = session.get_pydantic_messages()
+        _session_histories[session_id] = messages
+        return messages
+
+    return []
+
+
+def save_session_history_to_disk(project_path: str, session_id: str, messages: list, session_name: str = "") -> None:
+    """
+    Save session history to both memory and disk.
+    """
+    # Save to in-memory cache
+    _session_histories[session_id] = messages
+
+    # Load or create session
+    session = ChatSession.load(project_path, session_id)
+    if not session:
+        session = ChatSession(
+            session_id=session_id,
+            project_path=project_path,
+            name=session_name or f"Chat {session_id}",
+        )
+    else:
+        session.project_path = project_path
+
+    # Update messages and save
+    session.set_messages(messages)
+    session.save()
 
 
 def convert_simple_history(history: list) -> list:
@@ -573,7 +864,7 @@ async def stream_agent_response(
     # Use session-based history instead of frontend history
     # This preserves the full PydanticAI message structure including tool calls
     effective_session_id = session_id or "default"
-    processed_history = get_session_history(effective_session_id)
+    processed_history = get_session_history_from_disk(project_path, effective_session_id)
 
     # Handle compression if enabled and history provided
     if auto_compress and processed_history:
@@ -680,7 +971,7 @@ async def _stream_standard(
     # Save the updated message history for this session
     # all_messages() returns the complete conversation including new messages
     all_messages = result.all_messages()
-    save_session_history(session_id, all_messages)
+    save_session_history_to_disk(deps.project_path, session_id, all_messages)
     logger.info(f"Saved {len(all_messages)} messages to session {session_id}")
 
     yield DoneEvent(
@@ -767,7 +1058,7 @@ async def _stream_with_hitl(
 
             # Save the updated message history for this session
             all_messages = result.all_messages()
-            save_session_history(session_id, all_messages)
+            save_session_history_to_disk(deps.project_path, session_id, all_messages)
             logger.info(f"Saved {len(all_messages)} messages to session {session_id}")
 
             await event_queue.put(DoneEvent(
@@ -921,7 +1212,7 @@ async def run_agent(
 
     # Use session-based history instead of frontend history
     effective_session_id = session_id or "default"
-    processed_history = get_session_history(effective_session_id)
+    processed_history = get_session_history_from_disk(project_path, effective_session_id)
     compression_info = None
 
     # Handle compression if enabled and history provided
@@ -955,7 +1246,7 @@ async def run_agent(
 
     # Save the updated message history for this session
     all_messages = result.all_messages()
-    save_session_history(effective_session_id, all_messages)
+    save_session_history_to_disk(project_path, effective_session_id, all_messages)
     logger.info(f"Saved {len(all_messages)} messages to session {effective_session_id}")
 
     response = {
