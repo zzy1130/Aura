@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Streamdown styles for Markdown preview */
+@source "../node_modules/streamdown/dist/*.js";
+
 /* ============================================================================
    YouWare Design System - Global Styles
    ============================================================================ */
@@ -211,6 +214,134 @@ body {
 
 .pdf-container {
   background-color: #e8e6e3;
+}
+
+/* ============================================================================
+   Markdown Preview Styles
+   ============================================================================ */
+
+.markdown-preview-content {
+  color: #1a1a1a;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.markdown-preview-content h1,
+.markdown-preview-content h2,
+.markdown-preview-content h3,
+.markdown-preview-content h4,
+.markdown-preview-content h5,
+.markdown-preview-content h6 {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  color: #111;
+}
+
+.markdown-preview-content h1 {
+  font-size: 2em;
+  border-bottom: 1px solid #e5e5e5;
+  padding-bottom: 0.3em;
+}
+
+.markdown-preview-content h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid #e5e5e5;
+  padding-bottom: 0.3em;
+}
+
+.markdown-preview-content h3 {
+  font-size: 1.25em;
+}
+
+.markdown-preview-content p {
+  margin-bottom: 1em;
+}
+
+.markdown-preview-content a {
+  color: var(--yw-green1);
+  text-decoration: underline;
+}
+
+.markdown-preview-content a:hover {
+  color: var(--yw-green2);
+}
+
+.markdown-preview-content code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9em;
+  background-color: #f5f5f5;
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+}
+
+.markdown-preview-content pre {
+  background-color: #f8f8f8;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 1em;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.markdown-preview-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.markdown-preview-content blockquote {
+  border-left: 4px solid var(--yw-green2);
+  padding-left: 1em;
+  margin: 1em 0;
+  color: #555;
+  font-style: italic;
+}
+
+.markdown-preview-content ul,
+.markdown-preview-content ol {
+  margin: 1em 0;
+  padding-left: 2em;
+}
+
+.markdown-preview-content li {
+  margin-bottom: 0.5em;
+}
+
+.markdown-preview-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.markdown-preview-content th,
+.markdown-preview-content td {
+  border: 1px solid #e5e5e5;
+  padding: 0.5em 1em;
+  text-align: left;
+}
+
+.markdown-preview-content th {
+  background-color: #f8f8f8;
+  font-weight: 600;
+}
+
+.markdown-preview-content tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+.markdown-preview-content hr {
+  border: none;
+  border-top: 1px solid #e5e5e5;
+  margin: 2em 0;
+}
+
+.markdown-preview-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
 }
 
 /* ============================================================================

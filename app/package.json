@@ -32,6 +32,7 @@
     "react-markdown": "^10.1.0",
     "react-pdf": "^7.7.0",
     "remark-gfm": "^4.0.1",
+    "streamdown": "^2.0.1",
     "tailwind-merge": "^2.2.0"
   },
   "devDependencies": {

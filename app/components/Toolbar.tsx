@@ -26,6 +26,7 @@ interface ToolbarProps {
   compileStatus: 'idle' | 'success' | 'error';
   isSyncing: boolean;
   syncStatus: SyncStatusType | null;
+  showCompile?: boolean;
   onOpenProject: () => void;
   onNewProject: () => void;
   onSave: () => void;
@@ -43,6 +44,7 @@ export default function Toolbar({
   compileStatus,
   isSyncing,
   syncStatus,
+  showCompile = true,
   onOpenProject,
   onNewProject,
   onSave,
@@ -142,24 +144,26 @@ export default function Toolbar({
       {/* Separator */}
       <div className="w-px h-5 bg-black/10 mx-1" />
 
-      {/* Compile - Primary action */}
-      <button
-        onClick={onCompile}
-        className={`flex h-7 items-center gap-1.5 rounded-full bg-green1 px-3 text-white typo-small-strong hover:opacity-90 transition-opacity ${isCompiling ? 'opacity-80' : ''}`}
-        title="Compile (⌘B)"
-        disabled={isCompiling}
-      >
-        {isCompiling ? (
-          <Loader2 size={14} className="animate-spin" />
-        ) : compileStatus === 'success' ? (
-          <Check size={14} />
-        ) : compileStatus === 'error' ? (
-          <X size={14} />
-        ) : (
-          <Play size={14} />
-        )}
-        <span>Compile</span>
-      </button>
+      {/* Compile - Primary action (hidden for non-tex files) */}
+      {showCompile && (
+        <button
+          onClick={onCompile}
+          className={`flex h-7 items-center gap-1.5 rounded-full bg-green1 px-3 text-white typo-small-strong hover:opacity-90 transition-opacity ${isCompiling ? 'opacity-80' : ''}`}
+          title="Compile (⌘B)"
+          disabled={isCompiling}
+        >
+          {isCompiling ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : compileStatus === 'success' ? (
+            <Check size={14} />
+          ) : compileStatus === 'error' ? (
+            <X size={14} />
+          ) : (
+            <Play size={14} />
+          )}
+          <span>Compile</span>
+        </button>
+      )}
 
       {/* Sync */}
       <button

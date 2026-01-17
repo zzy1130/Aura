@@ -4,7 +4,7 @@
 
 Aura is a **local-first macOS desktop LaTeX IDE** with an embedded AI agent. Think "Overleaf + Claude Code" as a native app.
 
-**Current Status**: Phase 8 complete (Writing Intelligence).
+**Current Status**: Phase 9 complete (Markdown Preview).
 
 ## Architecture Summary
 
@@ -222,6 +222,7 @@ Research subagent:
 | 6 | ✅ | Project memory system |
 | 7 | ✅ | Vibe Research Engine (see `docs/plans/2026-01-13-vibe-research-implementation.md`) |
 | 8 | ✅ | Writing Intelligence (tools, subagent, API) |
+| 9 | ✅ | Markdown Preview (live preview with Streamdown) |
 
 ## Phase 7: Vibe Research (Complete)
 
@@ -258,6 +259,28 @@ New services:
 New API endpoints:
 - `POST /api/analyze-structure` - Parse document structure
 - `POST /api/clean-bibliography` - Find unused bibliography entries
+
+## Phase 9: Markdown Preview (Complete)
+
+Live Markdown preview using Vercel's Streamdown library. When a `.md` file is open, the preview panel shows rendered Markdown instead of PDF.
+
+Key features:
+- **Live preview**: 300ms debounced updates as you type
+- **Code highlighting**: Shiki syntax highlighting
+- **Math rendering**: KaTeX for LaTeX math ($...$ and $$...$$)
+- **Mermaid diagrams**: Interactive diagram rendering
+- **Light theme**: White background paper-style preview
+
+New components:
+- `app/components/MarkdownPreview.tsx` - Streamdown wrapper with zoom controls
+
+Modified components:
+- `app/app/page.tsx` - Conditional rendering (PDF vs Markdown preview)
+- `app/components/Toolbar.tsx` - Hide Compile button for .md files
+- `app/app/globals.css` - Markdown preview typography styles
+
+New dependencies:
+- `streamdown` - Vercel's streaming Markdown renderer
 
 ## Git Workflow
 

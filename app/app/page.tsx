@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Toolbar from '@/components/Toolbar';
 import FileTree from '@/components/FileTree';
 import Editor, { PendingEdit, SendToAgentAction } from '@/components/Editor';
 import PDFViewer from '@/components/PDFViewer';
+import MarkdownPreview from '@/components/MarkdownPreview';
 import AgentPanel from '@/components/AgentPanel';
 import NewProjectModal from '@/components/NewProjectModal';
 import SettingsModal from '@/components/SettingsModal';
@@ -98,6 +99,25 @@ export default function Home() {
   const MIN_PDF_VIEWER = 300;
   const MIN_AGENT_PANEL = 280;
   const MAX_AGENT_PANEL = 600;
+
+  // File type detection
+  const isMarkdownFile = useMemo(() => {
+    return project.currentFile?.endsWith('.md') ?? false;
+  }, [project.currentFile]);
+
+  // Debounced content for Markdown preview (300ms)
+  const [debouncedMarkdownContent, setDebouncedMarkdownContent] = useState<string>('');
+
+  useEffect(() => {
+    if (!isMarkdownFile) {
+      setDebouncedMarkdownContent('');
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedMarkdownContent(editorContent);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [editorContent, isMarkdownFile]);
 
   // Initialize API client on mount
   useEffect(() => {
@@ -775,6 +795,7 @@ export default function Home() {
         compileStatus={compileStatus}
         isSyncing={isSyncing}
         syncStatus={syncStatus}
+        showCompile={!isMarkdownFile}
         onOpenProject={handleOpenProject}
         onNewProject={handleNewProject}
         onSave={handleSave}
@@ -835,18 +856,22 @@ export default function Home() {
           />
         </div>
 
-        {/* Resize Handle: Editor | PDF Viewer */}
+        {/* Resize Handle: Editor | Preview Panel */}
         <ResizeHandle onResize={handlePdfViewerResize} />
 
-        {/* PDF Viewer */}
+        {/* Preview Panel (PDF or Markdown) */}
         <div
           style={{ width: pdfViewerWidth }}
           className="flex-shrink-0 overflow-hidden"
         >
-          <PDFViewer
-            pdfUrl={pdfUrl}
-            isCompiling={isCompiling}
-          />
+          {isMarkdownFile ? (
+            <MarkdownPreview content={debouncedMarkdownContent} />
+          ) : (
+            <PDFViewer
+              pdfUrl={pdfUrl}
+              isCompiling={isCompiling}
+            />
+          )}
         </div>
 
         {/* Resize Handle: PDF Viewer | Agent Panel (only if open) */}
