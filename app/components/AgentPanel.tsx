@@ -19,6 +19,7 @@ import {
   Microscope,
   Plus,
   X,
+  Check,
   FileCode,
   Trash2,
 } from 'lucide-react';
@@ -56,6 +57,7 @@ interface ToolCall {
   args: Record<string, unknown>;
   result?: string;
   status: 'pending' | 'running' | 'success' | 'error' | 'waiting_approval';
+  request_id?: string;  // HITL approval request ID
 }
 
 interface MessagePart {
@@ -77,7 +79,15 @@ interface Message {
 }
 
 // Tool call display component
-function ToolCallDisplay({ toolCall }: { toolCall: ToolCall }) {
+function ToolCallDisplay({
+  toolCall,
+  onApprove,
+  onReject,
+}: {
+  toolCall: ToolCall;
+  onApprove?: (requestId: string) => void;
+  onReject?: (requestId: string) => void;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const statusIcon = {
@@ -95,6 +105,8 @@ function ToolCallDisplay({ toolCall }: { toolCall: ToolCall }) {
     success: '',
     error: '',
   }[toolCall.status];
+
+  const isNewFile = toolCall.name === 'write_file' && toolCall.status === 'waiting_approval';
 
   return (
     <div className="bg-fill-secondary rounded-yw-lg p-2.5 my-2 border border-black/6">
@@ -121,8 +133,7 @@ function ToolCallDisplay({ toolCall }: { toolCall: ToolCall }) {
           <div>
             <div className="typo-ex-small text-tertiary mb-1">Arguments</div>
             <pre className="bg-white p-2.5 rounded-yw-md text-xs overflow-x-auto border border-black/6 font-mono">
-              {JSON.stringify(toolCall.args, null, 2)}
-            </pre>
+              {JSON.stringify(toolCall.args, null, 2)}</pre>
           </div>
 
           {toolCall.result && (
@@ -133,6 +144,26 @@ function ToolCallDisplay({ toolCall }: { toolCall: ToolCall }) {
               </pre>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Approval buttons for new file creation */}
+      {isNewFile && toolCall.request_id && onApprove && onReject && (
+        <div className="mt-3 flex items-center gap-2 pt-2 border-t border-black/6">
+          <button
+            onClick={(e) => { e.stopPropagation(); onReject(toolCall.request_id!); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 typo-small-strong bg-error/10 text-error rounded-yw-lg hover:bg-error/20 transition-colors"
+          >
+            <X size={12} />
+            Reject
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onApprove(toolCall.request_id!); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 typo-small-strong bg-success/10 text-success rounded-yw-lg hover:bg-success/20 transition-colors"
+          >
+            <Check size={12} />
+            Accept
+          </button>
         </div>
       )}
     </div>
@@ -151,7 +182,15 @@ function TextPartDisplay({ content }: { content: string }) {
 }
 
 // Message display component
-function MessageDisplay({ message }: { message: Message }) {
+function MessageDisplay({
+  message,
+  onApprove,
+  onReject,
+}: {
+  message: Message;
+  onApprove?: (requestId: string) => void;
+  onReject?: (requestId: string) => void;
+}) {
   const isUser = message.role === 'user';
 
   return (
@@ -194,7 +233,12 @@ function MessageDisplay({ message }: { message: Message }) {
                     tasks={part.taskList.tasks}
                   />
                 ) : part.toolCall ? (
-                  <ToolCallDisplay key={index} toolCall={part.toolCall} />
+                  <ToolCallDisplay
+                    key={index}
+                    toolCall={part.toolCall}
+                    onApprove={onApprove}
+                    onReject={onReject}
+                  />
                 ) : null
               ))}
             </div>
@@ -420,6 +464,67 @@ export default function AgentPanel({
       console.error('Failed to delete chat session:', e);
     }
   }, [projectPath, selectedChatSession, loadChatSessions]);
+
+  // HITL approval handlers for new file creation
+  const handleApproveToolCall = useCallback(async (requestId: string) => {
+    try {
+      let backendUrl = 'http://127.0.0.1:8001';
+      if (typeof window !== 'undefined' && window.aura) {
+        backendUrl = await window.aura.getBackendUrl();
+      }
+
+      await fetch(`${backendUrl}/api/hitl/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: requestId }),
+      });
+
+      // Update the tool call status to success
+      setMessages(prev => prev.map(msg => ({
+        ...msg,
+        parts: msg.parts.map(part => {
+          if (part.toolCall && part.toolCall.request_id === requestId) {
+            return { ...part, toolCall: { ...part.toolCall, status: 'success' as const } };
+          }
+          return part;
+        }),
+      })));
+
+      onApprovalResolved?.();
+    } catch (error) {
+      console.error('Failed to approve:', error);
+    }
+  }, [onApprovalResolved]);
+
+  const handleRejectToolCall = useCallback(async (requestId: string) => {
+    try {
+      let backendUrl = 'http://127.0.0.1:8001';
+      if (typeof window !== 'undefined' && window.aura) {
+        backendUrl = await window.aura.getBackendUrl();
+      }
+
+      await fetch(`${backendUrl}/api/hitl/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: requestId }),
+      });
+
+      // Update the tool call status to error
+      setMessages(prev => prev.map(msg => ({
+        ...msg,
+        parts: msg.parts.map(part => {
+          if (part.toolCall && part.toolCall.request_id === requestId) {
+            return { ...part, toolCall: { ...part.toolCall, status: 'error' as const, result: 'Rejected by user' } };
+          }
+          return part;
+        }),
+      })));
+
+      onApprovalResolved?.();
+    } catch (error) {
+      console.error('Failed to reject:', error);
+    }
+  }, [onApprovalResolved]);
 
   const startNewResearch = async () => {
     if (!projectPath || !newResearchTopic.trim()) return;
@@ -678,7 +783,11 @@ export default function AgentPanel({
                           part.toolCall.status === 'running') {
                         parts[i] = {
                           ...part,
-                          toolCall: { ...part.toolCall, status: 'waiting_approval' },
+                          toolCall: {
+                            ...part.toolCall,
+                            status: 'waiting_approval',
+                            request_id: data.request_id,
+                          },
                         };
                         break;
                       }
@@ -1170,7 +1279,12 @@ export default function AgentPanel({
         ) : (
           <>
             {messages.map((msg) => (
-              <MessageDisplay key={msg.id} message={msg} />
+              <MessageDisplay
+                key={msg.id}
+                message={msg}
+                onApprove={handleApproveToolCall}
+                onReject={handleRejectToolCall}
+              />
             ))}
             {/* Pending message box */}
             {pendingMessage && (
