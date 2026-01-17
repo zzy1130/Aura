@@ -97,6 +97,7 @@ export default function Home() {
   const MIN_FILE_TREE = 150;
   const MAX_FILE_TREE = 400;
   const MIN_PDF_VIEWER = 300;
+  const MAX_PDF_VIEWER = 800;
   const MIN_AGENT_PANEL = 280;
   const MAX_AGENT_PANEL = 600;
 
@@ -766,7 +767,7 @@ export default function Home() {
   }, []);
 
   const handlePdfViewerResize = useCallback((delta: number) => {
-    setPdfViewerWidth((prev) => Math.max(MIN_PDF_VIEWER, prev - delta));
+    setPdfViewerWidth((prev) => Math.max(MIN_PDF_VIEWER, Math.min(MAX_PDF_VIEWER, prev - delta)));
   }, []);
 
   const handleAgentPanelResize = useCallback((delta: number) => {
