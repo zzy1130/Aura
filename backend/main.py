@@ -130,11 +130,19 @@ class FileListRequest(BaseModel):
     project_path: str
 
 
+class ProviderConfig(BaseModel):
+    """Provider configuration for model selection."""
+    name: str = "colorist"  # "colorist" or "dashscope"
+    model: Optional[str] = None  # Model ID for dashscope (e.g., "deepseek-v3.2")
+    api_key: Optional[str] = None  # API key for dashscope
+
+
 class ChatRequest(BaseModel):
     message: str
     project_path: str
     history: Optional[list] = None
     session_id: Optional[str] = None  # Optional session ID for persistence
+    provider: Optional[ProviderConfig] = None  # Optional provider config
 
 
 # ============ Memory Models ============
@@ -502,6 +510,15 @@ async def chat_stream(request: ChatRequest):
     # Use session_id from request, or fall back to "default"
     session_id = request.session_id or "default"
 
+    # Extract provider config
+    provider_config = None
+    if request.provider:
+        provider_config = {
+            "name": request.provider.name,
+            "model": request.provider.model,
+            "api_key": request.provider.api_key,
+        }
+
     async def event_generator():
         try:
             async for sse_data in stream_agent_sse(
@@ -509,6 +526,7 @@ async def chat_stream(request: ChatRequest):
                 project_path=request.project_path,
                 message_history=request.history,
                 session_id=session_id,
+                provider_config=provider_config,
             ):
                 # SSE data is already formatted as "data: {...}\n\n"
                 # Parse it to get event type and content
@@ -1105,6 +1123,18 @@ async def get_available_subagents() -> list[dict]:
     from agent.subagents import list_subagents
 
     return list_subagents()
+
+
+@app.get("/api/providers/dashscope/models")
+async def get_dashscope_models() -> list[dict]:
+    """
+    List available models for DashScope provider.
+
+    Returns a list of model IDs and display names.
+    """
+    from agent.providers.dashscope import list_dashscope_models
+
+    return list_dashscope_models()
 
 
 @app.post("/api/subagents/run")

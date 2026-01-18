@@ -689,6 +689,7 @@ async def stream_agent_response(
     enable_steering: bool = False,
     enable_planning: bool = True,
     session_id: str | None = None,
+    provider_config: dict | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """
     Stream agent response as events.
@@ -705,6 +706,10 @@ async def stream_agent_response(
         enable_hitl: Whether to enable human-in-the-loop approval (default: True)
         enable_steering: Whether to check for steering messages (default: False)
         session_id: Session ID for steering isolation (optional)
+        provider_config: Optional provider configuration dict with keys:
+            - name: "colorist" or "dashscope"
+            - model: Model ID for dashscope (e.g., "deepseek-v3.2")
+            - api_key: API key for dashscope
 
     Yields:
         StreamEvent objects (TextDeltaEvent, ToolCallEvent, ToolResultEvent, DoneEvent, ErrorEvent, CompressionEvent, ApprovalRequiredEvent, SteeringEvent)
@@ -853,14 +858,20 @@ async def stream_agent_response(
                 on_plan_completed=on_plan_completed,
             )
 
+    # Extract provider name for prompt adjustments
+    provider_name = "colorist"
+    if provider_config and provider_config.get("name"):
+        provider_name = provider_config.get("name")
+
     deps = AuraDeps(
         project_path=project_path,
         project_name=project_name,
         hitl_manager=hitl_manager,
         plan_manager=plan_manager,
         session_id=session_id or "default",
+        provider_name=provider_name,
     )
-    logger.info(f"Created AuraDeps with hitl_manager={deps.hitl_manager}")
+    logger.info(f"Created AuraDeps with hitl_manager={deps.hitl_manager}, provider={provider_name}")
 
     # Use session-based history instead of frontend history
     # This preserves the full PydanticAI message structure including tool calls
@@ -893,16 +904,36 @@ async def stream_agent_response(
             logger.warning(f"Compression failed, using original history: {e}")
             # Continue with original history on compression failure
 
+    # Resolve model based on provider config
+    model_override = None
+    if provider_config and provider_config.get("name") == "dashscope":
+        from agent.providers.colorist import get_model
+        try:
+            model_override = get_model(
+                provider=provider_config.get("name", "colorist"),
+                model_id=provider_config.get("model"),
+                api_key=provider_config.get("api_key"),
+            )
+            logger.info(f"Using DashScope model: {provider_config.get('model')}")
+        except Exception as e:
+            logger.error(f"Failed to get model from provider config: {e}")
+            yield ErrorEvent(message=f"Provider error: {e}")
+            return
+
     try:
         if enable_hitl and event_queue:
             # HITL mode: Run agent with event queue for approval events
             async for event in _stream_with_hitl(
-                effective_message, deps, processed_history, event_queue, effective_session_id
+                effective_message, deps, processed_history, event_queue, effective_session_id,
+                model_override=model_override,
             ):
                 yield event
         else:
             # Standard mode: Direct streaming
-            async for event in _stream_standard(effective_message, deps, processed_history, effective_session_id):
+            async for event in _stream_standard(
+                effective_message, deps, processed_history, effective_session_id,
+                model_override=model_override,
+            ):
                 yield event
 
     except Exception as e:
@@ -915,12 +946,18 @@ async def _stream_standard(
     deps: AuraDeps,
     message_history: list,
     session_id: str,
+    model_override=None,
 ) -> AsyncIterator[StreamEvent]:
     """Standard streaming without HITL."""
     # Track pending tool calls to emit results after they complete
     pending_tool_calls: list[tuple[str, str]] = []  # (tool_name, tool_call_id)
 
-    async with aura_agent.iter(message, deps=deps, message_history=message_history) as run:
+    # Use model override if provided, otherwise use default
+    iter_kwargs = {"deps": deps, "message_history": message_history}
+    if model_override:
+        iter_kwargs["model"] = model_override
+
+    async with aura_agent.iter(message, **iter_kwargs) as run:
         async for node in run:
             # If we have pending tool calls and we're now at a new model request,
             # that means the tools have completed. We'll emit generic success for them.
@@ -993,6 +1030,7 @@ async def _stream_with_hitl(
     message_history: list,
     event_queue: asyncio.Queue,
     session_id: str,
+    model_override=None,
 ) -> AsyncIterator[StreamEvent]:
     """
     Streaming with HITL support.
@@ -1006,6 +1044,11 @@ async def _stream_with_hitl(
     done_event = asyncio.Event()
     agent_error = None
 
+    # Prepare iter kwargs with optional model override
+    iter_kwargs = {"deps": deps, "message_history": message_history}
+    if model_override:
+        iter_kwargs["model"] = model_override
+
     async def run_agent_task():
         """Run agent and push events to queue."""
         nonlocal agent_error
@@ -1013,7 +1056,7 @@ async def _stream_with_hitl(
         pending_tool_calls: list[tuple[str, str]] = []  # (tool_name, tool_call_id)
 
         try:
-            async with aura_agent.iter(message, deps=deps, message_history=message_history) as run:
+            async with aura_agent.iter(message, **iter_kwargs) as run:
                 async for node in run:
                     # If we have pending tool calls and we're now at a new model request,
                     # that means the tools have completed
@@ -1121,6 +1164,7 @@ async def stream_agent_sse(
     enable_hitl: bool = True,  # Enabled by default for file safety
     enable_steering: bool = False,
     session_id: str | None = None,
+    provider_config: dict | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream agent response as SSE-formatted strings.
@@ -1135,6 +1179,10 @@ async def stream_agent_sse(
         enable_hitl: Whether to enable HITL approval (default: True)
         enable_steering: Whether to enable steering messages (default: False)
         session_id: Session ID for steering isolation (optional)
+        provider_config: Optional provider configuration dict with keys:
+            - name: "colorist" or "dashscope"
+            - model: Model ID for dashscope (e.g., "deepseek-v3.2")
+            - api_key: API key for dashscope
 
     Yields:
         SSE-formatted strings ready for StreamingResponse
@@ -1155,6 +1203,7 @@ async def stream_agent_sse(
         enable_hitl=enable_hitl,
         enable_steering=enable_steering,
         session_id=session_id,
+        provider_config=provider_config,
     ):
         yield event.to_sse()
 

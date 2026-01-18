@@ -50,6 +50,9 @@ class AuraDeps:
     plan_manager: Optional["PlanManager"] = None
     session_id: str = "default"
 
+    # Provider info (for prompt adjustments)
+    provider_name: str = "colorist"
+
     def __post_init__(self):
         if not self.project_name and self.project_path:
             self.project_name = Path(self.project_path).name
