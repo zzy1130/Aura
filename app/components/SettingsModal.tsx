@@ -1,14 +1,23 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { X, Link, Eye, EyeOff, Loader2, Check, AlertCircle } from 'lucide-react';
+import { X, Link, Eye, EyeOff, Loader2, Check, AlertCircle, Cpu } from 'lucide-react';
 import { api, SyncStatus } from '@/lib/api';
+import {
+  ProviderSettings,
+  ProviderName,
+  DASHSCOPE_MODELS,
+  DEFAULT_DASHSCOPE_MODEL,
+  getProviderSettings,
+  saveProviderSettings,
+} from '@/lib/providerSettings';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   projectPath: string | null;
   onSyncSetup?: () => void;
+  onProviderChange?: (settings: ProviderSettings) => void;
 }
 
 export default function SettingsModal({
@@ -16,7 +25,14 @@ export default function SettingsModal({
   onClose,
   projectPath,
   onSyncSetup,
+  onProviderChange,
 }: SettingsModalProps) {
+  // Provider settings
+  const [providerSettings, setProviderSettings] = useState<ProviderSettings>({ provider: 'colorist' });
+  const [dashscopeApiKey, setDashscopeApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_DASHSCOPE_MODEL);
+
   // Overleaf settings
   const [overleafUrl, setOverleafUrl] = useState('');
   const [token, setToken] = useState('');
@@ -29,10 +45,18 @@ export default function SettingsModal({
   const [success, setSuccess] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
-  // Load current sync status on mount
+  // Load settings on mount
   useEffect(() => {
-    if (isOpen && projectPath) {
-      loadSyncStatus();
+    if (isOpen) {
+      const settings = getProviderSettings();
+      setProviderSettings(settings);
+      if (settings.dashscope) {
+        setDashscopeApiKey(settings.dashscope.apiKey || '');
+        setSelectedModel(settings.dashscope.selectedModel || DEFAULT_DASHSCOPE_MODEL);
+      }
+      if (projectPath) {
+        loadSyncStatus();
+      }
     }
   }, [isOpen, projectPath]);
 
@@ -125,6 +149,54 @@ export default function SettingsModal({
     }
   }, [projectPath]);
 
+  // Provider change handlers
+  const handleProviderChange = useCallback((provider: ProviderName) => {
+    const newSettings: ProviderSettings = {
+      ...providerSettings,
+      provider,
+    };
+
+    // Initialize dashscope settings if switching to dashscope
+    if (provider === 'dashscope' && !newSettings.dashscope) {
+      newSettings.dashscope = {
+        apiKey: dashscopeApiKey,
+        selectedModel: selectedModel,
+      };
+    }
+
+    setProviderSettings(newSettings);
+    saveProviderSettings(newSettings);
+    onProviderChange?.(newSettings);
+  }, [providerSettings, dashscopeApiKey, selectedModel, onProviderChange]);
+
+  const handleApiKeyChange = useCallback((apiKey: string) => {
+    setDashscopeApiKey(apiKey);
+    const newSettings: ProviderSettings = {
+      ...providerSettings,
+      dashscope: {
+        apiKey,
+        selectedModel,
+      },
+    };
+    setProviderSettings(newSettings);
+    saveProviderSettings(newSettings);
+    onProviderChange?.(newSettings);
+  }, [providerSettings, selectedModel, onProviderChange]);
+
+  const handleModelChange = useCallback((modelId: string) => {
+    setSelectedModel(modelId);
+    const newSettings: ProviderSettings = {
+      ...providerSettings,
+      dashscope: {
+        apiKey: dashscopeApiKey,
+        selectedModel: modelId,
+      },
+    };
+    setProviderSettings(newSettings);
+    saveProviderSettings(newSettings);
+    onProviderChange?.(newSettings);
+  }, [providerSettings, dashscopeApiKey, onProviderChange]);
+
   if (!isOpen) return null;
 
   console.log('[SettingsModal] Rendering with projectPath:', projectPath);
@@ -151,7 +223,113 @@ export default function SettingsModal({
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+          {/* Model Provider Section */}
+          <div>
+            <h3 className="typo-body-strong mb-3 flex items-center gap-2">
+              <Cpu size={16} className="text-green2" />
+              Model Provider
+            </h3>
+
+            <div className="space-y-3">
+              {/* Colorist Option */}
+              <label
+                className={`flex items-center gap-3 p-3 rounded-yw-lg border cursor-pointer transition-colors ${
+                  providerSettings.provider === 'colorist'
+                    ? 'border-green2 bg-green2/5'
+                    : 'border-black/10 hover:bg-black/3'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="provider"
+                  value="colorist"
+                  checked={providerSettings.provider === 'colorist'}
+                  onChange={() => handleProviderChange('colorist')}
+                  className="accent-green2"
+                />
+                <div>
+                  <div className="typo-small-strong">Colorist</div>
+                  <div className="typo-ex-small text-tertiary">Default gateway (no setup needed)</div>
+                </div>
+              </label>
+
+              {/* DashScope Option */}
+              <label
+                className={`flex items-center gap-3 p-3 rounded-yw-lg border cursor-pointer transition-colors ${
+                  providerSettings.provider === 'dashscope'
+                    ? 'border-green2 bg-green2/5'
+                    : 'border-black/10 hover:bg-black/3'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="provider"
+                  value="dashscope"
+                  checked={providerSettings.provider === 'dashscope'}
+                  onChange={() => handleProviderChange('dashscope')}
+                  className="accent-green2"
+                />
+                <div>
+                  <div className="typo-small-strong">DashScope (阿里云百炼)</div>
+                  <div className="typo-ex-small text-tertiary">Chinese models: DeepSeek, Qwen, Kimi, GLM</div>
+                </div>
+              </label>
+
+              {/* DashScope Settings (only shown when selected) */}
+              {providerSettings.provider === 'dashscope' && (
+                <div className="ml-6 space-y-3 pt-2">
+                  {/* API Key */}
+                  <div>
+                    <label className="typo-small text-secondary block mb-1.5">
+                      DashScope API Key
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showApiKey ? 'text' : 'password'}
+                        value={dashscopeApiKey}
+                        onChange={(e) => handleApiKeyChange(e.target.value)}
+                        placeholder="sk-xxxxxxxxxxxxx"
+                        className="input-field w-full pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary hover:text-secondary"
+                      >
+                        {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                    <p className="typo-ex-small text-tertiary mt-1">
+                      Get your key at <a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener noreferrer" className="text-green2 hover:underline">bailian.console.aliyun.com</a>
+                    </p>
+                  </div>
+
+                  {/* Model Selection */}
+                  <div>
+                    <label className="typo-small text-secondary block mb-1.5">
+                      Default Model
+                    </label>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => handleModelChange(e.target.value)}
+                      className="input-field w-full"
+                    >
+                      {DASHSCOPE_MODELS.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-black/6" />
+
           {/* Overleaf Sync Section */}
           <div>
             <h3 className="typo-body-strong mb-3 flex items-center gap-2">

@@ -37,6 +37,14 @@ import {
   findCommand,
   SlashCommand,
 } from '../lib/commands';
+import {
+  ProviderSettings,
+  DASHSCOPE_MODELS,
+  getProviderSettings,
+  saveProviderSettings,
+  getProviderConfigForRequest,
+} from '../lib/providerSettings';
+import ModelSelector from './ModelSelector';
 
 // Mode types
 type AgentMode = 'chat' | 'vibe';
@@ -287,6 +295,9 @@ export default function AgentPanel({
   const [vibeSessions, setVibeSessions] = useState<VibeSessionSummary[]>([]);
   const [selectedVibeSession, setSelectedVibeSession] = useState<string | null>(null);
 
+  // Provider settings state
+  const [providerSettings, setProviderSettings] = useState<ProviderSettings>({ provider: 'colorist' });
+
   // Chat session state
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [selectedChatSession, setSelectedChatSession] = useState<string | null>(null);
@@ -348,6 +359,52 @@ export default function AgentPanel({
       loadVibeSessions();
     }
   }, [mode, projectPath, loadVibeSessions]);
+
+  // Load provider settings on mount
+  useEffect(() => {
+    setProviderSettings(getProviderSettings());
+  }, []);
+
+  // Listen for storage changes (when SettingsModal updates provider settings)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'aura_provider_settings') {
+        setProviderSettings(getProviderSettings());
+      }
+    };
+
+    // Also listen for custom event (for same-tab updates)
+    const handleProviderChange = () => {
+      setProviderSettings(getProviderSettings());
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('aura-provider-changed', handleProviderChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('aura-provider-changed', handleProviderChange);
+    };
+  }, []);
+
+  // Handle provider settings change (called from SettingsModal)
+  const handleProviderSettingsChange = useCallback((settings: ProviderSettings) => {
+    setProviderSettings(settings);
+  }, []);
+
+  // Handle model change from ModelSelector
+  const handleModelSelectorChange = useCallback((modelId: string) => {
+    const newSettings: ProviderSettings = {
+      ...providerSettings,
+      dashscope: {
+        ...providerSettings.dashscope,
+        apiKey: providerSettings.dashscope?.apiKey || '',
+        selectedModel: modelId,
+      },
+    };
+    setProviderSettings(newSettings);
+    saveProviderSettings(newSettings);
+  }, [providerSettings]);
 
   // Load chat sessions
   const loadChatSessions = useCallback(async (autoSelect: boolean = false) => {
@@ -637,6 +694,7 @@ export default function AgentPanel({
               .map((p) => p.content)
               .join('\n'),
           })),
+          provider: getProviderConfigForRequest(providerSettings),
         }),
         signal: abortControllerRef.current?.signal,
       });
@@ -1192,7 +1250,7 @@ export default function AgentPanel({
   return (
     <div className="h-full flex flex-col bg-fill-secondary">
       {/* Header with Mode Toggle */}
-      <div className="panel-header bg-white overflow-hidden">
+      <div className="panel-header bg-white overflow-visible">
         <div className="flex items-center gap-2 w-full min-w-0">
           {/* Mode toggle buttons */}
           <div className="flex items-center bg-fill-secondary rounded-yw-lg p-0.5 min-w-0">
@@ -1221,6 +1279,18 @@ export default function AgentPanel({
               <span className="hidden sm:inline">Vibe</span>
             </button>
           </div>
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Model selector - only when DashScope is active */}
+          {providerSettings.provider === 'dashscope' && providerSettings.dashscope?.selectedModel && (
+            <ModelSelector
+              models={DASHSCOPE_MODELS}
+              selectedModel={providerSettings.dashscope.selectedModel}
+              onSelect={handleModelSelectorChange}
+            />
+          )}
         </div>
       </div>
 
