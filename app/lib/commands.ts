@@ -101,21 +101,21 @@ export const commands: SlashCommand[] = [
     requiresArg: true,
     argPlaceholder: 'selected text',
     executionType: 'agent',
-    toAgentMessage: (arg) => `You are a text polishing assistant. Your ONLY job is to improve the text I provide.
+    toAgentMessage: (arg) => `Polish and improve the following text, then use edit_file to replace it in the document.
 
-CRITICAL RULES:
-1. DO NOT use any tools (no read_file, no edit_file, no search, nothing)
-2. DO NOT access the document or project
-3. DO NOT modify any files
-4. ONLY output the polished version of the text below
-5. The user will manually copy your response
+INSTRUCTIONS:
+1. First, identify which file contains this text (likely main.tex or the currently open file)
+2. Use search_in_file to find the exact location of this text
+3. Polish the text (improve clarity, grammar, academic tone)
+4. Use edit_file to replace the original text with the polished version
+5. The edit_file tool will trigger approval - the user will review before applying
 
 Text to polish:
 ---
 ${arg}
 ---
 
-Respond with ONLY the improved text. No explanations, no tool calls, just the polished text.`,
+Remember: You MUST use edit_file to apply the changes. Do NOT just output the polished text.`,
   },
   {
     name: 'analyze',

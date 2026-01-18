@@ -136,6 +136,33 @@ When making changes:
 Keep responses focused and actionable. Avoid unnecessary verbosity."""
 
 
+# Additional instructions for non-Claude models (DashScope, etc.)
+DASHSCOPE_TOOL_INSTRUCTIONS = """
+
+## EXTREMELY IMPORTANT - Tool Usage Requirements
+
+You are running on a model that MUST explicitly use tools to perform actions. This is NON-NEGOTIABLE.
+
+**When asked to edit, rewrite, polish, or modify text:**
+1. You MUST call the `edit_file` tool with the exact old_string and new_string
+2. Do NOT just write the improved text in your response
+3. Do NOT say "here is the polished version" without calling edit_file
+4. The user expects the file to be modified, not just a text response
+
+**When asked to read or analyze a file:**
+1. You MUST call `read_file` or `search_in_file` first
+2. Do NOT imagine or guess file contents
+3. Do NOT provide analysis without reading the actual file
+
+**FAILURE MODE TO AVOID:**
+- User: "Polish this paragraph: [text]"
+- WRONG: Responding with polished text without calling edit_file
+- RIGHT: Call search_in_file to find the text, then call edit_file to replace it
+
+**Every edit request = edit_file tool call. No exceptions.**
+"""
+
+
 def get_system_prompt(ctx: "RunContext[AuraDeps]") -> str:
     """
     Dynamic system prompt for PydanticAI Agent.
@@ -155,6 +182,10 @@ def get_system_prompt(ctx: "RunContext[AuraDeps]") -> str:
         project_name=ctx.deps.project_name,
         project_path=ctx.deps.project_path,
     )
+
+    # Add extra tool-use instructions for non-Claude models (DashScope)
+    if ctx.deps.provider_name == "dashscope":
+        base_prompt += DASHSCOPE_TOOL_INSTRUCTIONS
 
     # Load and append project memory
     try:
