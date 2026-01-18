@@ -97,9 +97,7 @@ export default function Home() {
   const MIN_FILE_TREE = 150;
   const MAX_FILE_TREE = 400;
   const MIN_PDF_VIEWER = 300;
-  const MAX_PDF_VIEWER = 800;
   const MIN_AGENT_PANEL = 280;
-  const MAX_AGENT_PANEL = 600;
 
   // File type detection
   const isMarkdownFile = useMemo(() => {
@@ -762,17 +760,32 @@ export default function Home() {
   // Panel Resize Handlers
   // =============================================================================
 
+  // Minimum editor width
+  const MIN_EDITOR = 300;
+  // Resize handle width (approximate)
+  const RESIZE_HANDLE_WIDTH = 8;
+
   const handleFileTreeResize = useCallback((delta: number) => {
     setFileTreeWidth((prev) => Math.max(MIN_FILE_TREE, Math.min(MAX_FILE_TREE, prev + delta)));
   }, []);
 
   const handlePdfViewerResize = useCallback((delta: number) => {
-    setPdfViewerWidth((prev) => Math.max(MIN_PDF_VIEWER, Math.min(MAX_PDF_VIEWER, prev - delta)));
-  }, []);
+    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    // Calculate max PDF width: total - fileTree - minEditor - agentPanel - resize handles
+    const resizeHandlesWidth = RESIZE_HANDLE_WIDTH * (isAgentPanelOpen ? 3 : 2);
+    const maxPdfWidth = containerWidth - fileTreeWidth - MIN_EDITOR - (isAgentPanelOpen ? agentPanelWidth : 0) - resizeHandlesWidth;
+
+    setPdfViewerWidth((prev) => Math.max(MIN_PDF_VIEWER, Math.min(maxPdfWidth, prev - delta)));
+  }, [fileTreeWidth, agentPanelWidth, isAgentPanelOpen]);
 
   const handleAgentPanelResize = useCallback((delta: number) => {
-    setAgentPanelWidth((prev) => Math.max(MIN_AGENT_PANEL, Math.min(MAX_AGENT_PANEL, prev - delta)));
-  }, []);
+    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    // Calculate max agent panel width: total - fileTree - minEditor - pdfViewer - resize handles
+    const resizeHandlesWidth = RESIZE_HANDLE_WIDTH * 3;
+    const maxAgentWidth = containerWidth - fileTreeWidth - MIN_EDITOR - pdfViewerWidth - resizeHandlesWidth;
+
+    setAgentPanelWidth((prev) => Math.max(MIN_AGENT_PANEL, Math.min(maxAgentWidth, prev - delta)));
+  }, [fileTreeWidth, pdfViewerWidth]);
 
   const toggleAgentPanel = useCallback(() => {
     setIsAgentPanelOpen((prev) => !prev);

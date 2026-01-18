@@ -1192,33 +1192,33 @@ export default function AgentPanel({
   return (
     <div className="h-full flex flex-col bg-fill-secondary">
       {/* Header with Mode Toggle */}
-      <div className="panel-header bg-white">
-        <div className="flex items-center gap-2 w-full">
+      <div className="panel-header bg-white overflow-hidden">
+        <div className="flex items-center gap-2 w-full min-w-0">
           {/* Mode toggle buttons */}
-          <div className="flex items-center bg-fill-secondary rounded-yw-lg p-0.5">
+          <div className="flex items-center bg-fill-secondary rounded-yw-lg p-0.5 min-w-0">
             <button
               onClick={() => setMode('chat')}
               disabled={isStreaming}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-yw-md typo-small transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-yw-md typo-small transition-all whitespace-nowrap ${
                 mode === 'chat'
                   ? 'bg-white text-green1 shadow-sm'
                   : 'text-secondary hover:text-primary'
               } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <MessageSquare size={14} />
-              Chat
+              <MessageSquare size={14} className="flex-shrink-0" />
+              <span className="hidden sm:inline">Chat</span>
             </button>
             <button
               onClick={() => setMode('vibe')}
               disabled={isStreaming}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-yw-md typo-small transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-yw-md typo-small transition-all whitespace-nowrap ${
                 mode === 'vibe'
                   ? 'bg-white text-green1 shadow-sm'
                   : 'text-secondary hover:text-primary'
               } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <Microscope size={14} />
-              Vibe Research
+              <Microscope size={14} className="flex-shrink-0" />
+              <span className="hidden sm:inline">Vibe</span>
             </button>
           </div>
         </div>
@@ -1228,11 +1228,11 @@ export default function AgentPanel({
       {mode === 'chat' ? (
         <>
           {/* Chat Session Selector */}
-          <div className="p-3 border-b border-black/6 bg-white flex items-center gap-2">
+          <div className="p-3 border-b border-black/6 bg-white flex items-center gap-2 min-w-0">
             <select
               value={selectedChatSession || ''}
               onChange={(e) => handleChatSessionChange(e.target.value || null)}
-              className="flex-1 rounded-yw-md border border-black/12 bg-white px-3 py-2 typo-small focus:outline-none focus:ring-1 focus:ring-green2/20"
+              className="flex-1 min-w-0 rounded-yw-md border border-black/12 bg-white px-3 py-2 typo-small focus:outline-none focus:ring-1 focus:ring-green2/20 truncate"
               disabled={isLoadingChatSessions || isStreaming}
             >
               <option value="">Select a chat session...</option>
