@@ -136,3 +136,41 @@ def get_gemini_flash_model() -> Model:
     """Get Gemini 3 Flash model via Colorist (cheaper, higher rate limits, good for vibe research)."""
     # Colorist routes all models through the same Anthropic-style API
     return infer_model(f"anthropic:{GEMINI_FLASH_MODEL}")
+
+
+def get_model(
+    provider: str = "colorist",
+    model_id: str | None = None,
+    api_key: str | None = None,
+) -> Model:
+    """
+    Get a model based on provider selection.
+
+    This is the unified entry point for getting models from any supported provider.
+
+    Args:
+        provider: Provider name ("colorist" or "dashscope")
+        model_id: Model ID to use (required for dashscope, ignored for colorist)
+        api_key: API key (required for dashscope, ignored for colorist)
+
+    Returns:
+        Configured Model instance for use with PydanticAI Agent
+
+    Raises:
+        ValueError: If provider is unknown or required params are missing
+    """
+    if provider == "colorist":
+        return get_default_model()
+
+    elif provider == "dashscope":
+        if not api_key:
+            raise ValueError("DashScope provider requires an API key")
+
+        from agent.providers.dashscope import get_dashscope_model
+        return get_dashscope_model(api_key=api_key, model_id=model_id)
+
+    else:
+        raise ValueError(
+            f"Unknown provider: {provider}. "
+            f"Available providers: colorist, dashscope"
+        )
