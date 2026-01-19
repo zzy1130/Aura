@@ -18,7 +18,7 @@ interface PDFViewerProps {
   isCompiling: boolean;
   pdfFile?: string;  // Name of the PDF file (e.g., "main.pdf")
   projectPath?: string | null;  // Path to the project
-  onSyncTexClick?: (file: string, line: number) => void;  // Callback for PDF-to-source navigation
+  onSyncTexClick?: (file: string, line: number, column?: number) => void;  // Callback for PDF-to-source navigation
 }
 
 export default function PDFViewer({
@@ -153,7 +153,7 @@ export default function PDFViewer({
 
         const data = await response.json();
         if (data.success && data.file && data.line) {
-          onSyncTexClick(data.file, data.line);
+          onSyncTexClick(data.file, data.line, data.column);
         }
       } catch (error) {
         console.error('SyncTeX query failed:', error);

@@ -24,6 +24,7 @@ interface EditorProps {
   onRejectEdit?: (requestId: string) => void;
   onSendToAgent?: (text: string, action: SendToAgentAction) => void;
   scrollToLine?: number | null;  // Line to scroll to (from SyncTeX)
+  scrollToColumn?: number | null;  // Column to scroll to (from SyncTeX)
   onScrollComplete?: () => void;  // Called after scroll is done
 }
 
@@ -138,6 +139,7 @@ export default function Editor({
   onRejectEdit,
   onSendToAgent,
   scrollToLine,
+  scrollToColumn,
   onScrollComplete,
 }: EditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
@@ -155,21 +157,73 @@ export default function Editor({
 
   // Handle scrollToLine prop for SyncTeX navigation
   useEffect(() => {
-    if (scrollToLine && editorRef.current) {
+    if (scrollToLine && editorRef.current && monacoRef.current) {
       const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      const model = editor.getModel();
 
-      // Scroll to the line and center it
-      editor.revealLineInCenter(scrollToLine);
+      if (!model) return;
 
-      // Briefly highlight the line
+      // Get the line content
+      const lineContent = model.getLineContent(scrollToLine);
+      const lineLength = lineContent.length;
+
+      // Calculate the highlight range based on column
+      let startColumn = 1;
+      let endColumn = lineLength + 1;
+
+      if (scrollToColumn && scrollToColumn > 0 && lineLength > 0) {
+        // Find word boundaries around the column position
+        const col = Math.min(scrollToColumn, lineLength);
+
+        // Find word start (go backwards until whitespace or start)
+        let wordStart = col;
+        while (wordStart > 1 && !/\s/.test(lineContent[wordStart - 2])) {
+          wordStart--;
+        }
+
+        // Find word end (go forwards until whitespace or end)
+        let wordEnd = col;
+        while (wordEnd < lineLength && !/\s/.test(lineContent[wordEnd])) {
+          wordEnd++;
+        }
+
+        // If we found a valid word range, use it
+        if (wordEnd > wordStart) {
+          startColumn = wordStart;
+          endColumn = wordEnd + 1;
+        } else {
+          // Fallback: highlight a small region around the column
+          startColumn = Math.max(1, col - 5);
+          endColumn = Math.min(lineLength + 1, col + 15);
+        }
+      }
+
+      // Scroll to the position and center it
+      editor.revealPositionInCenter({
+        lineNumber: scrollToLine,
+        column: startColumn,
+      });
+
+      // Set cursor position at the highlighted location
+      editor.setPosition({
+        lineNumber: scrollToLine,
+        column: startColumn,
+      });
+
+      // Create decorations: highlight the specific word/region AND the line glyph
       const decorations = editor.deltaDecorations([], [
+        // Word/region highlight (inline, more visible)
         {
-          range: {
-            startLineNumber: scrollToLine,
-            startColumn: 1,
-            endLineNumber: scrollToLine,
-            endColumn: 1,
+          range: new monaco.Range(scrollToLine, startColumn, scrollToLine, endColumn),
+          options: {
+            className: 'synctex-highlight-word',
+            inlineClassName: 'synctex-highlight-word-inline',
           },
+        },
+        // Line glyph margin indicator
+        {
+          range: new monaco.Range(scrollToLine, 1, scrollToLine, 1),
           options: {
             isWholeLine: true,
             className: 'synctex-highlight-line',
@@ -181,12 +235,15 @@ export default function Editor({
       // Remove highlight after a short delay
       setTimeout(() => {
         editor.deltaDecorations(decorations, []);
-      }, 1500);
+      }, 2000);
+
+      // Focus the editor
+      editor.focus();
 
       // Notify parent that scroll is complete
       onScrollComplete?.();
     }
-  }, [scrollToLine, onScrollComplete]);
+  }, [scrollToLine, scrollToColumn, onScrollComplete]);
 
   // Function to calculate view zone height based on current editor width
   const calculateViewZoneHeight = useCallback((

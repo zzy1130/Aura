@@ -55,6 +55,7 @@ export default function Home() {
 
   // SyncTeX state (PDF to source navigation)
   const [syncTexLine, setSyncTexLine] = useState<number | null>(null);
+  const [syncTexColumn, setSyncTexColumn] = useState<number | null>(null);
 
   // Compilation state
   const [isCompiling, setIsCompiling] = useState(false);
@@ -392,8 +393,8 @@ export default function Home() {
   // SyncTeX Handler (PDF to source navigation)
   // =============================================================================
 
-  const handleSyncTexClick = useCallback(async (file: string, line: number) => {
-    console.log('[SyncTeX] Jump to:', file, 'line', line);
+  const handleSyncTexClick = useCallback(async (file: string, line: number, column?: number) => {
+    console.log('[SyncTeX] Jump to:', file, 'line', line, 'column', column);
 
     // If the file is different from current, switch to it first
     if (file !== project.currentFile) {
@@ -401,15 +402,18 @@ export default function Home() {
       // Small delay to let editor load, then scroll
       setTimeout(() => {
         setSyncTexLine(line);
+        setSyncTexColumn(column ?? null);
       }, 150);
     } else {
       setSyncTexLine(line);
+      setSyncTexColumn(column ?? null);
     }
   }, [project.currentFile, handleFileSelect]);
 
   const handleSyncTexScrollComplete = useCallback(() => {
-    // Clear the syncTexLine after scroll is complete
+    // Clear the syncTexLine and column after scroll is complete
     setSyncTexLine(null);
+    setSyncTexColumn(null);
   }, []);
 
   // =============================================================================
@@ -1019,6 +1023,7 @@ export default function Home() {
             onRejectEdit={handleRejectEdit}
             onSendToAgent={handleSendToAgent}
             scrollToLine={syncTexLine}
+            scrollToColumn={syncTexColumn}
             onScrollComplete={handleSyncTexScrollComplete}
           />
         </div>

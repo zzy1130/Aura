@@ -210,8 +210,21 @@ body {
 
 /* SyncTeX highlight (PDF to source navigation) */
 .monaco-editor .synctex-highlight-line {
-  background-color: rgba(255, 213, 0, 0.25) !important;
-  animation: synctex-pulse 1.5s ease-out;
+  background-color: rgba(255, 213, 0, 0.15) !important;
+  animation: synctex-pulse-line 2s ease-out;
+}
+
+.monaco-editor .synctex-highlight-word {
+  background-color: rgba(255, 180, 0, 0.5) !important;
+  border-radius: 3px;
+  animation: synctex-pulse-word 2s ease-out;
+}
+
+.monaco-editor .synctex-highlight-word-inline {
+  background-color: rgba(255, 180, 0, 0.6) !important;
+  border-bottom: 2px solid #ff9500;
+  padding: 1px 2px;
+  border-radius: 2px;
 }
 
 .monaco-editor .synctex-highlight-glyph {
@@ -221,12 +234,24 @@ body {
   border-radius: 2px;
 }
 
-@keyframes synctex-pulse {
+@keyframes synctex-pulse-line {
   0% {
-    background-color: rgba(255, 213, 0, 0.5);
+    background-color: rgba(255, 213, 0, 0.3);
   }
   100% {
     background-color: rgba(255, 213, 0, 0);
+  }
+}
+
+@keyframes synctex-pulse-word {
+  0% {
+    background-color: rgba(255, 180, 0, 0.8);
+  }
+  50% {
+    background-color: rgba(255, 180, 0, 0.5);
+  }
+  100% {
+    background-color: rgba(255, 180, 0, 0);
   }
 }
 
