@@ -85,6 +85,10 @@ class DockerLatex:
 
     def _init_docker(self) -> None:
         """Initialize Docker client and check availability."""
+        self._check_docker_status()
+
+    def _check_docker_status(self) -> None:
+        """Check Docker availability (can be called to refresh status)."""
         try:
             self.client = docker.from_env()
             self.client.ping()
@@ -179,10 +183,11 @@ class DockerLatex:
         commands = []
         for i in range(runs):
             # Use -output-directory to put PDF in same dir as source
+            # -synctex=1 generates .synctex.gz for PDF-to-source navigation
             if tex_dir != ".":
-                commands.append(f"pdflatex -interaction=nonstopmode -output-directory={tex_dir} {filename}")
+                commands.append(f"pdflatex -synctex=1 -interaction=nonstopmode -output-directory={tex_dir} {filename}")
             else:
-                commands.append(f"pdflatex -interaction=nonstopmode {filename}")
+                commands.append(f"pdflatex -synctex=1 -interaction=nonstopmode {filename}")
 
         # Check for bibliography
         bib_files = list(project_path.glob("**/*.bib"))
@@ -380,10 +385,18 @@ class DockerLatex:
     def is_available(self) -> bool:
         """Check if Docker is available and the image exists."""
         try:
+            # Re-check Docker status in case it was started after backend init
+            if not self.docker_available:
+                self._check_docker_status()
+
+            if not self.client:
+                return False
+
             self.client.ping()
             self.client.images.get(IMAGE_NAME)
+            self.docker_available = True
             return True
-        except:
+        except Exception:
             return False
 
 
