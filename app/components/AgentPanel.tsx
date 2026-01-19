@@ -387,11 +387,6 @@ export default function AgentPanel({
     };
   }, []);
 
-  // Handle provider settings change (called from SettingsModal)
-  const handleProviderSettingsChange = useCallback((settings: ProviderSettings) => {
-    setProviderSettings(settings);
-  }, []);
-
   // Handle model change from ModelSelector
   const handleModelSelectorChange = useCallback((modelId: string) => {
     const newSettings: ProviderSettings = {
@@ -445,24 +440,12 @@ export default function AgentPanel({
     setCurrentPlan(null);
   }, [projectPath]);
 
-  // Create a new chat session when entering a project in chat mode
+  // Load chat sessions when entering a project in chat mode
   useEffect(() => {
     if (mode === 'chat' && projectPath) {
-      // Create a new session by default when entering a project
-      const initNewSession = async () => {
-        try {
-          const session = await api.createChatSession(projectPath);
-          setSelectedChatSession(session.session_id);
-          setMessages([]);
-          // Load the full session list for the dropdown
-          await loadChatSessions(false);
-        } catch (e) {
-          console.error('Failed to create initial chat session:', e);
-          // Fall back to loading existing sessions
-          loadChatSessions(true);
-        }
-      };
-      initNewSession();
+      // Load existing sessions instead of creating a new one immediately
+      // A new session will be created when the user sends their first message
+      loadChatSessions(true);
     }
   }, [mode, projectPath, loadChatSessions]);
 
@@ -639,6 +622,21 @@ export default function AgentPanel({
     let content = messageContent || input.trim();
     if (!content || isStreaming || !projectPath) return;
 
+    // If no session is selected, create one first
+    let sessionId = selectedChatSession;
+    if (!sessionId) {
+      try {
+        const session = await api.createChatSession(projectPath);
+        sessionId = session.session_id;
+        setSelectedChatSession(sessionId);
+        // Refresh session list in background
+        loadChatSessions(false);
+      } catch (e) {
+        console.error('Failed to create chat session:', e);
+        return;
+      }
+    }
+
     // If there's quoted text/file, append it to the content
     if (quotedText) {
       if (quotedAction === 'file') {
@@ -686,7 +684,7 @@ export default function AgentPanel({
         body: JSON.stringify({
           message: content,
           project_path: projectPath,
-          session_id: selectedChatSession || undefined,
+          session_id: sessionId,
           history: messages.map((m) => ({
             role: m.role,
             content: m.parts
@@ -1006,7 +1004,7 @@ export default function AgentPanel({
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, quotedAction, onClearQuote, selectedChatSession]);
+  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, quotedAction, onClearQuote, selectedChatSession, providerSettings, loadChatSessions]);
 
   // Keep sendMessageRef in sync
   useEffect(() => {
