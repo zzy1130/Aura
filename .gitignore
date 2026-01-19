@@ -60,3 +60,4 @@ npm-debug.log*
 *.glg
 *.bcf
 *.run.xml
+backend/bin/
