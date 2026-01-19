@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Toolbar from '@/components/Toolbar';
 import FileTree from '@/components/FileTree';
-import Editor, { PendingEdit, SendToAgentAction } from '@/components/Editor';
+import Editor, { PendingEdit, SendToAgentContext } from '@/components/Editor';
 import PDFViewer from '@/components/PDFViewer';
 import MarkdownPreview from '@/components/MarkdownPreview';
 import AgentPanel from '@/components/AgentPanel';
@@ -97,8 +97,7 @@ export default function Home() {
   }>({ isOpen: false, path: '', name: '' });
 
   // Quoted text state (for sending selected text to agent)
-  const [quotedText, setQuotedText] = useState<string | null>(null);
-  const [quotedAction, setQuotedAction] = useState<SendToAgentAction | null>(null);
+  const [quotedContext, setQuotedContext] = useState<SendToAgentContext | null>(null);
 
   // Panel layout state
   const [fileTreeWidth, setFileTreeWidth] = useState(200);
@@ -682,9 +681,8 @@ export default function Home() {
   // Send to Agent Handler (from Editor context menu)
   // =============================================================================
 
-  const handleSendToAgent = useCallback((text: string, action: SendToAgentAction) => {
-    setQuotedText(text);
-    setQuotedAction(action);
+  const handleSendToAgent = useCallback((context: SendToAgentContext) => {
+    setQuotedContext(context);
     // Open agent panel if closed
     if (!isAgentPanelOpen) {
       setIsAgentPanelOpen(true);
@@ -692,8 +690,7 @@ export default function Home() {
   }, [isAgentPanelOpen]);
 
   const handleClearQuote = useCallback(() => {
-    setQuotedText(null);
-    setQuotedAction(null);
+    setQuotedContext(null);
   }, []);
 
   // =============================================================================
@@ -718,8 +715,13 @@ export default function Home() {
 
   const handleAddFileToChat = useCallback((relativePath: string) => {
     // Send the file content to the agent chat
-    setQuotedText(relativePath);
-    setQuotedAction('file');
+    setQuotedContext({
+      text: relativePath,
+      action: 'file',
+      filePath: null,
+      startLine: 0,
+      endLine: 0,
+    });
     if (!isAgentPanelOpen) {
       setIsAgentPanelOpen(true);
     }
@@ -1069,8 +1071,7 @@ export default function Home() {
             onApprovalRequest={handleApprovalRequest}
             onApprovalResolved={handleApprovalResolved}
             onOpenFile={handleFileSelect}
-            quotedText={quotedText}
-            quotedAction={quotedAction}
+            quotedContext={quotedContext}
             onClearQuote={handleClearQuote}
           />
         </div>

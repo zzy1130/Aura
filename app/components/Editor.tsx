@@ -14,6 +14,14 @@ export interface PendingEdit {
 
 export type SendToAgentAction = 'polish' | 'ask' | 'file';
 
+export interface SendToAgentContext {
+  text: string;
+  action: SendToAgentAction;
+  filePath: string | null;
+  startLine: number;
+  endLine: number;
+}
+
 interface EditorProps {
   content: string;
   filePath: string | null;
@@ -22,7 +30,7 @@ interface EditorProps {
   pendingEdit?: PendingEdit | null;
   onApproveEdit?: (requestId: string) => void;
   onRejectEdit?: (requestId: string) => void;
-  onSendToAgent?: (text: string, action: SendToAgentAction) => void;
+  onSendToAgent?: (context: SendToAgentContext) => void;
   scrollToLine?: number | null;  // Line to scroll to (from SyncTeX)
   scrollToColumn?: number | null;  // Column to scroll to (from SyncTeX)
   onScrollComplete?: () => void;  // Called after scroll is done
@@ -149,11 +157,16 @@ export default function Editor({
   const [editLocation, setEditLocation] = useState<{ startLine: number; endLine: number } | null>(null);
   const layoutListenerRef = useRef<{ dispose: () => void } | null>(null);
   const onSendToAgentRef = useRef(onSendToAgent);
+  const filePathRef = useRef(filePath);
 
-  // Keep ref in sync with prop
+  // Keep refs in sync with props
   useEffect(() => {
     onSendToAgentRef.current = onSendToAgent;
   }, [onSendToAgent]);
+
+  useEffect(() => {
+    filePathRef.current = filePath;
+  }, [filePath]);
 
   // Handle scrollToLine prop for SyncTeX navigation
   useEffect(() => {
@@ -374,7 +387,13 @@ export default function Editor({
           if (selection && !selection.isEmpty()) {
             const selectedText = ed.getModel()?.getValueInRange(selection);
             if (selectedText && selectedText.trim() && onSendToAgentRef.current) {
-              onSendToAgentRef.current(selectedText, 'polish');
+              onSendToAgentRef.current({
+                text: selectedText,
+                action: 'polish',
+                filePath: filePathRef.current,
+                startLine: selection.startLineNumber,
+                endLine: selection.endLineNumber,
+              });
             }
           }
         },
@@ -391,7 +410,13 @@ export default function Editor({
           if (selection && !selection.isEmpty()) {
             const selectedText = ed.getModel()?.getValueInRange(selection);
             if (selectedText && selectedText.trim() && onSendToAgentRef.current) {
-              onSendToAgentRef.current(selectedText, 'ask');
+              onSendToAgentRef.current({
+                text: selectedText,
+                action: 'ask',
+                filePath: filePathRef.current,
+                startLine: selection.startLineNumber,
+                endLine: selection.endLineNumber,
+              });
             }
           }
         },

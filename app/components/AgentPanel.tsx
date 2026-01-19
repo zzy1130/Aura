@@ -23,7 +23,7 @@ import {
   FileCode,
   Trash2,
 } from 'lucide-react';
-import { PendingEdit } from './Editor';
+import { PendingEdit, SendToAgentContext } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
 import VibeResearchView from './VibeResearchView';
 import CommandPalette from './CommandPalette';
@@ -54,8 +54,7 @@ interface AgentPanelProps {
   onApprovalRequest?: (edit: PendingEdit) => void;
   onApprovalResolved?: () => void;
   onOpenFile?: (filePath: string) => void;
-  quotedText?: string | null;
-  quotedAction?: 'polish' | 'ask' | 'file' | null;
+  quotedContext?: SendToAgentContext | null;
   onClearQuote?: () => void;
 }
 
@@ -262,8 +261,7 @@ export default function AgentPanel({
   onApprovalRequest,
   onApprovalResolved,
   onOpenFile,
-  quotedText,
-  quotedAction,
+  quotedContext,
   onClearQuote,
 }: AgentPanelProps) {
   // Chat state
@@ -314,9 +312,9 @@ export default function AgentPanel({
 
   // Handle quoted text from Editor
   useEffect(() => {
-    if (quotedText && quotedAction) {
+    if (quotedContext) {
       // Set the input based on the action
-      if (quotedAction === 'polish') {
+      if (quotedContext.action === 'polish') {
         setInput('/polish ');
       } else {
         setInput('');
@@ -324,10 +322,11 @@ export default function AgentPanel({
       // Focus the input
       inputRef.current?.focus();
     }
-  }, [quotedText, quotedAction]);
+  }, [quotedContext]);
 
   // Helper to truncate text to first N words
   const truncateToWords = (text: string, wordCount: number): string => {
+    if (!text || typeof text !== 'string') return '';
     const words = text.trim().split(/\s+/);
     if (words.length <= wordCount) return text.trim();
     return words.slice(0, wordCount).join(' ') + '...';
@@ -637,12 +636,19 @@ export default function AgentPanel({
       }
     }
 
-    // If there's quoted text/file, append it to the content
-    if (quotedText) {
-      if (quotedAction === 'file') {
-        content = content + '\n\n[Regarding file: ' + quotedText + ']';
+    // If there's quoted context, append it to the content with file/line info
+    if (quotedContext) {
+      const locationInfo = quotedContext.filePath
+        ? `[File: ${quotedContext.filePath}, Lines ${quotedContext.startLine}-${quotedContext.endLine}]`
+        : '';
+
+      if (quotedContext.action === 'file') {
+        content = content + '\n\n[Regarding file: ' + quotedContext.text + ']';
       } else {
-        content = content + '\n\n' + quotedText;
+        // Include location info and the selected text
+        content = locationInfo
+          ? content + '\n\n' + locationInfo + '\n```\n' + quotedContext.text + '\n```'
+          : content + '\n\n' + quotedContext.text;
       }
     }
 
@@ -1004,7 +1010,7 @@ export default function AgentPanel({
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedText, quotedAction, onClearQuote, selectedChatSession, providerSettings, loadChatSessions]);
+  }, [input, isStreaming, projectPath, messages, onApprovalRequest, onApprovalResolved, quotedContext, onClearQuote, selectedChatSession, providerSettings, loadChatSessions]);
 
   // Keep sendMessageRef in sync
   useEffect(() => {
@@ -1219,8 +1225,8 @@ export default function AgentPanel({
         if (parsed) {
           const cmd = findCommand(parsed.name);
           if (cmd) {
-            // Use quotedText as argument if no argument in input
-            const argument = parsed.argument || quotedText || '';
+            // Use quotedContext text as argument if no argument in input
+            const argument = parsed.argument || quotedContext?.text || '';
             setInput('');
             onClearQuote?.(); // Clear the quote
             executeCommand(cmd, argument);
@@ -1242,7 +1248,7 @@ export default function AgentPanel({
         }
       }
     },
-    [sendMessage, queuePendingMessage, isStreaming, showCommandPalette, filteredCommands, selectedCommandIndex, selectCommand, input, executeCommand, quotedText, onClearQuote]
+    [sendMessage, queuePendingMessage, isStreaming, showCommandPalette, filteredCommands, selectedCommandIndex, selectCommand, input, executeCommand, quotedContext, onClearQuote]
   );
 
   return (
@@ -1387,9 +1393,9 @@ export default function AgentPanel({
           {/* Chat Input */}
           <div className="border-t border-black/6 p-3 bg-white">
             {/* Quote Box - shows selected text from editor or file reference */}
-            {quotedText && (
+            {quotedContext && (
               <div className="mb-2 p-2.5 bg-fill-secondary rounded-yw-lg border border-black/6 flex items-start gap-2">
-                {quotedAction === 'file' ? (
+                {quotedContext.action === 'file' ? (
                   <>
                     <FileCode size={16} className="flex-shrink-0 text-green1 mt-0.5" />
                     <div className="flex-1 min-w-0">
@@ -1397,17 +1403,22 @@ export default function AgentPanel({
                         About this file:
                       </div>
                       <div className="typo-small text-primary font-medium truncate">
-                        {quotedText}
+                        {quotedContext.text}
                       </div>
                     </div>
                   </>
                 ) : (
                   <div className="flex-1 min-w-0">
                     <div className="typo-ex-small text-tertiary mb-1">
-                      {quotedAction === 'polish' ? 'Polish this text:' : 'About this text:'}
+                      {quotedContext.action === 'polish' ? 'Polish this text' : 'About this text'}
+                      {quotedContext.filePath && (
+                        <span className="ml-1 text-green2">
+                          ({quotedContext.filePath.split('/').pop()}:{quotedContext.startLine}-{quotedContext.endLine})
+                        </span>
+                      )}
                     </div>
                     <div className="typo-small text-secondary italic truncate">
-                      &ldquo;{truncateToWords(quotedText, 10)}&rdquo;
+                      &ldquo;{truncateToWords(quotedContext.text, 10)}&rdquo;
                     </div>
                   </div>
                 )}
