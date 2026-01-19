@@ -189,15 +189,37 @@ export default function Editor({
         // Find word boundaries around the column position
         const col = Math.min(scrollToColumn, lineLength);
 
+        // Check if we're on whitespace; if so, find nearest word
+        let targetCol = col;
+        if (/\s/.test(lineContent[col - 1] || '')) {
+          // We're on whitespace - find the nearest non-whitespace
+          // Look forward first
+          let forward = col;
+          while (forward <= lineLength && /\s/.test(lineContent[forward - 1] || '')) {
+            forward++;
+          }
+          // Look backward
+          let backward = col;
+          while (backward > 1 && /\s/.test(lineContent[backward - 2] || '')) {
+            backward--;
+          }
+          // Use the closer one
+          if (forward <= lineLength) {
+            targetCol = forward;
+          } else if (backward >= 1) {
+            targetCol = backward - 1;
+          }
+        }
+
         // Find word start (go backwards until whitespace or start)
-        let wordStart = col;
-        while (wordStart > 1 && !/\s/.test(lineContent[wordStart - 2])) {
+        let wordStart = targetCol;
+        while (wordStart > 1 && !/\s/.test(lineContent[wordStart - 2] || '')) {
           wordStart--;
         }
 
         // Find word end (go forwards until whitespace or end)
-        let wordEnd = col;
-        while (wordEnd < lineLength && !/\s/.test(lineContent[wordEnd])) {
+        let wordEnd = targetCol;
+        while (wordEnd < lineLength && !/\s/.test(lineContent[wordEnd] || '')) {
           wordEnd++;
         }
 

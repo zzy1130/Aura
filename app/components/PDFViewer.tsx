@@ -138,6 +138,12 @@ export default function PDFViewer({
       const x = (e.clientX - rect.left) / scale;
       const y = (e.clientY - rect.top) / scale;
 
+      // Try to get selected text (browser selects word on double-click)
+      // Wait a tiny bit for selection to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+      const selection = window.getSelection();
+      const clickedWord = selection?.toString().trim() || '';
+
       try {
         const response = await fetch('http://localhost:8001/api/synctex/view', {
           method: 'POST',
@@ -148,6 +154,7 @@ export default function PDFViewer({
             page: pageNum,
             x,
             y,
+            clicked_word: clickedWord,  // Pass the clicked word for precise matching
           }),
         });
 

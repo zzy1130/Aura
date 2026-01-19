@@ -142,6 +142,7 @@ class SyncTexRequest(BaseModel):
     page: int
     x: float
     y: float
+    clicked_word: Optional[str] = None  # Word selected by double-click for precise matching
 
 
 class ProviderConfig(BaseModel):
@@ -296,6 +297,7 @@ async def synctex_view(request: SyncTexRequest):
     Used for PDF-to-source navigation (double-click on PDF jumps to source).
     """
     from services.synctex import get_synctex_service
+    from pathlib import Path
 
     synctex = get_synctex_service()
     result = await synctex.view(
@@ -306,11 +308,33 @@ async def synctex_view(request: SyncTexRequest):
         y=request.y,
     )
 
+    # If we have a clicked word, try to find its exact position in the source line
+    column = result.column
+    if result.success and request.clicked_word and result.file and result.line:
+        try:
+            # Read the source file to find the word
+            source_path = Path(request.project_path) / result.file
+            if source_path.exists():
+                with open(source_path, 'r', encoding='utf-8', errors='replace') as f:
+                    lines = f.readlines()
+                    if 0 < result.line <= len(lines):
+                        line_content = lines[result.line - 1]
+                        # Find the clicked word in the line (case-sensitive)
+                        word = request.clicked_word.strip()
+                        if word:
+                            pos = line_content.find(word)
+                            if pos >= 0:
+                                # Column is 1-indexed
+                                column = pos + 1
+        except Exception as e:
+            # If we can't read the file, fall back to estimated column
+            pass
+
     return {
         "success": result.success,
         "file": result.file,
         "line": result.line,
-        "column": result.column,
+        "column": column,
         "error": result.error,
     }
 

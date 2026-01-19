@@ -138,20 +138,34 @@ class SyncTexService:
                 )
 
         if self.use_docker:
-            return await self._view_docker(project_dir, pdf_file, page, x, y)
+            result = await self._view_docker(project_dir, pdf_file, page, x, y)
         elif self.synctex_path:
-            return await self._view_local(project_dir, pdf_file, page, x, y)
+            result = await self._view_local(project_dir, pdf_file, page, x, y)
         else:
             # Try to detect Docker if not available yet
             self._check_docker()
             if self.docker_available:
                 self.use_docker = True
                 logger.info("SyncTeX now using Docker (detected on demand)")
-                return await self._view_docker(project_dir, pdf_file, page, x, y)
-            return SyncTexResult(
-                success=False,
-                error="SyncTeX not available (no local TeX or Docker)"
-            )
+                result = await self._view_docker(project_dir, pdf_file, page, x, y)
+            else:
+                return SyncTexResult(
+                    success=False,
+                    error="SyncTeX not available (no local TeX or Docker)"
+                )
+
+        # If synctex returned column=0, estimate column from x-position
+        # Typical LaTeX document has ~1 inch left margin (72pt) and ~6pt per character
+        if result.success and (result.column is None or result.column == 0):
+            # Estimate: subtract left margin (~72pt), divide by avg char width (~6pt)
+            # This gives a rough character position
+            left_margin = 72  # ~1 inch default margin
+            char_width = 6    # ~6pt per character at 10pt font
+            estimated_col = max(1, int((x - left_margin) / char_width) + 1)
+            result.column = estimated_col
+            logger.debug(f"Estimated column from x={x:.1f}: col={estimated_col}")
+
+        return result
 
     async def _view_local(
         self,
