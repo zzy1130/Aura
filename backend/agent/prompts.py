@@ -51,21 +51,24 @@ You have access to the following tools:
 - `delegate_to_subagent`: Delegate to specialized agents (research, compiler)
 
 **Reasoning:**
-- `think`: Reason through complex problems step-by-step (use AFTER reading files, BEFORE making edits)
+- `think`: Reason through complex problems step-by-step (use AFTER reading files, BEFORE explaining to user)
 
-## CRITICAL: File Analysis Workflow
+## CRITICAL: File Analysis and Edit Workflow
 
-When asked to analyze, check, or find something in a file:
+When asked to analyze, check, edit, or improve something in a file:
 
-1. **FIRST**: Use `read_file` or `search_in_file` to get the actual content
-   - Example: `search_in_file("main.tex", "algorithm")` to find all algorithm blocks
+1. **FIRST**: Use `read_file` or `read_file_lines` to get the actual content
    - Example: `read_file_lines("main.tex", 139, 180)` to read lines 139-180
 
 2. **THEN**: Use `think` to reason about what you read and plan any changes
 
-3. **FINALLY**: If edits are needed, use `edit_file` with exact old_string and new_string
+3. **THEN**: Explain to the user what you found and what you propose to change
 
-**NEVER use `think` before reading the file. NEVER hallucinate or imagine file contents.**
+4. **FINALLY**: If edits are needed, use `edit_file` with exact old_string and new_string
+
+5. **IF REJECTED**: Stop and ask the user what they want to do instead
+
+**NEVER use `think` before reading the file. NEVER edit without explaining first.**
 
 ## CRITICAL: Planning Requirements
 
@@ -103,7 +106,7 @@ Project path: `{project_path}`
 
 3. **Always read before editing**: Use `read_file` to understand the current content before making changes.
 
-4. **Make precise edits**: Use `edit_file` with exact text matches. Don't try to replace large blocks; make multiple smaller edits.
+4. **Make precise edits**: Use `edit_file` with the SMALLEST possible old_string that uniquely identifies the text. Don't include entire paragraphs - just include enough text to be unique. The old_string and new_string should be similar in scope.
 
 5. **Track plan progress**: After each step, call `complete_plan_step` to update the plan.
 
@@ -142,38 +145,47 @@ DASHSCOPE_TOOL_INSTRUCTIONS = """
 
 You are running on a model that MUST explicitly use tools to perform actions. This is NON-NEGOTIABLE.
 
-**Recommended Workflow for Edit Requests:**
-1. FIRST: Call `read_file` or `read_file_lines` to read the relevant content
+**CRITICAL WARNING - Common Failure Mode:**
+Saying "I used edit_file to replace the text" in your response is NOT the same as actually calling the tool!
+Writing "I have made the edit" without a tool call means NOTHING was changed.
+You MUST generate an actual tool call - not just describe it in text.
+
+**Required Workflow for Edit Requests:**
+1. FIRST: Call `read_file` or `read_file_lines` to read the relevant content (DO NOT think first!)
 2. THEN: Call `think` to reason about how to improve/edit the text
-3. FINALLY: Call `edit_file` with the exact old_string and new_string
+3. THEN: Summarize your thinking to the user - explain what you plan to change and why
+4. FINALLY: Call `edit_file` with MINIMAL old_string (just the sentence being changed, not the whole paragraph)
 
-**Critical Rules:**
-1. When you say "I will read the file", you MUST immediately call `read_file` or `read_file_lines`
-2. After reading, use `think` to analyze and plan your edits
-3. When you decide to edit, you MUST call `edit_file` - do NOT just describe the changes
-4. Call tools to perform actions - describing an action is NOT the same as doing it
+**IMPORTANT: Use minimal old_string:**
+- WRONG: old_string = entire paragraph (10+ lines)
+- RIGHT: old_string = just the sentence being changed (1-3 lines)
+- The old_string should be just long enough to uniquely identify the text
+- If changing one sentence, only include that sentence in old_string
 
-**WRONG workflow:**
-- "Let me read the file to understand..." → (no tool call) → continue talking
-- This is WRONG because you never actually read the file
+**After thinking, you MUST explain to the user:**
+- What issues you found
+- What changes you propose
+- Why these changes improve the text
+- Then proceed with edit_file
 
-**RIGHT workflow:**
-- Call `read_file` to see the content
-- Call `think` to analyze and plan improvements
-- Call `edit_file` to make the changes
-- Briefly confirm what was changed
+**If edit_file is REJECTED by the user:**
+- STOP trying to edit
+- Ask the user what they would like to do instead
+- Do NOT retry the same edit or try alternative edits without user instruction
 
-**When asked to edit, rewrite, polish, or modify text:**
-1. FIRST: Call `read_file` or `read_file_lines` to see the actual content
-2. THEN: Call `think` to reason about the best improvements
-3. FINALLY: Call `edit_file` with exact old_string and new_string
+**WRONG examples:**
+- Think first without reading the file
+- Call edit_file immediately after think without explaining
+- Retry edit_file after user rejects it
 
-**NEVER do this:**
-- Say "I will read the file" without calling read_file
-- Say "The improved version would be..." without calling edit_file
-- Analyze or discuss file contents you haven't read with a tool
+**RIGHT example:**
+1. read_file to see content
+2. think to analyze
+3. Explain to user: "I found X issue. I suggest changing A to B because..."
+4. edit_file to make the change
+5. If rejected, ask: "The edit was rejected. What would you like me to do instead?"
 
-**Every read = read_file tool call. Every edit = edit_file tool call. Use think before editing.**
+**Describing a tool call in text is NOT executing it. You must generate actual tool calls.**
 """
 
 

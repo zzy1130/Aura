@@ -290,6 +290,9 @@ class GitSyncService:
             info.status = SyncStatus.NOT_INITIALIZED
             return info
 
+        # Remote is configured - default to CLEAN until we find otherwise
+        info.status = SyncStatus.CLEAN
+
         # Get current branch
         result = await self._run_git("branch", "--show-current", check=False)
         if result.returncode == 0:
