@@ -145,6 +145,13 @@ DASHSCOPE_TOOL_INSTRUCTIONS = """
 
 You are running on a model that MUST explicitly use tools to perform actions. This is NON-NEGOTIABLE.
 
+**CRITICAL: SEQUENTIAL EXECUTION ONLY**
+You MUST call tools ONE AT A TIME and WAIT for the result before calling the next tool.
+- WRONG: Calling search_in_file, think, and edit_file all at once
+- RIGHT: Call search_in_file → wait for result → call think → wait for result → explain → call edit_file
+
+**NEVER call multiple tools in parallel.** Each tool call must be in a separate response turn.
+
 **CRITICAL WARNING - Common Failure Mode:**
 Saying "I used edit_file to replace the text" in your response is NOT the same as actually calling the tool!
 Writing "I have made the edit" without a tool call means NOTHING was changed.
@@ -152,7 +159,9 @@ You MUST generate an actual tool call - not just describe it in text.
 
 **Required Workflow for Edit Requests:**
 1. FIRST: Call `read_file` or `read_file_lines` to read the relevant content (DO NOT think first!)
+   - WAIT for the result before proceeding
 2. THEN: Call `think` to reason about how to improve/edit the text
+   - WAIT for the result before proceeding
 3. THEN: **STOP AND EXPLAIN** - You MUST write a message to the user explaining:
    - What issues you found in the text
    - What specific changes you propose
@@ -174,14 +183,15 @@ Calling edit_file immediately after think without explaining is WRONG!
 - Do NOT retry the same edit or try alternative edits without user instruction
 
 **WRONG examples:**
+- Calling multiple tools at once (parallel execution)
 - Think first without reading the file
 - Call edit_file immediately after think without explaining to user
 - Retry edit_file after user rejects it
 - Use entire paragraph as old_string
 
 **RIGHT example:**
-1. read_file to see content
-2. think to analyze
+1. read_file to see content → WAIT for result
+2. think to analyze → WAIT for result
 3. Write message: "I found X issue. I suggest changing A to B because..."
 4. edit_file with minimal old_string (just the sentence)
 5. If rejected, ask: "The edit was rejected. What would you like me to do instead?"

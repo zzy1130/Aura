@@ -582,23 +582,27 @@ export default function Home() {
   // HITL Approval Handlers
   // =============================================================================
 
-  const handleApprovalRequest = useCallback((edit: PendingEdit) => {
+  const handleApprovalRequest = useCallback(async (edit: PendingEdit) => {
     console.log('[Page] Approval request received:', edit);
     console.log('[Page] Setting pendingEdit - old_string length:', edit.old_string?.length);
     console.log('[Page] Setting pendingEdit - new_string length:', edit.new_string?.length);
-    setPendingEdit(edit);
 
-    // If the edit is for a different file, switch to it
-    // But only for edits to existing files (old_string has content), not new file creations
+    // If the edit is for a different file, switch to it FIRST before setting pendingEdit
+    // This ensures the file content is loaded before Editor tries to find old_string
     if (project.path && edit.filepath && edit.old_string) {
       const editFilename = edit.filepath.split('/').pop();
       const currentFilename = project.currentFile?.split('/').pop();
 
       if (editFilename !== currentFilename) {
-        // Load the file being edited
-        handleFileSelect(edit.filepath);
+        // Load the file being edited, then set pendingEdit
+        await handleFileSelect(edit.filepath);
+        // Small delay to ensure content is rendered
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
+
+    // Set pendingEdit AFTER file is loaded
+    setPendingEdit(edit);
   }, [project.path, project.currentFile, handleFileSelect]);
 
   const handleApproveEdit = useCallback(async (requestId: string) => {
