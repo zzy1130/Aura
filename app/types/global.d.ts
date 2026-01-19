@@ -15,6 +15,10 @@ interface AuraAPI {
   // File operations
   revealInFinder: (path: string) => Promise<void>;
 
+  // Settings (persistent storage)
+  getSettings: () => Promise<Record<string, unknown> | null>;
+  saveSettings: (settings: Record<string, unknown>) => Promise<boolean>;
+
   // Platform info
   platform: NodeJS.Platform;
 }

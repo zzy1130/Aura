@@ -322,6 +322,31 @@ function setupIpcHandlers(): void {
   ipcMain.handle('reveal-in-finder', async (_event, filePath: string) => {
     shell.showItemInFolder(filePath);
   });
+
+  // Settings storage (persistent across app restarts)
+  const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+  ipcMain.handle('get-settings', async () => {
+    try {
+      if (fs.existsSync(settingsPath)) {
+        const data = fs.readFileSync(settingsPath, 'utf-8');
+        return JSON.parse(data);
+      }
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+    }
+    return null;
+  });
+
+  ipcMain.handle('save-settings', async (_event, settings: Record<string, unknown>) => {
+    try {
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      return true;
+    } catch (e) {
+      console.error('Failed to save settings:', e);
+      return false;
+    }
+  });
 }
 
 // =============================================================================

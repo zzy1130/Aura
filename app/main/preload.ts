@@ -23,6 +23,10 @@ export interface AuraAPI {
   // File operations
   revealInFinder: (path: string) => Promise<void>;
 
+  // Settings (persistent storage)
+  getSettings: () => Promise<Record<string, unknown> | null>;
+  saveSettings: (settings: Record<string, unknown>) => Promise<boolean>;
+
   // Platform info
   platform: NodeJS.Platform;
 }
@@ -42,6 +46,10 @@ const auraAPI: AuraAPI = {
 
   // File operations
   revealInFinder: (path: string) => ipcRenderer.invoke('reveal-in-finder', path),
+
+  // Settings (persistent storage)
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (settings: Record<string, unknown>) => ipcRenderer.invoke('save-settings', settings),
 
   // Platform
   platform: process.platform,

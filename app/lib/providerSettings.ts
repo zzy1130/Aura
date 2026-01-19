@@ -2,7 +2,7 @@
  * Provider Settings
  *
  * Manages model provider configuration (Colorist vs DashScope).
- * Settings are persisted in localStorage.
+ * Settings are persisted via Electron IPC (for production) with localStorage as cache.
  */
 
 // =============================================================================
@@ -40,6 +40,34 @@ export const DASHSCOPE_MODELS: DashScopeModel[] = [
 export const DEFAULT_DASHSCOPE_MODEL = 'deepseek-v3.2';
 
 // =============================================================================
+// Electron IPC Helpers
+// =============================================================================
+
+function isElectron(): boolean {
+  return typeof window !== 'undefined' && 'aura' in window && typeof window.aura?.getSettings === 'function';
+}
+
+/**
+ * Initialize settings from Electron storage.
+ * Call this once on app startup to sync Electron-persisted settings to localStorage.
+ */
+export async function initializeSettings(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  if (isElectron()) {
+    try {
+      const settings = await window.aura!.getSettings();
+      if (settings?.provider_settings) {
+        // Sync Electron storage to localStorage for fast sync access
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings.provider_settings));
+      }
+    } catch (e) {
+      console.error('Failed to load settings from Electron:', e);
+    }
+  }
+}
+
+// =============================================================================
 // Storage Functions
 // =============================================================================
 
@@ -64,7 +92,23 @@ export function saveProviderSettings(settings: ProviderSettings): void {
   if (typeof window === 'undefined') return;
 
   try {
+    // Always save to localStorage for sync access
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+
+    // Also save to Electron storage for persistence across app restarts
+    if (isElectron()) {
+      // Get current settings and update provider_settings
+      window.aura!.getSettings().then((currentSettings) => {
+        const newSettings = {
+          ...(currentSettings || {}),
+          provider_settings: settings,
+        };
+        window.aura!.saveSettings(newSettings);
+      }).catch((e: Error) => {
+        console.error('Failed to save settings to Electron:', e);
+      });
+    }
+
     // Dispatch custom event for same-tab listeners
     window.dispatchEvent(new CustomEvent('aura-provider-changed'));
   } catch (e) {
