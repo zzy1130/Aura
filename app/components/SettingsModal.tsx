@@ -45,22 +45,7 @@ export default function SettingsModal({
   const [success, setSuccess] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
-  // Load settings on mount
-  useEffect(() => {
-    if (isOpen) {
-      const settings = getProviderSettings();
-      setProviderSettings(settings);
-      if (settings.dashscope) {
-        setDashscopeApiKey(settings.dashscope.apiKey || '');
-        setSelectedModel(settings.dashscope.selectedModel || DEFAULT_DASHSCOPE_MODEL);
-      }
-      if (projectPath) {
-        loadSyncStatus();
-      }
-    }
-  }, [isOpen, projectPath]);
-
-  const loadSyncStatus = async () => {
+  const loadSyncStatus = useCallback(async () => {
     if (!projectPath) return;
 
     try {
@@ -74,7 +59,22 @@ export default function SettingsModal({
     } catch (e) {
       console.error('Failed to load sync status:', e);
     }
-  };
+  }, [projectPath]);
+
+  // Load settings on mount
+  useEffect(() => {
+    if (isOpen) {
+      const settings = getProviderSettings();
+      setProviderSettings(settings);
+      if (settings.dashscope) {
+        setDashscopeApiKey(settings.dashscope.apiKey || '');
+        setSelectedModel(settings.dashscope.selectedModel || DEFAULT_DASHSCOPE_MODEL);
+      }
+      if (projectPath) {
+        loadSyncStatus();
+      }
+    }
+  }, [isOpen, projectPath, loadSyncStatus]);
 
   const handleSetup = useCallback(async () => {
     console.log('[SettingsModal] handleSetup called', { projectPath, overleafUrl, token: token ? '***' : 'empty' });
@@ -122,7 +122,7 @@ export default function SettingsModal({
     } finally {
       setIsLoading(false);
     }
-  }, [projectPath, overleafUrl, token, onSyncSetup]);
+  }, [projectPath, overleafUrl, token, onSyncSetup, loadSyncStatus]);
 
   const handleTest = useCallback(async () => {
     if (!projectPath) return;

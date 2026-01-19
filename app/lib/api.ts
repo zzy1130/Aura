@@ -13,7 +13,7 @@ export interface CompileResult {
   pdf_path: string | null;
   error_summary: string;
   log_output: string;
-  docker_not_available?: boolean;  // True if Docker is not installed/running
+  tex_not_available?: boolean;  // True if no LaTeX compiler (MacTeX or Docker) is available
 }
 
 export interface ProjectFile {

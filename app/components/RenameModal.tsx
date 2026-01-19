@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X } from 'lucide-react';
 
 interface RenameModalProps {
@@ -38,6 +38,14 @@ export default function RenameModal({
     }
   }, [isOpen, currentName]);
 
+  const handleSubmit = useCallback(() => {
+    const trimmedName = newName.trim();
+    if (trimmedName && trimmedName !== currentName) {
+      onRename(trimmedName);
+    }
+    onClose();
+  }, [newName, currentName, onRename, onClose]);
+
   // Handle keyboard events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -52,15 +60,7 @@ export default function RenameModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, newName, currentName]);
-
-  const handleSubmit = () => {
-    const trimmedName = newName.trim();
-    if (trimmedName && trimmedName !== currentName) {
-      onRename(trimmedName);
-    }
-    onClose();
-  };
+  }, [isOpen, onClose, handleSubmit]);
 
   if (!isOpen) return null;
 

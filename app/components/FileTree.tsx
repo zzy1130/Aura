@@ -85,6 +85,7 @@ function getFileIcon(name: string) {
   if (name.endsWith('.bib')) return <FileText size={14} className="text-orange1" />;
   if (name.endsWith('.pdf')) return <FileText size={14} className="text-error" />;
   if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg')) {
+    // eslint-disable-next-line jsx-a11y/alt-text -- This is a lucide-react icon, not an HTML img
     return <Image size={14} className="text-success" />;
   }
   if (name.endsWith('.sty') || name.endsWith('.cls')) {

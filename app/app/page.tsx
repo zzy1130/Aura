@@ -11,6 +11,9 @@ import NewProjectModal from '@/components/NewProjectModal';
 import SettingsModal from '@/components/SettingsModal';
 import MemoryModal from '@/components/MemoryModal';
 import DockerGuide from '@/components/DockerGuide';
+import DockerSetupWizard from '@/components/DockerSetupWizard';
+import DockerStartModal from '@/components/DockerStartModal';
+import DockerInstallModal from '@/components/DockerInstallModal';
 import RenameModal from '@/components/RenameModal';
 import ResizeHandle from '@/components/ResizeHandle';
 import { api, SyncStatus } from '@/lib/api';
@@ -43,9 +46,15 @@ export default function Home() {
   // Editor state
   const [editorContent, setEditorContent] = useState<string>('');
   const [isDirty, setIsDirty] = useState(false);
+  // Ref to store latest editor content synchronously (avoids race condition on compile)
+  const editorContentRef = useRef<string>('');
 
   // PDF state
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [currentPdfFile, setCurrentPdfFile] = useState<string | null>(null);
+
+  // SyncTeX state (PDF to source navigation)
+  const [syncTexLine, setSyncTexLine] = useState<number | null>(null);
 
   // Compilation state
   const [isCompiling, setIsCompiling] = useState(false);
@@ -60,7 +69,11 @@ export default function Home() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [showDockerGuide, setShowDockerGuide] = useState(false);
-  const [dockerIsInstalled, setDockerIsInstalled] = useState(false);
+  const [showDockerWizard, setShowDockerWizard] = useState(false);
+  const [showDockerStartModal, setShowDockerStartModal] = useState(false);
+  const [showDockerInstallModal, setShowDockerInstallModal] = useState(false);
+  const [dockerStarting, setDockerStarting] = useState(false);
+  const [dockerChecked, setDockerChecked] = useState(false);
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -118,10 +131,55 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [editorContent, isMarkdownFile]);
 
-  // Initialize API client on mount
+  // Initialize API client and settings on mount
   useEffect(() => {
     api.init().catch(console.error);
+    // Load settings from Electron storage (for persistence across app restarts)
+    import('@/lib/providerSettings').then(({ initializeSettings }) => {
+      initializeSettings().catch(console.error);
+    });
   }, []);
+
+  // Check Docker status on app startup
+  useEffect(() => {
+    if (dockerChecked) return;
+
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    const checkDockerStatus = async () => {
+      attempts++;
+      try {
+        const res = await fetch('http://localhost:8001/api/docker/status');
+        if (!res.ok) {
+          throw new Error('API not ready');
+        }
+
+        const status = await res.json();
+        console.log('Docker status:', status);
+        setDockerChecked(true);
+
+        if (status.docker_installed && !status.docker_running) {
+          // Docker is installed but not running - ask to start
+          setShowDockerStartModal(true);
+        } else if (!status.docker_installed) {
+          // Docker not installed - show installation modal
+          setShowDockerInstallModal(true);
+        }
+        // If Docker is running, do nothing
+      } catch (e) {
+        console.log(`Docker status check attempt ${attempts}/${maxAttempts} failed`);
+        // Retry if we haven't exceeded max attempts
+        if (attempts < maxAttempts) {
+          setTimeout(checkDockerStatus, 2000);
+        }
+      }
+    };
+
+    // Initial delay to let backend start
+    const timer = setTimeout(checkDockerStatus, 2000);
+    return () => clearTimeout(timer);
+  }, [dockerChecked]);
 
   // Load sync status when project changes
   const loadSyncStatus = useCallback(async () => {
@@ -191,6 +249,7 @@ export default function Home() {
           files: [],
         });
         setEditorContent('');
+        editorContentRef.current = '';
         setIsDirty(false);
         setPdfUrl(null);
         setCompileStatus('idle');
@@ -233,6 +292,7 @@ export default function Home() {
           files: [],
         });
         setEditorContent('');
+        editorContentRef.current = '';
         setIsDirty(false);
         setPdfUrl(null);
         setCompileStatus('idle');
@@ -257,21 +317,27 @@ export default function Home() {
 
     setProject((prev) => ({ ...prev, currentFile: filePath }));
     setEditorContent('');
+    editorContentRef.current = '';
 
     try {
       const content = await api.readFile(project.path, filePath);
       setEditorContent(content);
+      editorContentRef.current = content;
       setIsDirty(false);
       setError(null);
     } catch (err) {
       console.error('Failed to read file:', err);
-      setEditorContent(`% Error loading ${filePath}\n% ${err instanceof Error ? err.message : 'Unknown error'}`);
+      const errorContent = `% Error loading ${filePath}\n% ${err instanceof Error ? err.message : 'Unknown error'}`;
+      setEditorContent(errorContent);
+      editorContentRef.current = errorContent;
       setError(`Failed to load file: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [project.path]);
 
   const handleEditorChange = useCallback((value: string | undefined) => {
     if (value !== undefined) {
+      // Update ref synchronously first (ensures compile always has latest content)
+      editorContentRef.current = value;
       setEditorContent(value);
       setIsDirty(true);
     }
@@ -281,14 +347,70 @@ export default function Home() {
     if (!project.path || !project.currentFile) return;
 
     try {
-      await api.writeFile(project.path, project.currentFile, editorContent);
+      // Use ref value to ensure we save the latest content (avoids race condition)
+      await api.writeFile(project.path, project.currentFile, editorContentRef.current);
       setIsDirty(false);
       setError(null);
     } catch (err) {
       console.error('Failed to save file:', err);
       setError(`Failed to save: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
-  }, [project.path, project.currentFile, editorContent]);
+  }, [project.path, project.currentFile]);
+
+  // =============================================================================
+  // Docker Start Handler
+  // =============================================================================
+
+  const handleStartDocker = useCallback(async () => {
+    setDockerStarting(true);
+    try {
+      await fetch('http://localhost:8001/api/docker/start', { method: 'POST' });
+      // Poll until Docker is running
+      const maxAttempts = 30;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        try {
+          const res = await fetch('http://localhost:8001/api/docker/status');
+          const status = await res.json();
+          if (status.docker_running) {
+            setShowDockerStartModal(false);
+            setDockerStarting(false);
+            return;
+          }
+        } catch {
+          // Continue polling
+        }
+      }
+      setDockerStarting(false);
+    } catch (e) {
+      console.error('Failed to start Docker:', e);
+      setDockerStarting(false);
+    }
+  }, []);
+
+  // =============================================================================
+  // SyncTeX Handler (PDF to source navigation)
+  // =============================================================================
+
+  const handleSyncTexClick = useCallback(async (file: string, line: number) => {
+    console.log('[SyncTeX] Jump to:', file, 'line', line);
+
+    // If the file is different from current, switch to it first
+    if (file !== project.currentFile) {
+      await handleFileSelect(file);
+      // Small delay to let editor load, then scroll
+      setTimeout(() => {
+        setSyncTexLine(line);
+      }, 150);
+    } else {
+      setSyncTexLine(line);
+    }
+  }, [project.currentFile, handleFileSelect]);
+
+  const handleSyncTexScrollComplete = useCallback(() => {
+    // Clear the syncTexLine after scroll is complete
+    setSyncTexLine(null);
+  }, []);
 
   // =============================================================================
   // Compilation
@@ -339,18 +461,31 @@ export default function Home() {
           }
           const newPdfUrl = URL.createObjectURL(pdfBlob);
           setPdfUrl(newPdfUrl);
+          setCurrentPdfFile(pdfName);
         } catch (pdfErr) {
           console.error('Failed to load PDF:', pdfErr);
           setError(`Compilation succeeded but failed to load PDF: ${pdfErr instanceof Error ? pdfErr.message : 'Unknown error'}`);
         }
       } else {
         setCompileStatus('error');
-        // Check if Docker is not available
-        if (result.docker_not_available) {
-          // Determine if Docker is installed but not running
-          const isInstalled = result.error_summary.includes('not running');
-          setDockerIsInstalled(isInstalled);
-          setShowDockerGuide(true);
+        // Check if no LaTeX compiler is available
+        if (result.tex_not_available) {
+          // Fetch Docker status to determine the best action
+          try {
+            const dockerStatus = await fetch('http://localhost:8001/api/docker/status');
+            const status = await dockerStatus.json();
+
+            if (status.docker_installed && !status.docker_running) {
+              // Docker is installed but not running - show start modal
+              setShowDockerStartModal(true);
+            } else {
+              // Docker not installed or needs setup - show install modal
+              setShowDockerInstallModal(true);
+            }
+          } catch {
+            // If we can't fetch status, show the wizard
+            setShowDockerWizard(true);
+          }
         } else {
           setError(result.error_summary || 'Compilation failed');
         }
@@ -611,14 +746,29 @@ export default function Home() {
             URL.revokeObjectURL(pdfUrl);
           }
           setPdfUrl(URL.createObjectURL(pdfBlob));
+          setCurrentPdfFile(pdfName);
         } catch (pdfErr) {
           console.error('Failed to load PDF:', pdfErr);
         }
       } else {
         setCompileStatus('error');
-        if (result.docker_not_available) {
-          setDockerIsInstalled(result.error_summary.includes('not running'));
-          setShowDockerGuide(true);
+        if (result.tex_not_available) {
+          // Fetch Docker status to determine the best action
+          try {
+            const dockerStatus = await fetch('http://localhost:8001/api/docker/status');
+            const status = await dockerStatus.json();
+
+            if (status.docker_installed && !status.docker_running) {
+              // Docker is installed but not running - show start modal
+              setShowDockerStartModal(true);
+            } else {
+              // Docker not installed or needs setup - show install modal
+              setShowDockerInstallModal(true);
+            }
+          } catch {
+            // If we can't fetch status, show the wizard
+            setShowDockerWizard(true);
+          }
         } else {
           setError(result.error_summary || 'Compilation failed');
         }
@@ -646,6 +796,7 @@ export default function Home() {
       if (project.currentFile === relativePath) {
         setProject(prev => ({ ...prev, currentFile: null }));
         setEditorContent('');
+        editorContentRef.current = '';
         setIsDirty(false);
       }
     } catch (err) {
@@ -867,6 +1018,8 @@ export default function Home() {
             onApproveEdit={handleApproveEdit}
             onRejectEdit={handleRejectEdit}
             onSendToAgent={handleSendToAgent}
+            scrollToLine={syncTexLine}
+            onScrollComplete={handleSyncTexScrollComplete}
           />
         </div>
 
@@ -879,11 +1032,17 @@ export default function Home() {
           className="flex-shrink-0 overflow-hidden"
         >
           {isMarkdownFile ? (
-            <MarkdownPreview content={debouncedMarkdownContent} />
+            <MarkdownPreview
+              content={debouncedMarkdownContent}
+              filename={project.currentFile ?? undefined}
+            />
           ) : (
             <PDFViewer
               pdfUrl={pdfUrl}
               isCompiling={isCompiling}
+              pdfFile={currentPdfFile ?? undefined}
+              projectPath={project.path}
+              onSyncTexClick={handleSyncTexClick}
             />
           )}
         </div>
@@ -994,11 +1153,37 @@ export default function Home() {
         projectPath={project.path}
       />
 
-      {/* Docker Installation Guide */}
+      {/* Docker Start Modal (Docker installed but not running) */}
+      <DockerStartModal
+        isOpen={showDockerStartModal}
+        onClose={() => setShowDockerStartModal(false)}
+        onStart={handleStartDocker}
+        isStarting={dockerStarting}
+      />
+
+      {/* Docker Install Modal (Docker not installed) */}
+      <DockerInstallModal
+        isOpen={showDockerInstallModal}
+        onClose={() => setShowDockerInstallModal(false)}
+        onInstall={() => setShowDockerInstallModal(false)}
+      />
+
+      {/* Docker Guide (fallback) */}
       <DockerGuide
         isOpen={showDockerGuide}
         onClose={() => setShowDockerGuide(false)}
-        isInstalled={dockerIsInstalled}
+        onDockerStarted={() => {
+          handleCompile();
+        }}
+      />
+
+      {/* Docker Setup Wizard (fallback) */}
+      <DockerSetupWizard
+        isOpen={showDockerWizard}
+        onClose={() => setShowDockerWizard(false)}
+        onComplete={() => {
+          handleCompile();
+        }}
       />
 
       {/* Rename Modal */}

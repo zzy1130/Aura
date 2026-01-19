@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Check, ChevronDown } from 'lucide-react';
 
 interface DomainPreferenceModalProps {
@@ -69,6 +69,12 @@ export default function DomainPreferenceModal({
     }
   }, [isOpen, suggestedDomain]);
 
+  const handleSubmit = useCallback(() => {
+    if (selectedDomain) {
+      onSubmit(selectedDomain);
+    }
+  }, [selectedDomain, onSubmit]);
+
   // Handle keyboard events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -83,7 +89,7 @@ export default function DomainPreferenceModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, selectedDomain, showCustomInput]);
+  }, [isOpen, onClose, selectedDomain, showCustomInput, handleSubmit]);
 
   // Focus custom input when shown
   useEffect(() => {
@@ -102,12 +108,6 @@ export default function DomainPreferenceModal({
     if (trimmed) {
       setSelectedDomain(trimmed);
       setShowCustomInput(false);
-    }
-  };
-
-  const handleSubmit = () => {
-    if (selectedDomain) {
-      onSubmit(selectedDomain);
     }
   };
 

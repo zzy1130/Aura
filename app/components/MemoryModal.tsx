@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   X,
   Plus,
@@ -56,14 +56,7 @@ export default function MemoryModal({
   // Form state for adding/editing
   const [formData, setFormData] = useState<Record<string, string>>({});
 
-  // Load memory on open
-  useEffect(() => {
-    if (isOpen && projectPath) {
-      loadMemory();
-    }
-  }, [isOpen, projectPath]);
-
-  const loadMemory = async () => {
+  const loadMemory = useCallback(async () => {
     if (!projectPath) return;
 
     setIsLoading(true);
@@ -77,7 +70,14 @@ export default function MemoryModal({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [projectPath]);
+
+  // Load memory on open
+  useEffect(() => {
+    if (isOpen && projectPath) {
+      loadMemory();
+    }
+  }, [isOpen, projectPath, loadMemory]);
 
   const handleAdd = async () => {
     if (!projectPath) return;
