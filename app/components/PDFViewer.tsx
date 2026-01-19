@@ -16,9 +16,18 @@ pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.vers
 interface PDFViewerProps {
   pdfUrl: string | null;
   isCompiling: boolean;
+  pdfFile?: string;  // Name of the PDF file (e.g., "main.pdf")
+  projectPath?: string | null;  // Path to the project
+  onSyncTexClick?: (file: string, line: number) => void;  // Callback for PDF-to-source navigation
 }
 
-export default function PDFViewer({ pdfUrl, isCompiling }: PDFViewerProps) {
+export default function PDFViewer({
+  pdfUrl,
+  isCompiling,
+  pdfFile,
+  projectPath,
+  onSyncTexClick,
+}: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
   const [scale, setScale] = useState<number>(1.0);
   const [_isLoading, setIsLoading] = useState<boolean>(false);
@@ -112,6 +121,46 @@ export default function PDFViewer({ pdfUrl, isCompiling }: PDFViewerProps) {
       pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, []);
+
+  // Handle double-click on PDF page for SyncTeX navigation
+  const handlePageDoubleClick = useCallback(
+    async (e: React.MouseEvent, pageNum: number) => {
+      if (!projectPath || !pdfFile || !onSyncTexClick) return;
+
+      const pageEl = pageRefs.current.get(pageNum);
+      if (!pageEl) return;
+
+      const rect = pageEl.getBoundingClientRect();
+
+      // Convert screen coordinates to PDF coordinates for synctex
+      // SyncTeX uses top-left origin, same as screen coordinates
+      // Coordinates are in "big points" (72 dpi), so we divide by scale
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top) / scale;
+
+      try {
+        const response = await fetch('http://localhost:8001/api/synctex/view', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_path: projectPath,
+            pdf_file: pdfFile,
+            page: pageNum,
+            x,
+            y,
+          }),
+        });
+
+        const data = await response.json();
+        if (data.success && data.file && data.line) {
+          onSyncTexClick(data.file, data.line);
+        }
+      } catch (error) {
+        console.error('SyncTeX query failed:', error);
+      }
+    },
+    [projectPath, pdfFile, scale, onSyncTexClick]
+  );
 
   // Generate array of page numbers
   const pageNumbers = Array.from({ length: numPages }, (_, i) => i + 1);
@@ -210,7 +259,8 @@ export default function PDFViewer({ pdfUrl, isCompiling }: PDFViewerProps) {
                 <div
                   key={pageNum}
                   ref={(el) => setPageRef(pageNum, el)}
-                  className="mb-4 last:mb-0 shadow-card rounded-sm overflow-hidden"
+                  onDoubleClick={(e) => handlePageDoubleClick(e, pageNum)}
+                  className="mb-4 last:mb-0 shadow-card rounded-sm overflow-hidden cursor-pointer"
                 >
                   <Page
                     pageNumber={pageNum}

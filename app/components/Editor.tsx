@@ -23,6 +23,8 @@ interface EditorProps {
   onApproveEdit?: (requestId: string) => void;
   onRejectEdit?: (requestId: string) => void;
   onSendToAgent?: (text: string, action: SendToAgentAction) => void;
+  scrollToLine?: number | null;  // Line to scroll to (from SyncTeX)
+  onScrollComplete?: () => void;  // Called after scroll is done
 }
 
 // LaTeX language configuration
@@ -135,6 +137,8 @@ export default function Editor({
   onApproveEdit,
   onRejectEdit,
   onSendToAgent,
+  scrollToLine,
+  onScrollComplete,
 }: EditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
@@ -148,6 +152,41 @@ export default function Editor({
   useEffect(() => {
     onSendToAgentRef.current = onSendToAgent;
   }, [onSendToAgent]);
+
+  // Handle scrollToLine prop for SyncTeX navigation
+  useEffect(() => {
+    if (scrollToLine && editorRef.current) {
+      const editor = editorRef.current;
+
+      // Scroll to the line and center it
+      editor.revealLineInCenter(scrollToLine);
+
+      // Briefly highlight the line
+      const decorations = editor.deltaDecorations([], [
+        {
+          range: {
+            startLineNumber: scrollToLine,
+            startColumn: 1,
+            endLineNumber: scrollToLine,
+            endColumn: 1,
+          },
+          options: {
+            isWholeLine: true,
+            className: 'synctex-highlight-line',
+            glyphMarginClassName: 'synctex-highlight-glyph',
+          },
+        },
+      ]);
+
+      // Remove highlight after a short delay
+      setTimeout(() => {
+        editor.deltaDecorations(decorations, []);
+      }, 1500);
+
+      // Notify parent that scroll is complete
+      onScrollComplete?.();
+    }
+  }, [scrollToLine, onScrollComplete]);
 
   // Function to calculate view zone height based on current editor width
   const calculateViewZoneHeight = useCallback((

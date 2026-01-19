@@ -2,7 +2,7 @@
 Aura Backend API
 
 FastAPI server providing:
-- LaTeX compilation via Docker
+- LaTeX compilation via local TeX or Docker
 - Project management
 - Agent chat streaming (PydanticAI)
 """
@@ -17,10 +17,11 @@ from typing import Optional
 import logging
 import json
 
-from services.docker import DockerLatex, CompileResult
+from services.unified_latex import get_unified_latex, UnifiedLatex, CompileResult
 from services.project import ProjectService, ProjectInfo
 from services.memory import MemoryService
 from services.latex_parser import parse_document, parse_bib_file_path, find_unused_citations
+from services.docker_setup import get_docker_setup, DockerSetupService, DockerStatus
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,7 +44,7 @@ app.add_middleware(
 )
 
 # Initialize services
-docker_latex = DockerLatex()
+unified_latex = get_unified_latex()
 project_service = ProjectService()
 
 
@@ -60,11 +61,15 @@ async def get_info():
     """Get information about the Aura backend."""
     from agent.subagents import list_subagents
 
+    latex_status = unified_latex.get_status()
+
     return {
         "name": "Aura Backend",
         "version": "0.1.0",
         "description": "Local-first LaTeX IDE with AI agent",
-        "docker_available": docker_latex.is_available(),
+        "latex_available": unified_latex.is_available(),
+        "latex_backend": latex_status["active_backend"],
+        "latex_status": latex_status,
         "subagents": [s["name"] for s in list_subagents()],
         "features": {
             "compilation": True,
@@ -89,7 +94,7 @@ class CompileResponse(BaseModel):
     pdf_path: Optional[str] = None
     error_summary: str = ""
     log_output: str = ""
-    docker_not_available: bool = False  # True if Docker is not installed/running
+    tex_not_available: bool = False  # True if no LaTeX compiler is available
 
 
 class CreateProjectRequest(BaseModel):
@@ -128,6 +133,15 @@ class FileCopyRequest(BaseModel):
 
 class FileListRequest(BaseModel):
     project_path: str
+
+
+class SyncTexRequest(BaseModel):
+    """Request for SyncTeX PDF-to-source lookup."""
+    project_path: str
+    pdf_file: str
+    page: int
+    x: float
+    y: float
 
 
 class ProviderConfig(BaseModel):
@@ -218,7 +232,7 @@ async def root():
         "status": "ok",
         "service": "Aura Backend",
         "version": "0.1.0",
-        "docker_available": docker_latex.is_available(),
+        "latex_available": unified_latex.is_available(),
     }
 
 
@@ -227,7 +241,8 @@ async def health():
     """Detailed health check."""
     return {
         "status": "healthy",
-        "docker": docker_latex.is_available(),
+        "latex": unified_latex.is_available(),
+        "latex_backend": unified_latex.get_status()["active_backend"],
     }
 
 
@@ -238,21 +253,21 @@ async def compile_latex(request: CompileRequest):
     """
     Compile a LaTeX project to PDF.
 
-    Runs pdflatex in Docker container with bibliography support.
+    Uses local TeX if available, falls back to Docker.
     """
     logger.info(f"Compiling {request.filename} in {request.project_path}")
 
-    result: CompileResult = await docker_latex.compile(
+    result: CompileResult = await unified_latex.compile(
         project_path=request.project_path,
-        filename=request.filename,
+        main_file=request.filename,
     )
 
     return CompileResponse(
         success=result.success,
         pdf_path=result.pdf_path,
-        error_summary=result.error_summary,
-        log_output=result.log_output[-5000:] if result.log_output else "",  # Limit log size
-        docker_not_available=result.docker_not_available,
+        error_summary=result.error_summary or "",
+        log_output=result.log[-5000:] if result.log else "",  # Limit log size
+        tex_not_available=result.tex_not_available,
     )
 
 
@@ -261,16 +276,43 @@ async def check_syntax(request: CompileRequest):
     """
     Quick syntax check without full compilation.
     """
-    result = await docker_latex.check_syntax(
+    result = await unified_latex.check_syntax(
         project_path=request.project_path,
-        filename=request.filename,
+        main_file=request.filename,
     )
 
     return CompileResponse(
         success=result.success,
-        error_summary=result.error_summary,
-        log_output=result.log_output[-2000:] if result.log_output else "",
+        error_summary=result.error_summary or "",
+        log_output=result.log[-2000:] if result.log else "",
     )
+
+
+@app.post("/api/synctex/view")
+async def synctex_view(request: SyncTexRequest):
+    """
+    Query SyncTeX to find source location for a PDF position.
+
+    Used for PDF-to-source navigation (double-click on PDF jumps to source).
+    """
+    from services.synctex import get_synctex_service
+
+    synctex = get_synctex_service()
+    result = await synctex.view(
+        project_path=request.project_path,
+        pdf_file=request.pdf_file,
+        page=request.page,
+        x=request.x,
+        y=request.y,
+    )
+
+    return {
+        "success": result.success,
+        "file": result.file,
+        "line": result.line,
+        "column": result.column,
+        "error": result.error,
+    }
 
 
 @app.get("/api/pdf/{project_name}")
@@ -290,6 +332,85 @@ async def get_pdf(project_name: str, filename: str = "main.pdf"):
         media_type="application/pdf",
         filename=filename,
     )
+
+
+# ============ Docker Setup Endpoints ============
+
+docker_setup = get_docker_setup()
+
+
+@app.get("/api/docker/status")
+async def get_docker_status():
+    """
+    Get Docker installation status.
+    Returns: status, docker_installed, docker_running, image_pulled
+    """
+    status = docker_setup.get_status()
+    return {
+        "status": status.status.value,
+        "docker_installed": status.docker_installed,
+        "docker_running": status.docker_running,
+        "image_pulled": status.image_pulled,
+        "image_name": status.image_name,
+        "download_progress": status.download_progress,
+        "download_path": status.download_path,
+        "error": status.error,
+    }
+
+
+@app.post("/api/docker/download")
+async def download_docker():
+    """
+    Download Docker.dmg to Downloads folder.
+    """
+    status = await docker_setup.download_docker()
+    return {
+        "status": status.status.value,
+        "download_progress": status.download_progress,
+        "download_path": status.download_path,
+        "error": status.error,
+    }
+
+
+@app.post("/api/docker/open-installer")
+async def open_docker_installer():
+    """
+    Open the Docker.dmg installer.
+    """
+    status = await docker_setup.open_installer()
+    return {
+        "status": status.status.value,
+        "download_path": status.download_path,
+        "error": status.error,
+    }
+
+
+@app.post("/api/docker/start")
+async def start_docker():
+    """
+    Start Docker Desktop application.
+    """
+    status = await docker_setup.start_docker()
+    return {
+        "status": status.status.value,
+        "docker_installed": status.docker_installed,
+        "docker_running": status.docker_running,
+        "error": status.error,
+    }
+
+
+@app.post("/api/docker/pull-image")
+async def pull_docker_image():
+    """
+    Pull/build the TeX Docker image.
+    """
+    status = await docker_setup.pull_image()
+    return {
+        "status": status.status.value,
+        "docker_running": status.docker_running,
+        "image_pulled": status.image_pulled,
+        "error": status.error,
+    }
 
 
 class PdfRequest(BaseModel):
