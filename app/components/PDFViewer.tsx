@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import 'react-pdf/dist/Page/TextLayer.css';  // Required for text layer styling
 import {
   ZoomIn,
   ZoomOut,
@@ -272,7 +273,7 @@ export default function PDFViewer({
                   <Page
                     pageNumber={pageNum}
                     scale={scale}
-                    renderTextLayer={false}
+                    renderTextLayer={true}
                     renderAnnotationLayer={false}
                   />
                 </div>
