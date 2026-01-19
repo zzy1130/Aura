@@ -1365,7 +1365,10 @@ async def compile_latex(
     main_file: str = "main.tex",
 ) -> str:
     """
-    Compile the LaTeX project using Docker.
+    Compile the LaTeX project.
+
+    Uses local TeX installation (MacTeX/TeX Live) if available,
+    otherwise falls back to Docker compilation.
 
     Args:
         main_file: Main .tex file to compile (default: main.tex)
@@ -1373,18 +1376,22 @@ async def compile_latex(
     Returns:
         Compilation result with any errors
     """
-    from services.docker import get_docker_latex
+    from services.unified_latex import get_unified_latex
 
-    docker = get_docker_latex()
+    latex = get_unified_latex()
     project_path = ctx.deps.project_path
 
-    result = await docker.compile(project_path, main_file)
+    result = await latex.compile(project_path, main_file)
 
     if result.success:
-        return f"Compilation successful! Output: {result.pdf_path}"
+        backend_info = f" (using {result.backend_used})" if result.backend_used else ""
+        return f"Compilation successful{backend_info}! Output: {result.pdf_path}"
+    elif result.tex_not_available:
+        return f"No LaTeX compiler available:\n{result.error_summary}"
     else:
         # Return last 2000 chars of log
-        return f"Compilation failed:\n{result.log[-2000:]}"
+        log_excerpt = result.log[-2000:] if result.log else ""
+        return f"Compilation failed:\n{result.error_summary or ''}\n{log_excerpt}"
 
 
 @aura_agent.tool

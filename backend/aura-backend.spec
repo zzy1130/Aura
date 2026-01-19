@@ -33,10 +33,15 @@ datas += [
     ('services', 'services'),
 ]
 
+# Include Tectonic binary
+binaries = [
+    ('bin/tectonic', 'bin'),
+]
+
 a = Analysis(
     ['main.py'],
     pathex=[str(backend_dir)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=[
         # FastAPI and dependencies
@@ -108,6 +113,9 @@ a = Analysis(
         'services.project',
         'services.memory',
         'services.semantic_scholar',
+        'services.tectonic_latex',
+        'services.local_latex',
+        'services.unified_latex',
     ],
     hookspath=[],
     hooksconfig={},

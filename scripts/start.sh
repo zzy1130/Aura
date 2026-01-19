@@ -20,13 +20,18 @@ BACKEND_PORT=8001
 FRONTEND_PORT=3001
 BACKEND_DIR="$(dirname "$0")/../backend"
 FRONTEND_DIR="$(dirname "$0")/../app"
+SANDBOX_DIR="$(dirname "$0")/../sandbox"
 BACKEND_PID=""
 FRONTEND_PID=""
 USE_UV=false
+HAS_TECTONIC=false
+HAS_LOCAL_TEX=false
+HAS_DOCKER=false
 
 # Resolve absolute paths
 BACKEND_DIR="$(cd "$BACKEND_DIR" && pwd)"
 FRONTEND_DIR="$(cd "$FRONTEND_DIR" && pwd)"
+SANDBOX_DIR="$(cd "$SANDBOX_DIR" && pwd)"
 
 # =============================================================================
 # Helper Functions
@@ -121,6 +126,127 @@ install_with_brew() {
     fi
 }
 
+# =============================================================================
+# LaTeX Environment Detection
+# =============================================================================
+
+check_tectonic() {
+    # Check for bundled Tectonic
+    local tectonic_path="$BACKEND_DIR/bin/tectonic"
+    if [ -x "$tectonic_path" ]; then
+        HAS_TECTONIC=true
+        return 0
+    fi
+
+    # Check PATH
+    if command -v tectonic &> /dev/null; then
+        HAS_TECTONIC=true
+        return 0
+    fi
+
+    return 1
+}
+
+check_local_tex() {
+    # Check common pdflatex locations
+    if command -v pdflatex &> /dev/null; then
+        HAS_LOCAL_TEX=true
+        return 0
+    fi
+
+    # Check MacTeX default locations
+    local tex_paths=(
+        "/Library/TeX/texbin/pdflatex"
+        "/usr/local/texlive/2026/bin/universal-darwin/pdflatex"
+        "/usr/local/texlive/2025/bin/universal-darwin/pdflatex"
+        "/usr/local/texlive/2024/bin/universal-darwin/pdflatex"
+        "/usr/local/texlive/2023/bin/universal-darwin/pdflatex"
+    )
+
+    for tex_path in "${tex_paths[@]}"; do
+        if [ -x "$tex_path" ]; then
+            HAS_LOCAL_TEX=true
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+check_docker() {
+    if command -v docker &> /dev/null; then
+        # Check if Docker daemon is running
+        if docker info &> /dev/null; then
+            HAS_DOCKER=true
+            return 0
+        fi
+    fi
+    return 1
+}
+
+check_latex_environment() {
+    log_info "Checking LaTeX compilation environment..."
+
+    check_tectonic || true
+    check_local_tex || true
+    check_docker || true
+
+    if [ "$HAS_TECTONIC" = true ]; then
+        local tectonic_version=$("$BACKEND_DIR/bin/tectonic" --version 2>/dev/null | head -1 || echo "Tectonic")
+        log_success "Tectonic found: $tectonic_version (bundled)"
+        log_info "  LaTeX compilation ready out-of-the-box"
+    elif [ "$HAS_LOCAL_TEX" = true ]; then
+        local tex_version=$(pdflatex --version 2>/dev/null | head -1 || echo "Unknown version")
+        log_success "Local TeX found: $tex_version"
+        log_info "  LaTeX compilation will use local installation (fast)"
+    elif [ "$HAS_DOCKER" = true ]; then
+        log_success "Docker found and running"
+        log_info "  LaTeX compilation will use Docker (isolated)"
+
+        # Check if aura-texlive image exists
+        if docker images aura-texlive --format "{{.Repository}}" | grep -q "aura-texlive"; then
+            log_success "Docker image 'aura-texlive' is ready"
+        else
+            log_warn "Docker image 'aura-texlive' not found"
+            log_info "  Building image (this may take a few minutes)..."
+            if (cd "$SANDBOX_DIR" && docker build -t aura-texlive . > /dev/null 2>&1); then
+                log_success "Docker image built successfully"
+            else
+                log_error "Failed to build Docker image"
+                log_info "  Run manually: cd sandbox && docker build -t aura-texlive ."
+            fi
+        fi
+    else
+        log_error "No LaTeX compiler available!"
+        log_info "  Tectonic binary missing from backend/bin/"
+        log_info "  Re-download or reinstall Aura"
+    fi
+}
+
+build_docker_image() {
+    log_info "Building Docker LaTeX image..."
+
+    if ! command -v docker &> /dev/null; then
+        log_error "Docker is not installed"
+        log_info "Download from: https://docker.com/products/docker-desktop"
+        exit 1
+    fi
+
+    if ! docker info &> /dev/null; then
+        log_error "Docker daemon is not running"
+        log_info "Start Docker Desktop and try again"
+        exit 1
+    fi
+
+    log_info "Building aura-texlive image (this may take several minutes)..."
+    if (cd "$SANDBOX_DIR" && docker build -t aura-texlive .); then
+        log_success "Docker image 'aura-texlive' built successfully!"
+    else
+        log_error "Failed to build Docker image"
+        exit 1
+    fi
+}
+
 check_dependencies() {
     log_info "Checking dependencies..."
 
@@ -184,7 +310,11 @@ check_dependencies() {
         (cd "$FRONTEND_DIR" && npm install)
     fi
 
-    log_success "All dependencies satisfied"
+    log_success "All core dependencies satisfied"
+
+    # Check LaTeX environment
+    echo ""
+    check_latex_environment
 }
 
 # =============================================================================
@@ -421,12 +551,23 @@ print_usage() {
     echo "  --electron        Start full Electron desktop app"
     echo "  --test            Run API tests after starting backend"
     echo "  --test-only       Run API tests only (assumes backend is running)"
+    echo "  --build-docker    Build the Docker LaTeX image"
+    echo "  --check-env       Check environment and exit (no servers started)"
     echo "  --help            Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0                    # Start backend + web frontend"
     echo "  $0 --electron         # Start backend + Electron desktop app"
     echo "  $0 --backend-only     # Start only backend (for testing)"
+    echo "  $0 --check-env        # Check all dependencies including LaTeX"
+    echo "  $0 --build-docker     # Build Docker image for LaTeX compilation"
+    echo ""
+    echo "LaTeX Compilation:"
+    echo "  Aura supports two LaTeX compilation methods:"
+    echo "    1. Local TeX (MacTeX/TeX Live) - faster, no Docker required"
+    echo "    2. Docker - isolated, reproducible"
+    echo ""
+    echo "  If neither is available, install MacTeX from https://tug.org/mactex/"
     echo ""
 }
 
@@ -438,6 +579,8 @@ main() {
     local run_test=false
     local test_only=false
     local use_electron=false
+    local build_docker=false
+    local check_env_only=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -462,6 +605,14 @@ main() {
                 test_only=true
                 shift
                 ;;
+            --build-docker)
+                build_docker=true
+                shift
+                ;;
+            --check-env)
+                check_env_only=true
+                shift
+                ;;
             --help)
                 print_usage
                 exit 0
@@ -474,6 +625,12 @@ main() {
         esac
     done
 
+    # Build Docker image mode
+    if [ "$build_docker" = true ]; then
+        build_docker_image
+        exit 0
+    fi
+
     # Test only mode
     if [ "$test_only" = true ]; then
         run_tests
@@ -482,6 +639,13 @@ main() {
 
     # Check dependencies
     check_dependencies
+
+    # Check env only mode
+    if [ "$check_env_only" = true ]; then
+        echo ""
+        log_success "Environment check complete!"
+        exit 0
+    fi
 
     # Start services
     if [ "$frontend_only" = false ]; then
@@ -517,6 +681,19 @@ main() {
             log_success "Frontend: http://127.0.0.1:$FRONTEND_PORT"
         fi
     fi
+
+    # Show LaTeX status
+    echo ""
+    if [ "$HAS_TECTONIC" = true ]; then
+        log_info "LaTeX: Tectonic (bundled)"
+    elif [ "$HAS_LOCAL_TEX" = true ]; then
+        log_info "LaTeX: Local TeX installation"
+    elif [ "$HAS_DOCKER" = true ]; then
+        log_info "LaTeX: Docker (aura-texlive)"
+    else
+        log_warn "LaTeX: Not available"
+    fi
+
     echo ""
     log_info "Press Ctrl+C to stop all services"
     echo ""
