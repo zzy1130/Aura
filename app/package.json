@@ -23,6 +23,7 @@
     "@monaco-editor/react": "^4.6.0",
     "@tailwindcss/typography": "^0.5.19",
     "clsx": "^2.1.0",
+    "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.300.0",
     "monaco-editor": "^0.45.0",
     "next": "14.1.0",
@@ -60,8 +61,10 @@
       "main/dist/**/*",
       "out/**/*",
       "public/**/*",
-      "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md,README,readme,test,tests,*.test.js,*.spec.js,example,examples,docs,doc}",
+      "!**/node_modules/.bin",
+      "!**/*.map"
     ],
     "asarUnpack": [
       "out/**/*"
@@ -70,6 +73,13 @@
       {
         "from": "../backend/dist/aura-backend",
         "to": "backend/aura-backend"
+      },
+      {
+        "from": "../backend/bin",
+        "to": "backend/bin",
+        "filter": [
+          "tectonic"
+        ]
       },
       {
         "from": "../sandbox",
