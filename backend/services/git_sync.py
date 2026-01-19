@@ -100,6 +100,9 @@ GITIGNORE_PATTERNS = [
     "# Aura local config",
     ".aura/",
     "",
+    "# Compiled output (Overleaf compiles its own)",
+    "*.pdf",
+    "",
     "# LaTeX auxiliary files",
     "*.aux",
     "*.bbl",
@@ -226,12 +229,30 @@ class GitSyncService:
         gitignore_path = self.project_path / ".gitignore"
         if gitignore_path.exists():
             content = gitignore_path.read_text()
-            # Check if we need to add patterns (use .aura/ as marker)
-            if ".aura/" not in content:
+            # Check if we need to add patterns (use *.pdf as marker for updated patterns)
+            if "*.pdf" not in content:
                 with open(gitignore_path, "a") as f:
                     f.write("\n" + "\n".join(GITIGNORE_PATTERNS) + "\n")
         else:
             gitignore_path.write_text("\n".join(GITIGNORE_PATTERNS) + "\n")
+
+    async def _remove_ignored_from_cache(self) -> None:
+        """Remove files that are in .gitignore but still tracked by git."""
+        # Get list of tracked files that match gitignore patterns
+        patterns_to_check = [
+            "*.pdf", "*.aux", "*.bbl", "*.blg", "*.log", "*.out", "*.toc",
+            "*.lof", "*.lot", "*.fls", "*.fdb_latexmk", "*.synctex.gz",
+            "*.synctex(busy)", "*.run.xml", "*.bcf", "*.nav", "*.snm",
+            "*.vrb", "*.idx", "*.ilg", "*.ind", "*.glo", "*.gls", "*.glg",
+            "*.xdv", ".aura/*", ".DS_Store"
+        ]
+
+        for pattern in patterns_to_check:
+            # Remove from git cache (but keep local files)
+            await self._run_git(
+                "rm", "-r", "--cached", "--ignore-unmatch", pattern,
+                check=False
+            )
 
     async def is_git_repo(self) -> bool:
         """Check if project is a git repository."""
@@ -559,6 +580,10 @@ class GitSyncService:
                 operation="push",
                 message="No remote configured. Run setup first.",
             )
+
+        # Ensure gitignore is set up and remove tracked files that should be ignored
+        self._ensure_gitignore()
+        await self._remove_ignored_from_cache()
 
         # Check for uncommitted changes (no need to fetch for this)
         status = await self.get_status(fetch=False)
