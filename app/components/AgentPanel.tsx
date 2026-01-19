@@ -113,7 +113,7 @@ function ToolCallDisplay({
     error: '',
   }[toolCall.status];
 
-  const isNewFile = toolCall.name === 'write_file' && toolCall.status === 'waiting_approval';
+  const needsApproval = (toolCall.name === 'write_file' || toolCall.name === 'edit_file') && toolCall.status === 'waiting_approval';
 
   return (
     <div className="bg-fill-secondary rounded-yw-lg p-2.5 my-2 border border-black/6">
@@ -154,8 +154,8 @@ function ToolCallDisplay({
         </div>
       )}
 
-      {/* Approval buttons for new file creation */}
-      {isNewFile && toolCall.request_id && onApprove && onReject && (
+      {/* Approval buttons for file edits and new file creation */}
+      {needsApproval && toolCall.request_id && onApprove && onReject && (
         <div className="mt-3 flex items-center gap-2 pt-2 border-t border-black/6">
           <button
             onClick={(e) => { e.stopPropagation(); onReject(toolCall.request_id!); }}
