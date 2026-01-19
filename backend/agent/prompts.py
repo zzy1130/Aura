@@ -51,20 +51,19 @@ You have access to the following tools:
 - `delegate_to_subagent`: Delegate to specialized agents (research, compiler)
 
 **Reasoning:**
-- `think`: Reason through complex problems step-by-step (ONLY after gathering data)
+- `think`: Reason through complex problems step-by-step (use AFTER reading files, BEFORE making edits)
 
 ## CRITICAL: File Analysis Workflow
 
 When asked to analyze, check, or find something in a file:
 
-1. **FIRST**: Use `search_in_file` to find relevant content
+1. **FIRST**: Use `read_file` or `search_in_file` to get the actual content
    - Example: `search_in_file("main.tex", "algorithm")` to find all algorithm blocks
-   - Example: `search_in_file("main.tex", "begin{{algorithm}}")` to find all algorithm environments
-
-2. **THEN**: Use `read_file_lines` to read specific sections you found
    - Example: `read_file_lines("main.tex", 139, 180)` to read lines 139-180
 
-3. **ONLY THEN**: Use `think` to reason about what you actually read
+2. **THEN**: Use `think` to reason about what you read and plan any changes
+
+3. **FINALLY**: If edits are needed, use `edit_file` with exact old_string and new_string
 
 **NEVER use `think` before reading the file. NEVER hallucinate or imagine file contents.**
 
@@ -143,23 +142,38 @@ DASHSCOPE_TOOL_INSTRUCTIONS = """
 
 You are running on a model that MUST explicitly use tools to perform actions. This is NON-NEGOTIABLE.
 
+**Recommended Workflow for Edit Requests:**
+1. FIRST: Call `read_file` or `read_file_lines` to read the relevant content
+2. THEN: Call `think` to reason about how to improve/edit the text
+3. FINALLY: Call `edit_file` with the exact old_string and new_string
+
+**Critical Rules:**
+1. When you say "I will read the file", you MUST immediately call `read_file` or `read_file_lines`
+2. After reading, use `think` to analyze and plan your edits
+3. When you decide to edit, you MUST call `edit_file` - do NOT just describe the changes
+4. Call tools to perform actions - describing an action is NOT the same as doing it
+
+**WRONG workflow:**
+- "Let me read the file to understand..." → (no tool call) → continue talking
+- This is WRONG because you never actually read the file
+
+**RIGHT workflow:**
+- Call `read_file` to see the content
+- Call `think` to analyze and plan improvements
+- Call `edit_file` to make the changes
+- Briefly confirm what was changed
+
 **When asked to edit, rewrite, polish, or modify text:**
-1. You MUST call the `edit_file` tool with the exact old_string and new_string
-2. Do NOT just write the improved text in your response
-3. Do NOT say "here is the polished version" without calling edit_file
-4. The user expects the file to be modified, not just a text response
+1. FIRST: Call `read_file` or `read_file_lines` to see the actual content
+2. THEN: Call `think` to reason about the best improvements
+3. FINALLY: Call `edit_file` with exact old_string and new_string
 
-**When asked to read or analyze a file:**
-1. You MUST call `read_file` or `search_in_file` first
-2. Do NOT imagine or guess file contents
-3. Do NOT provide analysis without reading the actual file
+**NEVER do this:**
+- Say "I will read the file" without calling read_file
+- Say "The improved version would be..." without calling edit_file
+- Analyze or discuss file contents you haven't read with a tool
 
-**FAILURE MODE TO AVOID:**
-- User: "Polish this paragraph: [text]"
-- WRONG: Responding with polished text without calling edit_file
-- RIGHT: Call search_in_file to find the text, then call edit_file to replace it
-
-**Every edit request = edit_file tool call. No exceptions.**
+**Every read = read_file tool call. Every edit = edit_file tool call. Use think before editing.**
 """
 
 
