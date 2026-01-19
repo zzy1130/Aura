@@ -124,17 +124,39 @@ const auraTheme: editor.IStandaloneThemeData = {
   },
 };
 
-// Find line numbers where a string appears in content
-function findStringLocation(content: string, searchStr: string): { startLine: number; endLine: number } | null {
+// Find exact character position where a string appears in content
+function findStringLocation(content: string, searchStr: string): {
+  startLine: number;
+  endLine: number;
+  startColumn: number;
+  endColumn: number;
+} | null {
   if (!searchStr || !content.includes(searchStr)) return null;
 
   const index = content.indexOf(searchStr);
   const beforeMatch = content.substring(0, index);
-  const startLine = beforeMatch.split('\n').length;
-  const matchLines = searchStr.split('\n').length;
-  const endLine = startLine + matchLines - 1;
+  const linesBeforeMatch = beforeMatch.split('\n');
+  const startLine = linesBeforeMatch.length;
 
-  return { startLine, endLine };
+  // Start column is the position within the last line before the match
+  // Monaco columns are 1-indexed
+  const startColumn = (linesBeforeMatch[linesBeforeMatch.length - 1]?.length || 0) + 1;
+
+  // Calculate end position
+  const matchLines = searchStr.split('\n');
+  const endLine = startLine + matchLines.length - 1;
+
+  // End column is where the match ends on the last line of the match
+  let endColumn: number;
+  if (matchLines.length === 1) {
+    // Single line match: end column = start column + match length
+    endColumn = startColumn + searchStr.length;
+  } else {
+    // Multi-line match: end column is the length of the last line of the match + 1
+    endColumn = (matchLines[matchLines.length - 1]?.length || 0) + 1;
+  }
+
+  return { startLine, endLine, startColumn, endColumn };
 }
 
 export default function Editor({
@@ -154,7 +176,12 @@ export default function Editor({
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
   const decorationsRef = useRef<string[]>([]);
   const viewZoneIdRef = useRef<string | null>(null);
-  const [editLocation, setEditLocation] = useState<{ startLine: number; endLine: number } | null>(null);
+  const [editLocation, setEditLocation] = useState<{
+    startLine: number;
+    endLine: number;
+    startColumn: number;
+    endColumn: number;
+  } | null>(null);
   const layoutListenerRef = useRef<{ dispose: () => void } | null>(null);
   const onSendToAgentRef = useRef(onSendToAgent);
   const filePathRef = useRef(filePath);
@@ -510,16 +537,22 @@ export default function Editor({
     console.log('[Editor] Setting editLocation and creating decorations');
     setEditLocation(location);
 
-    // Create decorations for the lines being changed
+    // Create decorations for the exact text being changed
     const decorations: editor.IModelDeltaDecoration[] = [];
 
-    // Highlight the lines that will be removed (red background)
+    // Use exact character positions for the decoration range
+    const exactRange = new monaco.Range(
+      location.startLine,
+      location.startColumn,
+      location.endLine,
+      location.endColumn
+    );
+
+    // Highlight background for the exact text being removed
     decorations.push({
-      range: new monaco.Range(location.startLine, 1, location.endLine, 1),
+      range: exactRange,
       options: {
-        isWholeLine: true,
-        className: 'pending-edit-remove-line',
-        glyphMarginClassName: 'pending-edit-remove-glyph',
+        className: 'pending-edit-remove-inline',
         overviewRuler: {
           color: '#f38ba8',
           position: monaco.editor.OverviewRulerLane.Full,
@@ -527,14 +560,17 @@ export default function Editor({
       },
     });
 
-    // Add inline decoration to show the text being removed
+    // Add glyph margin indicator on the first line
     decorations.push({
-      range: new monaco.Range(
-        location.startLine,
-        1,
-        location.endLine,
-        editor.getModel()?.getLineMaxColumn(location.endLine) || 1
-      ),
+      range: new monaco.Range(location.startLine, 1, location.startLine, 1),
+      options: {
+        glyphMarginClassName: 'pending-edit-remove-glyph',
+      },
+    });
+
+    // Add inline strikethrough decoration for the exact text being removed
+    decorations.push({
+      range: exactRange,
       options: {
         inlineClassName: 'pending-edit-remove-text',
       },
@@ -667,8 +703,9 @@ export default function Editor({
 
       {/* CSS for decorations */}
       <style jsx global>{`
-        .pending-edit-remove-line {
-          background-color: rgba(243, 139, 168, 0.15) !important;
+        .pending-edit-remove-inline {
+          background-color: rgba(243, 139, 168, 0.25) !important;
+          border-radius: 2px;
         }
         .pending-edit-remove-glyph {
           background-color: #f38ba8;
@@ -677,7 +714,8 @@ export default function Editor({
         }
         .pending-edit-remove-text {
           text-decoration: line-through;
-          opacity: 0.7;
+          text-decoration-color: #f38ba8;
+          opacity: 0.8;
         }
       `}</style>
     </div>
