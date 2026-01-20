@@ -104,6 +104,7 @@ export default function Home() {
   const [pdfViewerWidth, setPdfViewerWidth] = useState(400);
   const [agentPanelWidth, setAgentPanelWidth] = useState(350);
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
+  const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Panel resize constraints
@@ -1087,13 +1088,19 @@ export default function Home() {
 
         {/* Resize Handle: PDF Viewer | Agent Panel (only if open) */}
         {isAgentPanelOpen && (
-          <ResizeHandle onResize={handleAgentPanelResize} />
+          <ResizeHandle
+            onResize={handleAgentPanelResize}
+            onResizeStart={() => setIsResizing(true)}
+            onResizeEnd={() => setIsResizing(false)}
+          />
         )}
 
         {/* Agent Panel (Collapsible) */}
         <div
           style={{ width: isAgentPanelOpen ? agentPanelWidth : 0 }}
-          className={`flex-shrink-0 overflow-hidden transition-all duration-300 ${
+          className={`flex-shrink-0 overflow-hidden ${
+            isResizing ? '' : 'transition-all duration-300'
+          } ${
             isAgentPanelOpen ? 'opacity-100' : 'opacity-0 w-0'
           }`}
         >
