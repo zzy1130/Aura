@@ -14,6 +14,12 @@ from anthropic import AsyncAnthropic
 
 from services.latex_parser import BibEntry
 from services.semantic_scholar import Paper, SemanticScholarClient
+from agent.tools.citation_management.citation_api import (
+    CrossRefClient,
+    PubMedClient,
+    CitationMetadata,
+    MetadataExtractor,
+)
 
 
 # Citation patterns (same as latex_parser but we need the positions)
@@ -145,52 +151,87 @@ async def lookup_paper(
     http_client: httpx.AsyncClient,
 ) -> tuple[bool, Optional[Paper], list[str]]:
     """
-    Look up a paper in Semantic Scholar.
+    Look up a paper using multiple sources for better accuracy.
 
     Tries in order:
-    1. DOI lookup
-    2. arXiv ID lookup
-    3. Title search
+    1. DOI lookup via CrossRef (most reliable)
+    2. arXiv ID lookup via Semantic Scholar
+    3. Title search via PubMed (good for medical/bio papers)
+    4. Title search via Semantic Scholar (fallback)
 
     Returns:
         (exists, matched_paper, metadata_issues)
     """
-    s2_client = SemanticScholarClient(http_client)
     fields = bib_entry.fields
     metadata_issues: list[str] = []
 
-    # Try DOI first
+    # Try DOI first via CrossRef (more reliable than S2)
     doi = fields.get("doi", "")
     if doi:
-        paper = await s2_client.get_paper(f"DOI:{doi}")
-        if paper:
-            issues = _compare_metadata(bib_entry, paper)
-            return True, paper, issues
-
-    # Try arXiv ID
-    arxiv_id = fields.get("eprint", "") or fields.get("arxiv", "")
-    if arxiv_id:
-        # Clean up arXiv ID (remove version suffix like v1, v2)
-        arxiv_clean = re.sub(r"v\d+$", "", arxiv_id)
-        paper = await s2_client.get_paper(f"arXiv:{arxiv_clean}")
-        if paper:
-            issues = _compare_metadata(bib_entry, paper)
-            return True, paper, issues
-
-    # Fall back to title search
-    title = fields.get("title", "")
-    if title:
-        # Clean title (remove braces, extra whitespace)
-        clean_title = re.sub(r"[{}]", "", title).strip()
-        papers = await s2_client.search(clean_title, limit=5)
-
-        # Find best match by title similarity
-        for paper in papers:
-            if _titles_match(clean_title, paper.title):
+        try:
+            crossref = CrossRefClient(http_client)
+            citation = await crossref.lookup_doi(doi)
+            if citation:
+                paper = _citation_to_paper(citation)
                 issues = _compare_metadata(bib_entry, paper)
                 return True, paper, issues
+        except Exception:
+            pass  # Fall through to other methods
 
-    return False, None, ["Paper not found in Semantic Scholar"]
+    # Try Semantic Scholar for arXiv papers
+    arxiv_id = fields.get("eprint", "") or fields.get("arxiv", "")
+    if arxiv_id:
+        try:
+            s2_client = SemanticScholarClient(http_client)
+            arxiv_clean = re.sub(r"v\d+$", "", arxiv_id)
+            paper = await s2_client.get_paper(f"arXiv:{arxiv_clean}")
+            if paper:
+                issues = _compare_metadata(bib_entry, paper)
+                return True, paper, issues
+        except Exception:
+            pass
+
+    # Try title search via PubMed first (better for medical/bio)
+    title = fields.get("title", "")
+    if title:
+        clean_title = re.sub(r"[{}]", "", title).strip()
+
+        try:
+            pubmed = PubMedClient(http_client)
+            results = await pubmed.search(clean_title, max_results=3)
+            for citation in results:
+                if _titles_match(clean_title, citation.title):
+                    paper = _citation_to_paper(citation)
+                    issues = _compare_metadata(bib_entry, paper)
+                    return True, paper, issues
+        except Exception:
+            pass  # Fall through to Semantic Scholar
+
+        # Fall back to Semantic Scholar title search
+        try:
+            s2_client = SemanticScholarClient(http_client)
+            papers = await s2_client.search(clean_title, limit=5)
+            for paper in papers:
+                if _titles_match(clean_title, paper.title):
+                    issues = _compare_metadata(bib_entry, paper)
+                    return True, paper, issues
+        except Exception:
+            pass
+
+    return False, None, ["Paper not found in CrossRef, PubMed, or Semantic Scholar"]
+
+
+def _citation_to_paper(citation: CitationMetadata) -> Paper:
+    """Convert CitationMetadata to Paper object for compatibility."""
+    return Paper(
+        paper_id=citation.doi or citation.pmid or "",
+        title=citation.title,
+        authors=citation.authors,
+        year=citation.year,
+        abstract=citation.abstract or "",
+        citation_count=citation.citation_count,
+        url=citation.url or "",
+    )
 
 
 def _titles_match(bib_title: str, paper_title: str, threshold: float = 0.8) -> bool:
