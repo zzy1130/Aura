@@ -3,6 +3,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import {
   Send,
   User,
@@ -17,6 +20,7 @@ import {
   Square,
   MessageSquare,
   Microscope,
+  BookOpen,
   Plus,
   X,
   Check,
@@ -26,6 +30,7 @@ import {
 import { PendingEdit, SendToAgentContext } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
 import VibeResearchView from './VibeResearchView';
+import CitationVerifierPanel from './CitationVerifierPanel';
 import CommandPalette from './CommandPalette';
 import TaskList, { Task } from './TaskList';
 import { api, VibeSessionSummary, ChatSession } from '../lib/api';
@@ -47,7 +52,7 @@ import {
 import ModelSelector from './ModelSelector';
 
 // Mode types
-type AgentMode = 'chat' | 'vibe';
+type AgentMode = 'chat' | 'vibe' | 'verifier';
 
 interface AgentPanelProps {
   projectPath: string | null;
@@ -177,13 +182,18 @@ function ToolCallDisplay({
   );
 }
 
-// Text part display
+// Text part display with LaTeX support
 function TextPartDisplay({ content }: { content: string }) {
   if (!content.trim()) return null;
 
   return (
     <div className="typo-body prose prose-sm max-w-none prose-headings:text-primary prose-p:text-primary prose-strong:text-primary prose-code:text-green1 prose-code:bg-green3/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-fill-secondary prose-pre:border prose-pre:border-black/6 prose-ul:text-primary prose-ol:text-primary prose-li:text-primary prose-table:w-full prose-th:bg-fill-secondary prose-th:border prose-th:border-black/12 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-td:border prose-td:border-black/12 prose-td:px-3 prose-td:py-2 my-1">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -617,9 +627,12 @@ export default function AgentPanel({
   }, [isStreaming]);
 
   // Send message to agent
-  const sendMessage = useCallback(async (messageContent?: string) => {
+  const sendMessage = useCallback(async (messageContent?: string, displayContent?: string) => {
     let content = messageContent || input.trim();
     if (!content || isStreaming || !projectPath) return;
+
+    // Display content is what shows in the UI (shorter version for commands)
+    const displayMessage = displayContent || content;
 
     // If no session is selected, create one first
     let sessionId = selectedChatSession;
@@ -655,7 +668,7 @@ export default function AgentPanel({
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      parts: [{ type: 'text', content }],
+      parts: [{ type: 'text', content: displayMessage }],
       timestamp: new Date(),
     };
 
@@ -1143,7 +1156,10 @@ export default function AgentPanel({
     if (cmd.executionType === 'agent') {
       // Transform to natural language and send to agent
       const message = cmd.toAgentMessage?.(argument) || argument;
-      sendMessage(message);
+      // Create a short display version: /command argument_preview...
+      const argPreview = argument.length > 50 ? argument.substring(0, 50) + '...' : argument;
+      const displayMessage = `/${cmd.name} ${argPreview}`.trim();
+      sendMessage(message, displayMessage);
     } else if (cmd.executionType === 'api' && cmd.execute) {
       // Direct API execution
       try {
@@ -1282,6 +1298,18 @@ export default function AgentPanel({
               <Microscope size={14} className="flex-shrink-0" />
               <span className="hidden sm:inline">Vibe</span>
             </button>
+            <button
+              onClick={() => setMode('verifier')}
+              disabled={isStreaming}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-yw-md typo-small transition-all whitespace-nowrap ${
+                mode === 'verifier'
+                  ? 'bg-white text-green1 shadow-sm'
+                  : 'text-secondary hover:text-primary'
+              } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <BookOpen size={14} className="flex-shrink-0" />
+              <span className="hidden sm:inline">Verify</span>
+            </button>
           </div>
 
           {/* Spacer */}
@@ -1299,7 +1327,7 @@ export default function AgentPanel({
       </div>
 
       {/* Content based on mode */}
-      {mode === 'chat' ? (
+      {mode === 'chat' && (
         <>
           {/* Chat Session Selector */}
           <div className="p-3 border-b border-black/6 bg-white flex items-center gap-2 min-w-0">
@@ -1498,7 +1526,9 @@ export default function AgentPanel({
             </div>
           </div>
         </>
-      ) : (
+      )}
+
+      {mode === 'vibe' && (
         /* Vibe Research Mode */
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Session selector */}
@@ -1598,6 +1628,13 @@ export default function AgentPanel({
             </div>
           )}
         </div>
+      )}
+
+      {mode === 'verifier' && projectPath && (
+        <CitationVerifierPanel
+          projectPath={projectPath}
+          onClose={() => setMode('chat')}
+        />
       )}
 
       {/* Domain Preference Modal */}
