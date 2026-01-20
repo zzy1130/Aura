@@ -293,6 +293,45 @@ export interface ChatSessionDetail extends ChatSession {
 }
 
 // =============================================================================
+// Literature Verifier Types
+// =============================================================================
+
+export interface CitationUsage {
+  cite_key: string;
+  line_number: number;
+  surrounding_text: string;
+  claim: string;
+}
+
+export interface VerificationResult {
+  cite_key: string;
+  status: 'verified' | 'warning' | 'error' | 'pending';
+  exists: boolean;
+  matched_paper: {
+    paper_id: string;
+    title: string;
+    authors: string[];
+    year?: number;
+    abstract: string;
+    citation_count: number;
+    url: string;
+  } | null;
+  metadata_issues: string[];
+  context_score: number;
+  context_explanation: string;
+  checked_via: 'abstract' | 'pdf' | 'skipped' | 'failed';
+  bib_entry: {
+    key: string;
+    fields: Record<string, string>;
+  } | null;
+  usages: CitationUsage[];
+}
+
+export interface VerifierState {
+  approved_citations: string[];
+}
+
+// =============================================================================
 // API Client
 // =============================================================================
 
@@ -1403,6 +1442,88 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  // ===========================================================================
+  // Literature Verifier Operations
+  // ===========================================================================
+
+  /**
+   * Get verifier state (approved citations)
+   */
+  async getVerifierState(projectPath: string): Promise<VerifierState> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/verify-references/state?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] getVerifierState:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Approve a citation manually
+   */
+  async approveCitation(projectPath: string, citeKey: string): Promise<{ success: boolean }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/verify-references/approve`;
+    console.log('[API] approveCitation:', url, { citeKey });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        cite_key: citeKey,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Remove approval from a citation
+   */
+  async unapproveCitation(projectPath: string, citeKey: string): Promise<{ success: boolean }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/verify-references/unapprove`;
+    console.log('[API] unapproveCitation:', url, { citeKey });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        cite_key: citeKey,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get base URL for SSE streaming
+   */
+  getVerifyReferencesUrl(_projectPath: string): string {
+    return `${this.baseUrl}/api/verify-references`;
   }
 
   // ===========================================================================
