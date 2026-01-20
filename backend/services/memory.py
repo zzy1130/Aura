@@ -127,6 +127,11 @@ class MemoryData:
     conventions: list[dict] = field(default_factory=list)
     todos: list[dict] = field(default_factory=list)
     notes: list[dict] = field(default_factory=list)
+    # Literature verifier state (isolated from agent memory)
+    literature_verifier: dict = field(default_factory=lambda: {
+        "approved_citations": [],
+        "last_run": None,
+    })
 
     def __post_init__(self):
         if not self.created_at:
@@ -165,6 +170,10 @@ class MemoryService:
                 conventions=data.get("conventions", []),
                 todos=data.get("todos", []),
                 notes=data.get("notes", []),
+                literature_verifier=data.get("literature_verifier", {
+                    "approved_citations": [],
+                    "last_run": None,
+                }),
             )
         except (json.JSONDecodeError, KeyError):
             return MemoryData()
@@ -294,3 +303,27 @@ class MemoryService:
             return ""
 
         return "## Project Memory\n\n" + "\n\n".join(sections)
+
+    def get_approved_citations(self) -> list[str]:
+        """Get list of manually approved citation keys."""
+        memory = self.load()
+        return memory.literature_verifier.get("approved_citations", [])
+
+    def approve_citation(self, cite_key: str) -> None:
+        """Mark a citation as manually approved."""
+        memory = self.load()
+        approved = memory.literature_verifier.get("approved_citations", [])
+        if cite_key not in approved:
+            approved.append(cite_key)
+            memory.literature_verifier["approved_citations"] = approved
+            memory.literature_verifier["last_run"] = datetime.now().isoformat()
+            self.save(memory)
+
+    def unapprove_citation(self, cite_key: str) -> None:
+        """Remove manual approval from a citation."""
+        memory = self.load()
+        approved = memory.literature_verifier.get("approved_citations", [])
+        if cite_key in approved:
+            approved.remove(cite_key)
+            memory.literature_verifier["approved_citations"] = approved
+            self.save(memory)
