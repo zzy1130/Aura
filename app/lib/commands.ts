@@ -18,7 +18,7 @@ export interface CommandContext {
 export interface CommandResult {
   success: boolean;
   message?: string;
-  switchMode?: 'chat' | 'vibe';
+  switchMode?: 'chat' | 'vibe' | 'verifier';
   vibeSessionId?: string;
 }
 
@@ -101,21 +101,26 @@ export const commands: SlashCommand[] = [
     requiresArg: true,
     argPlaceholder: 'selected text',
     executionType: 'agent',
-    toAgentMessage: (arg) => `Polish and improve the following text, then use edit_file to replace it in the document.
+    toAgentMessage: (arg) => `Polish and improve ONLY the following text, then use edit_file to replace it in the document.
+
+CRITICAL RULES:
+- ONLY polish the exact text provided below
+- Do NOT edit any other parts of the document
+- When you finish editing this text, STOP immediately
 
 INSTRUCTIONS:
-1. First, identify which file contains this text (likely main.tex or the currently open file)
-2. Use search_in_file to find the exact location of this text
-3. Polish the text (improve clarity, grammar, academic tone)
+1. Use search_in_file to find the exact location of this text
+2. Read the SURROUNDING CONTEXT (lines before and after) to understand the flow
+3. Polish the text - ensure it fits naturally with the surrounding content
 4. Use edit_file to replace the original text with the polished version
-5. The edit_file tool will trigger approval - the user will review before applying
+5. After the edit is applied, STOP. Do NOT make any more edits.
 
 Text to polish:
 ---
 ${arg}
 ---
 
-Remember: You MUST use edit_file to apply the changes. Do NOT just output the polished text.`,
+Remember: Read context first, make ONE edit, then STOP.`,
   },
   {
     name: 'analyze',
@@ -143,6 +148,23 @@ Remember: You MUST use edit_file to apply the changes. Do NOT just output the po
     requiresArg: false,
     executionType: 'agent',
     toAgentMessage: () => 'Clean the bibliography by identifying and removing any unused citation entries.',
+  },
+  {
+    name: 'literature-verifier',
+    description: 'Verify all citations are real and used correctly',
+    icon: 'BookCheck',
+    category: 'writing',
+    requiresArg: false,
+    executionType: 'api',
+    execute: async ({ projectPath: _projectPath }) => {
+      // This command switches the UI to verifier mode
+      // The actual verification is handled by AgentPanel
+      return {
+        success: true,
+        message: 'Opening literature verifier...',
+        switchMode: 'verifier' as const,
+      };
+    },
   },
 
   // ─────────────────────────────────────────────────────────────────────────
