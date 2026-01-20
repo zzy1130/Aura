@@ -117,7 +117,7 @@ export default function CitationVerifierPanel({
       setIsRunning(false);
       abortControllerRef.current = null;
     }
-  }, [projectPath, isRunning]);
+  }, [projectPath]);
 
   // Auto-run on mount
   useEffect(() => {
@@ -170,7 +170,7 @@ export default function CitationVerifierPanel({
       <div className="panel-header bg-white border-b border-black/6">
         <div className="flex items-center justify-between w-full">
           <h2 className="typo-h4 flex items-center gap-2">
-            Reference Verification
+            📚 Reference Verification
           </h2>
           <div className="flex items-center gap-2">
             <button
