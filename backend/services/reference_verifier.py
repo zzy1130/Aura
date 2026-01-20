@@ -302,3 +302,145 @@ async def validate_context(
 
     except Exception as e:
         return 0.5, f"Validation failed: {str(e)}", "UNCERTAIN"
+
+
+# =============================================================================
+# Main Verifier Class
+# =============================================================================
+
+from pathlib import Path
+from typing import AsyncGenerator
+import logging
+
+from services.latex_parser import parse_bib_file_path
+
+logger = logging.getLogger(__name__)
+
+
+class ReferenceVerifier:
+    """
+    Orchestrates reference verification for a LaTeX project.
+
+    Verification steps:
+    1. Parse .bib file to get all entries
+    2. Parse .tex file(s) to find citation usages
+    3. For each citation:
+       a. Look up paper in Semantic Scholar
+       b. Compare metadata
+       c. Validate context claims
+    """
+
+    def __init__(
+        self,
+        project_path: str,
+        http_client: httpx.AsyncClient,
+        anthropic_client: AsyncAnthropic,
+    ):
+        self.project_path = Path(project_path)
+        self.http_client = http_client
+        self.anthropic_client = anthropic_client
+
+    def _find_bib_file(self) -> Optional[Path]:
+        """Find the .bib file in the project."""
+        bib_files = list(self.project_path.glob("*.bib"))
+        if bib_files:
+            return bib_files[0]
+        return None
+
+    def _find_tex_files(self) -> list[Path]:
+        """Find all .tex files in the project."""
+        return list(self.project_path.glob("**/*.tex"))
+
+    async def verify_all(self) -> AsyncGenerator[VerificationResult, None]:
+        """
+        Verify all citations in the project.
+
+        Yields VerificationResult for each citation as verification completes.
+        """
+        # Find bib file
+        bib_path = self._find_bib_file()
+        if not bib_path:
+            logger.warning("No .bib file found")
+            return
+
+        # Parse bib entries
+        bib_entries = parse_bib_file_path(bib_path)
+        if not bib_entries:
+            logger.warning("No entries in .bib file")
+            return
+
+        # Read all tex content
+        tex_content = ""
+        for tex_path in self._find_tex_files():
+            try:
+                tex_content += tex_path.read_text(encoding="utf-8", errors="replace")
+                tex_content += "\n"
+            except Exception as e:
+                logger.error(f"Failed to read {tex_path}: {e}")
+
+        # Verify each entry
+        for entry in bib_entries:
+            result = await self._verify_entry(entry, tex_content)
+            yield result
+
+    async def _verify_entry(
+        self,
+        entry: BibEntry,
+        tex_content: str,
+    ) -> VerificationResult:
+        """Verify a single bibliography entry."""
+        cite_key = entry.key
+
+        # Extract usage contexts
+        usages = extract_citation_contexts(tex_content, cite_key)
+
+        # Look up paper
+        exists, paper, metadata_issues = await lookup_paper(entry, self.http_client)
+
+        if not exists:
+            return VerificationResult(
+                cite_key=cite_key,
+                status="error",
+                exists=False,
+                metadata_issues=metadata_issues,
+                bib_entry={"key": entry.key, "fields": entry.fields},
+                usages=usages,
+            )
+
+        # Validate context if we have usages and abstract
+        context_score = 0.0
+        context_explanation = ""
+        checked_via = "skipped"
+
+        if usages and paper and paper.abstract:
+            # Use first usage for context validation
+            first_claim = usages[0].claim
+            if first_claim:
+                context_score, context_explanation, verdict = await validate_context(
+                    claim=first_claim,
+                    paper_title=paper.title,
+                    paper_abstract=paper.abstract,
+                    anthropic_client=self.anthropic_client,
+                )
+                checked_via = "abstract"
+
+        # Determine status
+        if metadata_issues:
+            status = "warning"
+        elif context_score < 0.4:
+            status = "warning"
+        else:
+            status = "verified"
+
+        return VerificationResult(
+            cite_key=cite_key,
+            status=status,
+            exists=True,
+            matched_paper=paper.to_dict() if paper else None,
+            metadata_issues=metadata_issues,
+            context_score=context_score,
+            context_explanation=context_explanation,
+            checked_via=checked_via,
+            bib_entry={"key": entry.key, "fields": entry.fields},
+            usages=usages,
+        )
