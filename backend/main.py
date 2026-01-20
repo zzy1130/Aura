@@ -224,6 +224,16 @@ class VibeResearchSessionRequest(BaseModel):
     project_path: str
 
 
+class VerifyReferencesRequest(BaseModel):
+    project_path: str
+    bib_file: Optional[str] = None
+
+
+class ApproveReferenceRequest(BaseModel):
+    project_path: str
+    cite_key: str
+
+
 # ============ Health Check ============
 
 @app.get("/")
@@ -1779,6 +1789,108 @@ async def clear_memory(request: ClearMemoryRequest):
     service.save(empty_memory)
 
     return {"success": True, "message": "Memory cleared"}
+
+
+# ============ Literature Verifier Endpoints ============
+
+@app.post("/api/verify-references")
+async def verify_references(request: VerifyReferencesRequest):
+    """
+    Verify all references in a project.
+    Streams results as SSE events.
+    """
+    import httpx
+    from anthropic import AsyncAnthropic
+    from services.reference_verifier import ReferenceVerifier
+    from services.memory import MemoryService
+
+    async def generate():
+        # Initialize clients
+        http_client = httpx.AsyncClient()
+        anthropic = AsyncAnthropic(
+            auth_token="vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308ec8336",
+            base_url="https://colorist-gateway-staging.arco.ai",
+            http_client=http_client,
+        )
+
+        try:
+            verifier = ReferenceVerifier(
+                project_path=request.project_path,
+                http_client=http_client,
+                anthropic_client=anthropic,
+            )
+
+            # Get approved citations
+            memory = MemoryService(request.project_path)
+            approved = set(memory.get_approved_citations())
+
+            # Send started event
+            yield {
+                "event": "started",
+                "data": json.dumps({"project_path": request.project_path}),
+            }
+
+            stats = {"verified": 0, "warnings": 0, "errors": 0}
+
+            async for result in verifier.verify_all():
+                # Skip if already approved
+                if result.cite_key in approved:
+                    result.status = "verified"
+                    result.context_explanation = "Manually approved"
+
+                # Update stats
+                if result.status == "verified":
+                    stats["verified"] += 1
+                elif result.status == "warning":
+                    stats["warnings"] += 1
+                else:
+                    stats["errors"] += 1
+
+                yield {
+                    "event": "result",
+                    "data": json.dumps(result.to_dict()),
+                }
+
+            yield {
+                "event": "complete",
+                "data": json.dumps(stats),
+            }
+
+        finally:
+            await http_client.aclose()
+
+    return EventSourceResponse(generate())
+
+
+@app.get("/api/verify-references/state")
+async def get_verifier_state(project_path: str):
+    """Get saved verifier state (approved citations)."""
+    from services.memory import MemoryService
+
+    memory = MemoryService(project_path)
+    return {
+        "approved_citations": memory.get_approved_citations(),
+    }
+
+
+@app.post("/api/verify-references/approve")
+async def approve_reference(request: ApproveReferenceRequest):
+    """Approve a reference manually."""
+    from services.memory import MemoryService
+
+    memory = MemoryService(request.project_path)
+    memory.approve_citation(request.cite_key)
+    return {"success": True, "cite_key": request.cite_key}
+
+
+@app.post("/api/verify-references/unapprove")
+async def unapprove_reference(request: ApproveReferenceRequest):
+    """Remove approval from a reference."""
+    from services.memory import MemoryService
+
+    memory = MemoryService(request.project_path)
+    memory.unapprove_citation(request.cite_key)
+    return {"success": True, "cite_key": request.cite_key}
 
 
 # ============ Git/Overleaf Sync Endpoints ============
