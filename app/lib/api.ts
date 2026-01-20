@@ -8,6 +8,14 @@
 // Types
 // =============================================================================
 
+export interface OutlineSection {
+  name: string;
+  level: number;
+  line: number;
+  label: string | null;
+  children: OutlineSection[];
+}
+
 export interface CompileResult {
   success: boolean;
   pdf_path: string | null;
@@ -502,6 +510,33 @@ class ApiClient {
   }
 
   /**
+   * Get document outline (section structure) for a LaTeX file
+   */
+  async getOutline(projectPath: string, filepath: string = 'main.tex'): Promise<OutlineSection[]> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/outline`;
+    console.log('[API] getOutline:', url, { projectPath, filepath });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: projectPath,
+        filepath,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.outline;
+  }
+
+  /**
    * List files in any directory (works with any path)
    */
   async listFiles(projectPath: string): Promise<ProjectFile[]> {
@@ -723,7 +758,7 @@ class ApiClient {
   /**
    * Sync project with Overleaf (pull then push)
    */
-  async syncProject(projectPath: string, commitMessage?: string): Promise<SyncResult> {
+  async syncProject(projectPath: string, commitMessage?: string, filepath?: string): Promise<SyncResult> {
     await this.ensureInitialized();
 
     const url = `${this.baseUrl}/api/sync`;
@@ -733,6 +768,7 @@ class ApiClient {
       body: JSON.stringify({
         project_path: projectPath,
         commit_message: commitMessage,
+        filepath: filepath,
       }),
     });
 

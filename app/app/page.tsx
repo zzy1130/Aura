@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Toolbar from '@/components/Toolbar';
 import FileTree from '@/components/FileTree';
+import FileOutline from '@/components/FileOutline';
 import Editor, { PendingEdit, SendToAgentContext } from '@/components/Editor';
 import PDFViewer from '@/components/PDFViewer';
 import MarkdownPreview from '@/components/MarkdownPreview';
@@ -103,8 +104,10 @@ export default function Home() {
   const [fileTreeWidth, setFileTreeWidth] = useState(200);
   const [pdfViewerWidth, setPdfViewerWidth] = useState(400);
   const [agentPanelWidth, setAgentPanelWidth] = useState(350);
+  const [outlineHeight, setOutlineHeight] = useState(200);
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
   const [isResizing, setIsResizing] = useState(false);
+  const [containerWidth, setContainerWidth] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Panel resize constraints
@@ -112,6 +115,8 @@ export default function Home() {
   const MAX_FILE_TREE = 400;
   const MIN_PDF_VIEWER = 300;
   const MIN_AGENT_PANEL = 280;
+  const MIN_OUTLINE_HEIGHT = 100;
+  const MAX_OUTLINE_HEIGHT = 400;
 
   // File type detection
   const isMarkdownFile = useMemo(() => {
@@ -139,6 +144,25 @@ export default function Home() {
     import('@/lib/providerSettings').then(({ initializeSettings }) => {
       initializeSettings().catch(console.error);
     });
+  }, []);
+
+  // Track container width for panel layout calculations
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Set initial width
+    setContainerWidth(container.clientWidth);
+
+    // Use ResizeObserver to track width changes
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
   }, []);
 
   // Check Docker status on app startup
@@ -416,6 +440,12 @@ export default function Home() {
     setSyncTexColumn(null);
   }, []);
 
+  // Handler for outline navigation (jump to line in editor)
+  const handleOutlineNavigate = useCallback((line: number) => {
+    setSyncTexLine(line);
+    setSyncTexColumn(null);
+  }, []);
+
   // =============================================================================
   // Compilation
   // =============================================================================
@@ -547,7 +577,8 @@ export default function Home() {
         await handleSave();
       }
 
-      const result = await api.syncProject(project.path);
+      // Sync only the current file (if selected)
+      const result = await api.syncProject(project.path, undefined, project.currentFile || undefined);
 
       if (result.success) {
         // Refresh file list after sync
@@ -929,49 +960,55 @@ export default function Home() {
 
   // Calculate editor width dynamically (fills remaining space)
   const editorWidth = useMemo(() => {
-    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    // Use tracked container width, fall back to window width for initial render
+    const effectiveContainerWidth = containerWidth || (typeof window !== 'undefined' ? window.innerWidth : 1200);
     const handleCount = isAgentPanelOpen ? 3 : 2;
     const totalHandleWidth = RESIZE_HANDLE_WIDTH * handleCount;
     const agentWidth = isAgentPanelOpen ? agentPanelWidth : 0;
-    const calculatedWidth = containerWidth - fileTreeWidth - pdfViewerWidth - agentWidth - totalHandleWidth;
+    const calculatedWidth = effectiveContainerWidth - fileTreeWidth - pdfViewerWidth - agentWidth - totalHandleWidth;
     return Math.max(MIN_EDITOR, calculatedWidth);
-  }, [fileTreeWidth, pdfViewerWidth, agentPanelWidth, isAgentPanelOpen]);
+  }, [containerWidth, fileTreeWidth, pdfViewerWidth, agentPanelWidth, isAgentPanelOpen]);
 
   const handleFileTreeResize = useCallback((delta: number) => {
-    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    const effectiveContainerWidth = containerWidth || 1200;
     const handleCount = isAgentPanelOpen ? 3 : 2;
     const totalHandleWidth = RESIZE_HANDLE_WIDTH * handleCount;
     const agentWidth = isAgentPanelOpen ? agentPanelWidth : 0;
 
     // Calculate maximum file tree width that still leaves MIN_EDITOR for editor
-    const maxFileTree = containerWidth - MIN_EDITOR - pdfViewerWidth - agentWidth - totalHandleWidth;
+    const maxFileTree = effectiveContainerWidth - MIN_EDITOR - pdfViewerWidth - agentWidth - totalHandleWidth;
 
     setFileTreeWidth((prev) => Math.max(MIN_FILE_TREE, Math.min(Math.min(MAX_FILE_TREE, maxFileTree), prev + delta)));
-  }, [pdfViewerWidth, agentPanelWidth, isAgentPanelOpen]);
+  }, [containerWidth, pdfViewerWidth, agentPanelWidth, isAgentPanelOpen]);
 
   const handlePdfViewerResize = useCallback((delta: number) => {
-    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    const effectiveContainerWidth = containerWidth || 1200;
     const handleCount = isAgentPanelOpen ? 3 : 2;
     const totalHandleWidth = RESIZE_HANDLE_WIDTH * handleCount;
     const agentWidth = isAgentPanelOpen ? agentPanelWidth : 0;
 
     // Calculate maximum PDF width that still leaves MIN_EDITOR for editor
-    const maxPdfWidth = containerWidth - fileTreeWidth - MIN_EDITOR - agentWidth - totalHandleWidth;
+    const maxPdfWidth = effectiveContainerWidth - fileTreeWidth - MIN_EDITOR - agentWidth - totalHandleWidth;
 
     // Negative delta because handle is on the left of PDF panel
     setPdfViewerWidth((prev) => Math.max(MIN_PDF_VIEWER, Math.min(maxPdfWidth, prev - delta)));
-  }, [fileTreeWidth, agentPanelWidth, isAgentPanelOpen]);
+  }, [containerWidth, fileTreeWidth, agentPanelWidth, isAgentPanelOpen]);
 
   const handleAgentPanelResize = useCallback((delta: number) => {
-    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    const effectiveContainerWidth = containerWidth || 1200;
     const totalHandleWidth = RESIZE_HANDLE_WIDTH * 3;
 
     // Calculate maximum agent panel width that still leaves MIN_EDITOR for editor
-    const maxAgentWidth = containerWidth - fileTreeWidth - MIN_EDITOR - pdfViewerWidth - totalHandleWidth;
+    const maxAgentWidth = effectiveContainerWidth - fileTreeWidth - MIN_EDITOR - pdfViewerWidth - totalHandleWidth;
 
     // Negative delta because handle is on the left of agent panel
     setAgentPanelWidth((prev) => Math.max(MIN_AGENT_PANEL, Math.min(maxAgentWidth, prev - delta)));
-  }, [fileTreeWidth, pdfViewerWidth]);
+  }, [containerWidth, fileTreeWidth, pdfViewerWidth]);
+
+  const handleOutlineResize = useCallback((delta: number) => {
+    // Negative delta because handle is at the top of outline (dragging up increases height)
+    setOutlineHeight((prev) => Math.max(MIN_OUTLINE_HEIGHT, Math.min(MAX_OUTLINE_HEIGHT, prev - delta)));
+  }, []);
 
   const toggleAgentPanel = useCallback(() => {
     setIsAgentPanelOpen((prev) => !prev);
@@ -1026,16 +1063,25 @@ export default function Home() {
         {/* File Tree */}
         <div
           style={{ width: fileTreeWidth }}
-          className="flex-shrink-0 overflow-hidden bg-sidebar-bg"
+          className="flex-shrink-0 overflow-hidden bg-sidebar-bg flex flex-col"
         >
-          <FileTree
+          <div className="flex-1 overflow-auto">
+            <FileTree
+              projectPath={project.path}
+              files={project.files}
+              currentFile={project.currentFile}
+              onFileSelect={handleFileSelect}
+              onRefresh={handleRefreshFiles}
+              contextMenuHandlers={fileContextMenuHandlers}
+              clipboardHasContent={!!fileClipboard}
+            />
+          </div>
+          <FileOutline
             projectPath={project.path}
-            files={project.files}
             currentFile={project.currentFile}
-            onFileSelect={handleFileSelect}
-            onRefresh={handleRefreshFiles}
-            contextMenuHandlers={fileContextMenuHandlers}
-            clipboardHasContent={!!fileClipboard}
+            onNavigate={handleOutlineNavigate}
+            height={outlineHeight}
+            onResize={handleOutlineResize}
           />
         </div>
 

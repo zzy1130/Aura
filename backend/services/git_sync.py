@@ -464,9 +464,12 @@ class GitSyncService:
             message="Successfully connected to Overleaf. You can now sync your project.",
         )
 
-    async def pull(self) -> SyncResult:
+    async def pull(self, filepath: Optional[str] = None) -> SyncResult:
         """
         Pull changes from Overleaf.
+
+        Args:
+            filepath: Only commit this file before pulling (optional)
 
         Returns:
             SyncResult with pull status
@@ -507,8 +510,14 @@ class GitSyncService:
                 )
         else:
             # Regular sync: commit local changes and merge
-            await self._run_git("add", "-A", check=False)
-            await self._run_git("commit", "-m", "Auto-commit before pull", check=False)
+            if filepath:
+                # Only add the specific file
+                await self._run_git("add", filepath, check=False)
+                await self._run_git("commit", "-m", f"Auto-commit {filepath} before pull", check=False)
+            else:
+                # Add all changes
+                await self._run_git("add", "-A", check=False)
+                await self._run_git("commit", "-m", "Auto-commit before pull", check=False)
 
             # Pull from origin (fetch remote master, merge into local branch)
             await self._run_git("fetch", "origin", "master", check=False, timeout=60)
@@ -525,18 +534,22 @@ class GitSyncService:
                         f.strip() for f in conflict_result.stdout.split("\n") if f.strip()
                     ]
 
+                    # Auto-resolve conflicts by keeping local version
+                    logger.info(f"Auto-resolving {len(conflicts)} conflicts with local version")
+                    for filepath in conflicts:
+                        await self._run_git("checkout", "--ours", filepath, check=False)
+                        await self._run_git("add", filepath, check=False)
+
+                    # Complete the merge
+                    await self._run_git("commit", "-m", "Auto-resolved conflicts (kept local)", check=False)
+
+                    logger.info("Conflicts auto-resolved, continuing sync")
+                else:
                     return SyncResult(
                         success=False,
                         operation="pull",
-                        message="Merge conflicts detected. Please resolve manually.",
-                        conflicts=conflicts,
+                        message=f"Pull failed: {result.stderr}",
                     )
-
-                return SyncResult(
-                    success=False,
-                    operation="pull",
-                    message=f"Pull failed: {result.stderr}",
-                )
 
         # Get list of changed files
         changed_files = []
@@ -559,12 +572,13 @@ class GitSyncService:
             files_changed=changed_files,
         )
 
-    async def push(self, commit_message: Optional[str] = None) -> SyncResult:
+    async def push(self, commit_message: Optional[str] = None, filepath: Optional[str] = None) -> SyncResult:
         """
         Push local changes to Overleaf.
 
         Args:
             commit_message: Custom commit message (optional)
+            filepath: Only commit this file (optional)
 
         Returns:
             SyncResult with push status
@@ -591,7 +605,18 @@ class GitSyncService:
         # Check for uncommitted changes (no need to fetch for this)
         status = await self.get_status(fetch=False)
 
-        if status.uncommitted_files:
+        if filepath:
+            # Only stage and commit the specific file
+            await self._run_git("add", filepath, check=False)
+            message = commit_message or f"Aura sync {filepath}: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            result = await self._run_git("commit", "-m", message, check=False)
+            if result.returncode != 0 and "nothing to commit" not in result.stdout:
+                return SyncResult(
+                    success=False,
+                    operation="push",
+                    message=f"Commit failed: {result.stderr}",
+                )
+        elif status.uncommitted_files:
             # Stage all changes
             await self._run_git("add", "-A", check=False)
 
@@ -634,7 +659,7 @@ class GitSyncService:
             files_changed=status.uncommitted_files,
         )
 
-    async def sync(self, commit_message: Optional[str] = None) -> SyncResult:
+    async def sync(self, commit_message: Optional[str] = None, filepath: Optional[str] = None) -> SyncResult:
         """
         Full sync: pull then push.
 
@@ -643,17 +668,18 @@ class GitSyncService:
 
         Args:
             commit_message: Custom commit message for local changes
+            filepath: Only sync this file if specified
 
         Returns:
             SyncResult with sync status
         """
-        # First pull
-        pull_result = await self.pull()
+        # First pull (with single file support)
+        pull_result = await self.pull(filepath=filepath)
         if not pull_result.success:
             return pull_result
 
-        # Then push
-        push_result = await self.push(commit_message)
+        # Then push (with single file support)
+        push_result = await self.push(commit_message, filepath=filepath)
         if not push_result.success:
             return push_result
 

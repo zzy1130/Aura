@@ -36,11 +36,45 @@ export default function PDFViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
+  // Store scroll position to restore after recompilation
+  const savedScrollRef = useRef<{ page: number; scrollTop: number } | null>(null);
+  const prevPdfUrlRef = useRef<string | null>(null);
+
+  // Save scroll position when PDF URL is about to change (recompilation)
+  useEffect(() => {
+    if (pdfUrl !== prevPdfUrlRef.current) {
+      // PDF is changing - save current scroll state
+      if (prevPdfUrlRef.current && containerRef.current) {
+        savedScrollRef.current = {
+          page: currentVisiblePage,
+          scrollTop: containerRef.current.scrollTop,
+        };
+      }
+      prevPdfUrlRef.current = pdfUrl;
+    }
+  }, [pdfUrl, currentVisiblePage]);
+
   // Handle document load
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
     setIsLoading(false);
-    setCurrentVisiblePage(1);
+
+    // Restore scroll position after a short delay (to let pages render)
+    if (savedScrollRef.current) {
+      const savedState = savedScrollRef.current;
+      // Use requestAnimationFrame to wait for render
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (containerRef.current) {
+            containerRef.current.scrollTop = savedState.scrollTop;
+          }
+          setCurrentVisiblePage(Math.min(savedState.page, numPages));
+          savedScrollRef.current = null;
+        });
+      });
+    } else {
+      setCurrentVisiblePage(1);
+    }
   }, []);
 
   const onDocumentLoadError = useCallback((error: Error) => {

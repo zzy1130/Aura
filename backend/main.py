@@ -1793,6 +1793,7 @@ class SyncSetupRequest(BaseModel):
 class SyncRequest(BaseModel):
     project_path: str
     commit_message: Optional[str] = None
+    filepath: Optional[str] = None  # Only sync this file if specified
 
 
 class SyncStatusRequest(BaseModel):
@@ -1890,11 +1891,13 @@ async def sync_project(request: SyncRequest) -> dict:
 
     This is the recommended sync operation as it handles
     both incoming and outgoing changes in one operation.
+
+    If filepath is specified, only that file will be committed and pushed.
     """
     from services.git_sync import GitSyncService
 
     sync = GitSyncService(request.project_path)
-    result = await sync.sync(commit_message=request.commit_message)
+    result = await sync.sync(commit_message=request.commit_message, filepath=request.filepath)
 
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
@@ -2358,6 +2361,48 @@ def mark_session_stopped(session_id: str):
 class AnalyzeStructureRequest(BaseModel):
     project_path: str
     filepath: str = "main.tex"
+
+
+class OutlineRequest(BaseModel):
+    project_path: str
+    filepath: str = "main.tex"
+
+
+@app.post("/api/outline")
+async def api_get_outline(request: OutlineRequest):
+    """Get document outline as nested tree structure for File Outline panel."""
+    from pathlib import Path
+    from services.latex_parser import parse_sections, build_section_tree
+
+    filepath = Path(request.project_path) / request.filepath
+
+    # SECURITY: Path traversal check
+    try:
+        filepath.resolve().relative_to(Path(request.project_path).resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filepath")
+
+    if not filepath.exists():
+        return {"outline": [], "success": True}
+
+    content = filepath.read_text(encoding="utf-8", errors="replace")
+    sections = parse_sections(content)
+    tree = build_section_tree(sections)
+
+    def section_to_dict(section) -> dict:
+        """Convert DocumentSection to dict with children."""
+        return {
+            "name": section.name,
+            "level": section.level,
+            "line": section.line_start,
+            "label": section.label,
+            "children": [section_to_dict(child) for child in section.children],
+        }
+
+    return {
+        "outline": [section_to_dict(s) for s in tree],
+        "success": True,
+    }
 
 
 class CreateTableRequest(BaseModel):

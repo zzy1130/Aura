@@ -108,7 +108,7 @@ function TreeNode({
   onFileSelect: (path: string) => void;
   onContextMenu: (e: React.MouseEvent, node: FileNode) => void;
 }) {
-  const [isExpanded, setIsExpanded] = useState(depth < 2);
+  const [isExpanded, setIsExpanded] = useState(false);
   const isSelected = currentFile === node.path;
 
   const handleClick = useCallback(() => {
