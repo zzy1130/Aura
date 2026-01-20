@@ -8,8 +8,11 @@ and are cited in appropriate context.
 import re
 from dataclasses import dataclass, field
 from typing import Literal, Optional
+
+import httpx
+
 from services.latex_parser import BibEntry
-from services.semantic_scholar import Paper
+from services.semantic_scholar import Paper, SemanticScholarClient
 
 
 # Citation patterns (same as latex_parser but we need the positions)
@@ -134,3 +137,97 @@ def extract_citation_contexts(
             ))
 
     return contexts
+
+
+async def lookup_paper(
+    bib_entry: BibEntry,
+    http_client: httpx.AsyncClient,
+) -> tuple[bool, Optional[Paper], list[str]]:
+    """
+    Look up a paper in Semantic Scholar.
+
+    Tries in order:
+    1. DOI lookup
+    2. arXiv ID lookup
+    3. Title search
+
+    Returns:
+        (exists, matched_paper, metadata_issues)
+    """
+    s2_client = SemanticScholarClient(http_client)
+    fields = bib_entry.fields
+    metadata_issues: list[str] = []
+
+    # Try DOI first
+    doi = fields.get("doi", "")
+    if doi:
+        paper = await s2_client.get_paper(f"DOI:{doi}")
+        if paper:
+            issues = _compare_metadata(bib_entry, paper)
+            return True, paper, issues
+
+    # Try arXiv ID
+    arxiv_id = fields.get("eprint", "") or fields.get("arxiv", "")
+    if arxiv_id:
+        # Clean up arXiv ID (remove version suffix like v1, v2)
+        arxiv_clean = re.sub(r"v\d+$", "", arxiv_id)
+        paper = await s2_client.get_paper(f"arXiv:{arxiv_clean}")
+        if paper:
+            issues = _compare_metadata(bib_entry, paper)
+            return True, paper, issues
+
+    # Fall back to title search
+    title = fields.get("title", "")
+    if title:
+        # Clean title (remove braces, extra whitespace)
+        clean_title = re.sub(r"[{}]", "", title).strip()
+        papers = await s2_client.search(clean_title, limit=5)
+
+        # Find best match by title similarity
+        for paper in papers:
+            if _titles_match(clean_title, paper.title):
+                issues = _compare_metadata(bib_entry, paper)
+                return True, paper, issues
+
+    return False, None, ["Paper not found in Semantic Scholar"]
+
+
+def _titles_match(bib_title: str, paper_title: str, threshold: float = 0.8) -> bool:
+    """Check if titles match using simple word overlap."""
+    bib_words = set(bib_title.lower().split())
+    paper_words = set(paper_title.lower().split())
+
+    # Remove common words
+    stopwords = {"a", "an", "the", "of", "in", "on", "for", "to", "and", "with"}
+    bib_words -= stopwords
+    paper_words -= stopwords
+
+    if not bib_words or not paper_words:
+        return False
+
+    overlap = len(bib_words & paper_words)
+    return overlap / max(len(bib_words), len(paper_words)) >= threshold
+
+
+def _compare_metadata(bib_entry: BibEntry, paper: Paper) -> list[str]:
+    """Compare bib entry metadata with found paper."""
+    issues: list[str] = []
+    fields = bib_entry.fields
+
+    # Check year
+    bib_year = fields.get("year", "")
+    if bib_year and paper.year:
+        try:
+            if int(bib_year) != paper.year:
+                issues.append(f"Year mismatch: bib says {bib_year}, found {paper.year}")
+        except ValueError:
+            pass
+
+    # Check title similarity
+    bib_title = re.sub(r"[{}]", "", fields.get("title", "")).strip().lower()
+    paper_title = paper.title.lower()
+    if bib_title and paper_title:
+        if not _titles_match(bib_title, paper_title, threshold=0.7):
+            issues.append(f"Title mismatch: '{bib_title[:50]}...' vs '{paper_title[:50]}...'")
+
+    return issues
