@@ -5,10 +5,22 @@ Verifies that bibliography entries are real papers with correct metadata
 and are cited in appropriate context.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 from services.latex_parser import BibEntry
 from services.semantic_scholar import Paper
+
+
+# Citation patterns (same as latex_parser but we need the positions)
+CITATION_COMMANDS = [
+    "cite", "citep", "citet", "citeauthor", "citeyear",
+    "autocite", "textcite", "parencite", "footcite",
+    "fullcite", "nocite",
+]
+CITATION_REGEX = re.compile(
+    r"\\(" + "|".join(CITATION_COMMANDS) + r")\{([^}]+)\}"
+)
 
 
 @dataclass
@@ -64,3 +76,61 @@ class VerificationResult:
                 for u in self.usages
             ],
         }
+
+
+def extract_citation_contexts(
+    tex_content: str,
+    cite_key: str,
+    context_chars: int = 200,
+) -> list[CitationContext]:
+    """
+    Find all usages of a citation and extract surrounding context.
+
+    Args:
+        tex_content: Full LaTeX document content
+        cite_key: The citation key to find
+        context_chars: Characters to extract around each citation
+
+    Returns:
+        List of CitationContext for each usage
+    """
+    lines = tex_content.split("\n")
+    contexts: list[CitationContext] = []
+
+    for line_num, line in enumerate(lines, start=1):
+        for match in CITATION_REGEX.finditer(line):
+            keys_str = match.group(2)
+            keys = [k.strip() for k in keys_str.split(",")]
+
+            if cite_key not in keys:
+                continue
+
+            # Get position in line
+            cite_start = match.start()
+
+            # Extract claim (text before the citation on this line and previous lines)
+            claim_text = line[:cite_start].strip()
+
+            # If claim is short, include previous line
+            if len(claim_text) < 50 and line_num > 1:
+                prev_line = lines[line_num - 2].strip()
+                claim_text = prev_line + " " + claim_text
+
+            # Clean up the claim
+            claim_text = claim_text.strip()
+            if claim_text.endswith(","):
+                claim_text = claim_text[:-1]
+
+            # Get surrounding context (before and after)
+            line_start = max(0, cite_start - context_chars // 2)
+            line_end = min(len(line), match.end() + context_chars // 2)
+            surrounding = line[line_start:line_end]
+
+            contexts.append(CitationContext(
+                cite_key=cite_key,
+                line_number=line_num,
+                surrounding_text=surrounding,
+                claim=claim_text[-200:] if len(claim_text) > 200 else claim_text,
+            ))
+
+    return contexts
