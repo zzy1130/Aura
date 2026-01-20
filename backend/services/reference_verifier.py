@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 import httpx
+from anthropic import AsyncAnthropic
 
 from services.latex_parser import BibEntry
 from services.semantic_scholar import Paper, SemanticScholarClient
@@ -231,3 +232,73 @@ def _compare_metadata(bib_entry: BibEntry, paper: Paper) -> list[str]:
             issues.append(f"Title mismatch: '{bib_title[:50]}...' vs '{paper_title[:50]}...'")
 
     return issues
+
+
+CONTEXT_VALIDATION_PROMPT = """Given this claim from a paper:
+"{claim}"
+
+And this abstract from the cited paper "{title}":
+"{abstract}"
+
+Does the abstract support this claim? Respond with exactly one of:
+- SUPPORTED: The abstract clearly supports this claim
+- PLAUSIBLE: The abstract is related but doesn't directly confirm
+- UNSUPPORTED: The abstract contradicts or doesn't relate to this claim
+- UNCERTAIN: Cannot determine from abstract alone
+
+Then add a one-sentence explanation on the next line."""
+
+
+async def validate_context(
+    claim: str,
+    paper_title: str,
+    paper_abstract: str,
+    anthropic_client: AsyncAnthropic,
+) -> tuple[float, str, str]:
+    """
+    Validate if a claim is supported by a paper's abstract.
+
+    Returns:
+        (score, explanation, verdict)
+        - score: 0.0-1.0 confidence
+        - explanation: Why it matches/doesn't
+        - verdict: SUPPORTED/PLAUSIBLE/UNSUPPORTED/UNCERTAIN
+    """
+    if not claim or not paper_abstract:
+        return 0.5, "No claim or abstract to validate", "UNCERTAIN"
+
+    prompt = CONTEXT_VALIDATION_PROMPT.format(
+        claim=claim[:500],
+        title=paper_title,
+        abstract=paper_abstract[:1000],
+    )
+
+    try:
+        response = await anthropic_client.messages.create(
+            model="claude-4-5-haiku-by-all",
+            max_tokens=100,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        result = response.content[0].text.strip()
+        lines = result.split("\n", 1)
+        verdict = lines[0].strip().upper()
+        explanation = lines[1].strip() if len(lines) > 1 else ""
+
+        # Map verdict to score
+        score_map = {
+            "SUPPORTED": 0.9,
+            "PLAUSIBLE": 0.6,
+            "UNSUPPORTED": 0.2,
+            "UNCERTAIN": 0.5,
+        }
+
+        # Extract verdict from response (might have extra text)
+        for v in score_map:
+            if v in verdict:
+                return score_map[v], explanation, v
+
+        return 0.5, explanation or result, "UNCERTAIN"
+
+    except Exception as e:
+        return 0.5, f"Validation failed: {str(e)}", "UNCERTAIN"
