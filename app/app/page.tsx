@@ -923,28 +923,52 @@ export default function Home() {
 
   // Minimum editor width
   const MIN_EDITOR = 300;
-  // Resize handle width (approximate)
-  const RESIZE_HANDLE_WIDTH = 8;
+  // Resize handle width
+  const RESIZE_HANDLE_WIDTH = 3;
+
+  // Calculate editor width dynamically (fills remaining space)
+  const editorWidth = useMemo(() => {
+    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    const handleCount = isAgentPanelOpen ? 3 : 2;
+    const totalHandleWidth = RESIZE_HANDLE_WIDTH * handleCount;
+    const agentWidth = isAgentPanelOpen ? agentPanelWidth : 0;
+    const calculatedWidth = containerWidth - fileTreeWidth - pdfViewerWidth - agentWidth - totalHandleWidth;
+    return Math.max(MIN_EDITOR, calculatedWidth);
+  }, [fileTreeWidth, pdfViewerWidth, agentPanelWidth, isAgentPanelOpen]);
 
   const handleFileTreeResize = useCallback((delta: number) => {
-    setFileTreeWidth((prev) => Math.max(MIN_FILE_TREE, Math.min(MAX_FILE_TREE, prev + delta)));
-  }, []);
+    const containerWidth = containerRef.current?.clientWidth ?? 1200;
+    const handleCount = isAgentPanelOpen ? 3 : 2;
+    const totalHandleWidth = RESIZE_HANDLE_WIDTH * handleCount;
+    const agentWidth = isAgentPanelOpen ? agentPanelWidth : 0;
+
+    // Calculate maximum file tree width that still leaves MIN_EDITOR for editor
+    const maxFileTree = containerWidth - MIN_EDITOR - pdfViewerWidth - agentWidth - totalHandleWidth;
+
+    setFileTreeWidth((prev) => Math.max(MIN_FILE_TREE, Math.min(Math.min(MAX_FILE_TREE, maxFileTree), prev + delta)));
+  }, [pdfViewerWidth, agentPanelWidth, isAgentPanelOpen]);
 
   const handlePdfViewerResize = useCallback((delta: number) => {
     const containerWidth = containerRef.current?.clientWidth ?? 1200;
-    // Calculate max PDF width: total - fileTree - minEditor - agentPanel - resize handles
-    const resizeHandlesWidth = RESIZE_HANDLE_WIDTH * (isAgentPanelOpen ? 3 : 2);
-    const maxPdfWidth = containerWidth - fileTreeWidth - MIN_EDITOR - (isAgentPanelOpen ? agentPanelWidth : 0) - resizeHandlesWidth;
+    const handleCount = isAgentPanelOpen ? 3 : 2;
+    const totalHandleWidth = RESIZE_HANDLE_WIDTH * handleCount;
+    const agentWidth = isAgentPanelOpen ? agentPanelWidth : 0;
 
+    // Calculate maximum PDF width that still leaves MIN_EDITOR for editor
+    const maxPdfWidth = containerWidth - fileTreeWidth - MIN_EDITOR - agentWidth - totalHandleWidth;
+
+    // Negative delta because handle is on the left of PDF panel
     setPdfViewerWidth((prev) => Math.max(MIN_PDF_VIEWER, Math.min(maxPdfWidth, prev - delta)));
   }, [fileTreeWidth, agentPanelWidth, isAgentPanelOpen]);
 
   const handleAgentPanelResize = useCallback((delta: number) => {
     const containerWidth = containerRef.current?.clientWidth ?? 1200;
-    // Calculate max agent panel width: total - fileTree - minEditor - pdfViewer - resize handles
-    const resizeHandlesWidth = RESIZE_HANDLE_WIDTH * 3;
-    const maxAgentWidth = containerWidth - fileTreeWidth - MIN_EDITOR - pdfViewerWidth - resizeHandlesWidth;
+    const totalHandleWidth = RESIZE_HANDLE_WIDTH * 3;
 
+    // Calculate maximum agent panel width that still leaves MIN_EDITOR for editor
+    const maxAgentWidth = containerWidth - fileTreeWidth - MIN_EDITOR - pdfViewerWidth - totalHandleWidth;
+
+    // Negative delta because handle is on the left of agent panel
     setAgentPanelWidth((prev) => Math.max(MIN_AGENT_PANEL, Math.min(maxAgentWidth, prev - delta)));
   }, [fileTreeWidth, pdfViewerWidth]);
 
@@ -1017,8 +1041,11 @@ export default function Home() {
         {/* Resize Handle: File Tree | Editor */}
         <ResizeHandle onResize={handleFileTreeResize} />
 
-        {/* Editor - Flexible */}
-        <div className="flex-1 min-w-[300px] overflow-hidden">
+        {/* Editor - Calculated width */}
+        <div
+          style={{ width: editorWidth }}
+          className="flex-shrink-0 min-w-[300px] overflow-hidden"
+        >
           <Editor
             content={editorContent}
             filePath={project.currentFile}

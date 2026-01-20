@@ -1,51 +1,70 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 
 interface ResizeHandleProps {
   onResize: (delta: number) => void;
+  onResizeStart?: () => void;
+  onResizeEnd?: () => void;
   direction?: 'horizontal' | 'vertical';
   className?: string;
 }
 
 export default function ResizeHandle({
   onResize,
+  onResizeStart,
+  onResizeEnd,
   direction = 'horizontal',
   className = ''
 }: ResizeHandleProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [startPos, setStartPos] = useState(0);
+  const lastPosRef = useRef(0);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsDragging(true);
-    setStartPos(direction === 'horizontal' ? e.clientX : e.clientY);
-  }, [direction]);
+    lastPosRef.current = direction === 'horizontal' ? e.clientX : e.clientY;
+    onResizeStart?.();
+  }, [direction, onResizeStart]);
 
   useEffect(() => {
     if (!isDragging) return;
 
     const handleMouseMove = (e: MouseEvent) => {
       const currentPos = direction === 'horizontal' ? e.clientX : e.clientY;
-      const delta = currentPos - startPos;
-      if (Math.abs(delta) > 0) {
+      const delta = currentPos - lastPosRef.current;
+
+      // Only trigger resize if there's actual movement
+      if (delta !== 0) {
         onResize(delta);
-        setStartPos(currentPos);
+        lastPosRef.current = currentPos;
       }
     };
 
     const handleMouseUp = () => {
       setIsDragging(false);
+      onResizeEnd?.();
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
+    // Use requestAnimationFrame for smoother updates
+    let frameId: number | null = null;
+    const throttledMouseMove = (e: MouseEvent) => {
+      if (frameId) return;
+      frameId = requestAnimationFrame(() => {
+        handleMouseMove(e);
+        frameId = null;
+      });
+    };
+
+    document.addEventListener('mousemove', throttledMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mousemove', throttledMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      if (frameId) cancelAnimationFrame(frameId);
     };
-  }, [isDragging, startPos, direction, onResize]);
+  }, [isDragging, direction, onResize, onResizeEnd]);
 
   const isHorizontal = direction === 'horizontal';
 
