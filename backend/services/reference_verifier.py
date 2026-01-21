@@ -19,6 +19,8 @@ from agent.tools.citation_management.citation_api import (
     PubMedClient,
     CitationMetadata,
     MetadataExtractor,
+    OpenAlexClient,
+    GoogleScholarClient,
 )
 
 
@@ -162,10 +164,14 @@ async def lookup_paper(
     Returns:
         (exists, matched_paper, metadata_issues)
     """
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+
     fields = bib_entry.fields
     metadata_issues: list[str] = []
 
-    # Try DOI first via CrossRef (more reliable than S2)
+    # Try DOI first via CrossRef (most reliable)
     doi = fields.get("doi", "")
     if doi:
         try:
@@ -175,27 +181,52 @@ async def lookup_paper(
                 paper = _citation_to_paper(citation)
                 issues = _compare_metadata(bib_entry, paper)
                 return True, paper, issues
-        except Exception:
-            pass  # Fall through to other methods
+        except Exception as e:
+            logger.debug(f"CrossRef lookup failed for {doi}: {e}")
 
     # Try Semantic Scholar for arXiv papers
     arxiv_id = fields.get("eprint", "") or fields.get("arxiv", "")
     if arxiv_id:
         try:
+            await asyncio.sleep(0.5)  # Rate limiting
             s2_client = SemanticScholarClient(http_client)
             arxiv_clean = re.sub(r"v\d+$", "", arxiv_id)
             paper = await s2_client.get_paper(f"arXiv:{arxiv_clean}")
             if paper:
                 issues = _compare_metadata(bib_entry, paper)
                 return True, paper, issues
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"S2 arXiv lookup failed for {arxiv_id}: {e}")
 
-    # Try title search via PubMed first (better for medical/bio)
+    # Try title search via Google Scholar first (best coverage)
     title = fields.get("title", "")
     if title:
         clean_title = re.sub(r"[{}]", "", title).strip()
 
+        try:
+            gs = GoogleScholarClient(http_client)
+            results = await gs.search(clean_title, max_results=5)
+            for citation in results:
+                if _titles_match(clean_title, citation.title):
+                    paper = _citation_to_paper(citation)
+                    issues = _compare_metadata(bib_entry, paper)
+                    return True, paper, issues
+        except Exception as e:
+            logger.debug(f"Google Scholar search failed for {clean_title[:30]}: {e}")
+
+        # Fall back to OpenAlex (free, no rate limits)
+        try:
+            openalex = OpenAlexClient(http_client)
+            results = await openalex.search(clean_title, max_results=5)
+            for citation in results:
+                if _titles_match(clean_title, citation.title):
+                    paper = _citation_to_paper(citation)
+                    issues = _compare_metadata(bib_entry, paper)
+                    return True, paper, issues
+        except Exception as e:
+            logger.debug(f"OpenAlex search failed for {clean_title[:30]}: {e}")
+
+        # Try PubMed for medical/bio papers
         try:
             pubmed = PubMedClient(http_client)
             results = await pubmed.search(clean_title, max_results=3)
@@ -204,21 +235,22 @@ async def lookup_paper(
                     paper = _citation_to_paper(citation)
                     issues = _compare_metadata(bib_entry, paper)
                     return True, paper, issues
-        except Exception:
-            pass  # Fall through to Semantic Scholar
+        except Exception as e:
+            logger.debug(f"PubMed search failed for {clean_title[:30]}: {e}")
 
         # Fall back to Semantic Scholar title search
         try:
+            await asyncio.sleep(1.0)  # Rate limiting - S2 has strict limits
             s2_client = SemanticScholarClient(http_client)
             papers = await s2_client.search(clean_title, limit=5)
             for paper in papers:
                 if _titles_match(clean_title, paper.title):
                     issues = _compare_metadata(bib_entry, paper)
                     return True, paper, issues
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"S2 title search failed for {clean_title[:30]}: {e}")
 
-    return False, None, ["Paper not found in CrossRef, PubMed, or Semantic Scholar"]
+    return False, None, ["Paper not found in Google Scholar, OpenAlex, CrossRef, PubMed, or Semantic Scholar"]
 
 
 def _citation_to_paper(citation: CitationMetadata) -> Paper:
@@ -234,21 +266,42 @@ def _citation_to_paper(citation: CitationMetadata) -> Paper:
     )
 
 
-def _titles_match(bib_title: str, paper_title: str, threshold: float = 0.8) -> bool:
-    """Check if titles match using simple word overlap."""
-    bib_words = set(bib_title.lower().split())
-    paper_words = set(paper_title.lower().split())
+def _titles_match(bib_title: str, paper_title: str, threshold: float = 0.7) -> bool:
+    """
+    Check if titles match using word overlap.
 
-    # Remove common words
-    stopwords = {"a", "an", "the", "of", "in", "on", "for", "to", "and", "with"}
+    Handles cases where:
+    - Bib title is a prefix of the full paper title
+    - Titles have punctuation variations
+    """
+    # Clean punctuation and split into words
+    import string
+    translator = str.maketrans(string.punctuation, ' ' * len(string.punctuation))
+
+    bib_clean = bib_title.lower().translate(translator)
+    paper_clean = paper_title.lower().translate(translator)
+
+    bib_words = set(bib_clean.split())
+    paper_words = set(paper_clean.split())
+
+    # Remove common stopwords
+    stopwords = {"a", "an", "the", "of", "in", "on", "for", "to", "and", "with", "from"}
     bib_words -= stopwords
     paper_words -= stopwords
 
     if not bib_words or not paper_words:
         return False
 
+    # Check if bib title is a subset of paper title (prefix match)
+    if bib_words <= paper_words:
+        return True
+
+    # Fall back to overlap ratio using smaller set as denominator
+    # This handles cases where bib has shorter title
     overlap = len(bib_words & paper_words)
-    return overlap / max(len(bib_words), len(paper_words)) >= threshold
+    min_len = min(len(bib_words), len(paper_words))
+
+    return overlap / min_len >= threshold
 
 
 def _compare_metadata(bib_entry: BibEntry, paper: Paper) -> list[str]:

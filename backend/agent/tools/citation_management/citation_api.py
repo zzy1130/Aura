@@ -324,29 +324,19 @@ class CrossRefClient:
 
 
 # =============================================================================
-# Google Scholar Client (uses scholarly library)
+# Google Scholar Client (direct scraping)
 # =============================================================================
 
 class GoogleScholarClient:
-    """Client for Google Scholar (uses scholarly library in thread pool)."""
+    """Client for Google Scholar using direct HTTP requests."""
 
-    def __init__(self):
-        self._scholarly = None
-        self._initialized = False
-
-    def _init_scholarly(self):
-        """Initialize scholarly library (lazy loading)."""
-        if self._initialized:
-            return
-
-        try:
-            from scholarly import scholarly
-            self._scholarly = scholarly
-            self._initialized = True
-        except ImportError:
-            raise ImportError(
-                "scholarly library required. Install with: pip install scholarly"
-            )
+    def __init__(self, http_client: httpx.AsyncClient):
+        self.http_client = http_client
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
 
     async def search(
         self,
@@ -367,74 +357,113 @@ class GoogleScholarClient:
         Returns:
             List of CitationMetadata objects
         """
-        # Run synchronous scholarly in thread pool
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            self._sync_search,
-            query,
-            max_results,
-            year_start,
-            year_end,
-        )
-
-    def _sync_search(
-        self,
-        query: str,
-        max_results: int,
-        year_start: Optional[int],
-        year_end: Optional[int],
-    ) -> list[CitationMetadata]:
-        """Synchronous search (runs in thread pool)."""
-        self._init_scholarly()
-
-        results = []
         try:
-            search_query = self._scholarly.search_pubs(query)
+            from bs4 import BeautifulSoup
+        except ImportError:
+            raise ImportError("beautifulsoup4 required. Install with: pip install beautifulsoup4")
 
-            for i, result in enumerate(search_query):
-                if i >= max_results:
-                    break
+        # Build URL with year filters
+        url = f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}&hl=en"
+        if year_start:
+            url += f"&as_ylo={year_start}"
+        if year_end:
+            url += f"&as_yhi={year_end}"
 
-                bib = result.get("bib", {})
-                year_str = bib.get("pub_year", "")
+        try:
+            response = await self.http_client.get(
+                url,
+                headers=self.headers,
+                follow_redirects=True,
+                timeout=30.0,
+            )
 
-                # Parse year
-                year = None
-                if year_str:
-                    try:
-                        year = int(year_str)
-                    except ValueError:
-                        pass
+            if response.status_code != 200:
+                raise RuntimeError(f"Google Scholar returned {response.status_code}")
 
-                # Apply year filter
-                if year:
-                    if year_start and year < year_start:
-                        continue
-                    if year_end and year > year_end:
-                        continue
+            soup = BeautifulSoup(response.text, "html.parser")
+            results = []
 
-                # Extract authors
-                authors = bib.get("author", [])
-                if isinstance(authors, str):
-                    authors = [a.strip() for a in authors.split(" and ")]
+            for article in soup.select(".gs_ri")[:max_results]:
+                metadata = self._parse_article(article)
+                if metadata:
+                    results.append(metadata)
 
-                metadata = CitationMetadata(
-                    title=bib.get("title", "Unknown"),
-                    authors=authors,
-                    year=year,
-                    venue=bib.get("venue", ""),
-                    abstract=bib.get("abstract", ""),
-                    citation_count=result.get("num_citations", 0),
-                    url=result.get("pub_url", ""),
-                    source="google_scholar",
-                )
-                results.append(metadata)
+            return results
 
         except Exception as e:
             raise RuntimeError(f"Google Scholar search failed: {e}")
 
-        return results
+    def _parse_article(self, article) -> Optional[CitationMetadata]:
+        """Parse a Google Scholar article element."""
+        import re
+
+        try:
+            # Title
+            title_elem = article.select_one(".gs_rt")
+            if not title_elem:
+                return None
+
+            title = title_elem.get_text()
+            # Remove [PDF] [HTML] etc prefixes
+            title = re.sub(r"^\[.*?\]\s*", "", title).strip()
+
+            # Get link
+            link_elem = title_elem.select_one("a")
+            url = link_elem.get("href") if link_elem else None
+
+            # Authors/Year line: "A Vaswani, N Shazeer... - NIPS, 2017 - site.com"
+            info_elem = article.select_one(".gs_a")
+            info_text = info_elem.get_text() if info_elem else ""
+
+            authors = []
+            year = None
+            venue = None
+
+            if info_text:
+                # Parse info line
+                parts = info_text.split(" - ")
+                if len(parts) >= 1:
+                    # Authors part
+                    author_str = parts[0]
+                    authors = [a.strip() for a in author_str.split(",")]
+                    # Remove "..." from last author
+                    if authors and authors[-1].endswith("…"):
+                        authors[-1] = authors[-1].rstrip("…").strip()
+
+                if len(parts) >= 2:
+                    # Venue/year part
+                    venue_year = parts[1]
+                    year_match = re.search(r"\b(19|20)\d{2}\b", venue_year)
+                    if year_match:
+                        year = int(year_match.group())
+                    venue = venue_year.split(",")[0].strip() if "," in venue_year else venue_year.strip()
+
+            # Citations count
+            citation_count = 0
+            cited_elem = article.select_one(".gs_fl a")
+            if cited_elem:
+                cited_text = cited_elem.get_text()
+                cited_match = re.search(r"Cited by (\d+)", cited_text)
+                if cited_match:
+                    citation_count = int(cited_match.group(1))
+
+            # Abstract snippet
+            abstract_elem = article.select_one(".gs_rs")
+            abstract = abstract_elem.get_text() if abstract_elem else None
+
+            return CitationMetadata(
+                title=title,
+                authors=authors,
+                year=year,
+                venue=venue,
+                url=url,
+                abstract=abstract,
+                citation_count=citation_count,
+                source="google_scholar",
+            )
+
+        except Exception:
+            return None
 
 
 # =============================================================================
@@ -530,6 +559,118 @@ class MetadataExtractor:
 
 
 # =============================================================================
+# OpenAlex API Client (free, no rate limits)
+# =============================================================================
+
+class OpenAlexClient:
+    """Async client for OpenAlex API - free, no rate limits, excellent coverage."""
+
+    BASE_URL = "https://api.openalex.org"
+
+    def __init__(self, http_client: httpx.AsyncClient):
+        self.http_client = http_client
+
+    async def search(
+        self,
+        query: str,
+        max_results: int = 10,
+    ) -> list[CitationMetadata]:
+        """
+        Search OpenAlex for papers.
+
+        Args:
+            query: Search query (title or keywords)
+            max_results: Maximum number of results
+
+        Returns:
+            List of CitationMetadata objects
+        """
+        try:
+            params = {
+                "search": query,
+                "per_page": max_results,
+                "mailto": "aura@example.com",  # Polite pool
+            }
+
+            response = await self.http_client.get(
+                f"{self.BASE_URL}/works",
+                params=params,
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            results = []
+            for work in data.get("results", []):
+                metadata = self._parse_work(work)
+                if metadata:
+                    results.append(metadata)
+
+            return results
+
+        except Exception as e:
+            raise RuntimeError(f"OpenAlex search failed: {e}")
+
+    def _parse_work(self, work: dict) -> Optional[CitationMetadata]:
+        """Parse an OpenAlex work object."""
+        try:
+            # Title
+            title = work.get("title", "Unknown")
+            if not title:
+                return None
+
+            # Authors
+            authors = []
+            for authorship in work.get("authorships", [])[:10]:
+                author = authorship.get("author", {})
+                name = author.get("display_name", "")
+                if name:
+                    authors.append(name)
+
+            # Year
+            year = work.get("publication_year")
+
+            # Venue
+            venue = None
+            primary_location = work.get("primary_location", {}) or {}
+            source = primary_location.get("source", {}) or {}
+            if source:
+                venue = source.get("display_name")
+
+            # DOI
+            doi = work.get("doi", "")
+            if doi and doi.startswith("https://doi.org/"):
+                doi = doi[16:]
+
+            # Abstract (OpenAlex stores inverted index)
+            abstract = None
+            abstract_index = work.get("abstract_inverted_index")
+            if abstract_index:
+                # Reconstruct abstract from inverted index
+                word_positions = []
+                for word, positions in abstract_index.items():
+                    for pos in positions:
+                        word_positions.append((pos, word))
+                word_positions.sort()
+                abstract = " ".join(word for _, word in word_positions)
+
+            return CitationMetadata(
+                title=title,
+                authors=authors,
+                year=year,
+                venue=venue,
+                doi=doi if doi else None,
+                url=work.get("id", ""),
+                abstract=abstract,
+                citation_count=work.get("cited_by_count", 0),
+                source="openalex",
+            )
+
+        except Exception:
+            return None
+
+
+# =============================================================================
 # Formatting Helpers
 # =============================================================================
 
@@ -550,12 +691,8 @@ def format_results(
         if len(paper.authors) > 3:
             authors_str += " et al."
 
-        # Title with link
-        if paper.url:
-            lines.append(f"{i}. **[{paper.title}]({paper.url})**")
-        else:
-            lines.append(f"{i}. **{paper.title}**")
-
+        # Title (plain text)
+        lines.append(f"{i}. **{paper.title}**")
         lines.append(f"   Authors: {authors_str}")
 
         if paper.year:
@@ -567,8 +704,12 @@ def format_results(
         if paper.citation_count > 0:
             lines.append(f"   Citations: {paper.citation_count}")
 
+        # URL on separate line (clickable)
+        if paper.url:
+            lines.append(f"   Link: {paper.url}")
+
         if paper.doi:
-            lines.append(f"   DOI: {paper.doi}")
+            lines.append(f"   DOI: https://doi.org/{paper.doi}")
 
         if paper.abstract:
             abstract = paper.abstract[:300]
