@@ -30,6 +30,10 @@ gitpython>=3.1.41
 # LaTeX parsing
 pylatexenc>=2.10
 
+# Citation management (skillsbench)
+requests>=2.31.0  # HTTP client for citation APIs
+scholarly>=1.7.0  # Google Scholar API wrapper
+
 # Utils
 python-multipart>=0.0.6
 python-dotenv>=1.0.0

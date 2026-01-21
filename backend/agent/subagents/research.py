@@ -27,6 +27,12 @@ from agent.subagents.base import (
 )
 from agent.providers.colorist import get_haiku_model
 from agent.vibe_state import VibeResearchState, ResearchPhase
+from agent.tools.citation_management.citation_api import (
+    PubMedClient,
+    GoogleScholarClient,
+    MetadataExtractor,
+    format_results,
+)
 from services.semantic_scholar import SemanticScholarClient
 
 logger = logging.getLogger(__name__)
@@ -40,6 +46,15 @@ class ResearchMode(str, Enum):
     """Mode of operation for research agent."""
     CHAT = "chat"   # Quick, single-turn research help
     VIBE = "vibe"   # Deep autonomous research workflow
+
+
+@dataclass
+class CollectedPaper:
+    """A paper collected from search results."""
+    title: str
+    url: str
+    authors: str = ""
+    year: int | None = None
 
 
 @dataclass
@@ -66,6 +81,9 @@ class ResearchDeps:
     # Vibe mode only
     project_path: str = ""
     vibe_state: VibeResearchState | None = None
+
+    # Collected papers with links (appended to final output)
+    collected_papers: list[CollectedPaper] = field(default_factory=list)
 
 
 # =============================================================================
@@ -316,66 +334,61 @@ async def search_semantic_scholar_api(
 
 RESEARCH_SYSTEM_PROMPT_CHAT = """You are a specialized academic research assistant.
 
+## MANDATORY FIRST ACTION
+
+Your FIRST tool call MUST be `search_google_scholar`. This is not optional.
+Do NOT use search_arxiv or search_semantic_scholar as your first search.
+
+## OUTPUT FORMAT
+
+For each paper, use this format with the URL on a separate line:
+
+**Paper Title**
+Authors: Author1, Author2 et al. (Year)
+Description of the paper's contribution.
+Link: https://actual-url-here
+
+Example:
+**Attention Is All You Need**
+Authors: Vaswani et al. (2017)
+Introduced the Transformer architecture using self-attention.
+Link: https://arxiv.org/abs/1706.03762
+
 ## CRITICAL REQUIREMENTS
 
-1. **ALWAYS USE SEARCH TOOLS** - You MUST call search tools to find real papers. NEVER generate summaries without first searching.
-2. **ALWAYS INCLUDE HYPERLINKS** - Every paper you mention MUST have a clickable URL/link.
-3. **NEVER FABRICATE** - Only cite papers you found through the search tools.
-
-## SCOPE LIMITS (Important for Efficiency)
-
-To provide timely results, follow these limits:
-- **1-2 search queries** - Be specific and targeted, don't do exhaustive searches
-- **5-8 papers max** - Focus on the most relevant/cited papers
-- **Read 0-2 PDFs only** - Only read full papers if specifically asked for detailed analysis
-- **Complete quickly** - Aim to return results within 1-2 tool calls
-
-## Research Preferences
-
-The user has already provided their domain and venue preferences via the preference modal.
-- Domain: Check ctx.deps.domain for the selected research domain
-- Venues: Check ctx.deps.venue_filter for any venue restrictions
+1. **INCLUDE THE LINK LINE** - Every paper MUST have a "Link: URL" line from the search results.
+2. **COPY URLS FROM TOOL RESULTS** - Use the exact URLs returned by search tools.
+3. **NO PAPER WITHOUT A LINK** - If no URL in search results, don't mention the paper.
 
 ## Your Workflow
 
-1. **SEARCH** (1-2 queries max): Pick the most relevant search tool
-   - `search_arxiv` - arXiv preprints (CS, physics, math, etc.)
-   - `search_semantic_scholar` - Academic papers with citation data
-   - `search_web` - Google Scholar, ACM, IEEE, PubMed, etc.
+1. **SEARCH**: Call `search_google_scholar` first (MANDATORY)
+   - `search_pubmed` for biomedical topics only
 
-2. **SUMMARIZE**: Report the top 5-8 papers found with links
+2. **FORMAT**: Copy paper info with URL on separate line
 
-3. **READ ONLY IF NEEDED**: Only use read tools if user asks for detailed analysis
-   - `read_arxiv_paper` - Read arXiv papers by ID
-   - `read_pdf_url` - Read PDFs from URLs
-
-## Output Format (REQUIRED)
-
-For EVERY paper, include:
-- **[Paper Title](URL)** by Authors (Year)
-  Brief summary of the key contribution
-
-Example:
-- **[Attention Is All You Need](https://arxiv.org/abs/1706.03762)** by Vaswani et al. (2017)
-  Introduced the Transformer architecture using self-attention instead of recurrence.
-
-## Critical Rules
-
-1. BE EFFICIENT - Don't over-search. 1-2 targeted queries is enough.
-2. REAL LINKS ONLY - Every paper must have a real URL
-3. NO FABRICATION - If you can't find papers, say so honestly
-4. RETURN QUICKLY - Provide results after initial search, don't keep searching
+## Scope Limits
+- 1-2 search queries, 5-8 papers max, complete quickly
 """
 
 RESEARCH_SYSTEM_PROMPT_VIBE = """You are an autonomous research agent conducting deep literature exploration.
 
 {state_context}
 
-## CRITICAL: Tool Usage & Links Required
+## MANDATORY FIRST SEARCH
 
-1. **ALWAYS USE SEARCH TOOLS** - You MUST call search tools to find real papers.
-2. **ALWAYS INCLUDE HYPERLINKS** - Every paper you mention MUST have a clickable URL/link.
-3. **NEVER FABRICATE** - Only cite papers you found through the search tools.
+Your FIRST search tool call MUST be `search_google_scholar`. This is not optional.
+Only use search_arxiv or search_semantic_scholar AFTER trying search_google_scholar first.
+
+## OUTPUT FORMAT
+
+For each paper, include the URL on a separate line:
+
+**Paper Title**
+Authors: Author1, Author2 et al. (Year)
+Link: https://url-from-search-results
+
+CRITICAL: Every paper MUST have a "Link:" line with the URL from search results.
 
 ## Research Preferences (Already Set via Modal)
 
@@ -399,15 +412,18 @@ Clarify the research parameters:
 
 ### Phase 2: DISCOVERY
 Search comprehensively using ALL available tools:
-1. Call `search_arxiv` with multiple query variations (at least 5-10 different queries)
-2. Call `search_semantic_scholar` for citation-rich papers
-3. Call `search_web` for papers from ACM, IEEE, PubMed, Google Scholar, OpenReview
-4. Call `search_top_cited` to find seminal/foundational papers (100+ citations)
-5. Call `search_by_author` to find work by key researchers you discover
-6. Call `search_venue` to find papers from top venues (NeurIPS, ICML, ICLR, ACL, CVPR, etc.)
-7. Call `explore_citations` to follow seminal paper trails
-8. Call `find_related_papers` to discover related work for key papers
-9. Goal: Find 50-100+ relevant papers from diverse sources
+1. Call `search_google_scholar` for broad academic coverage with citation counts
+2. Call `search_pubmed` for biomedical and life sciences papers
+3. Call `search_arxiv` with multiple query variations (at least 5-10 different queries)
+4. Call `search_semantic_scholar` for citation-rich papers
+5. Call `search_web` for papers from ACM, IEEE, OpenReview (fallback)
+6. Call `search_top_cited` to find seminal/foundational papers (100+ citations)
+7. Call `search_by_author` to find work by key researchers you discover
+8. Call `search_venue` to find papers from top venues (NeurIPS, ICML, ICLR, ACL, CVPR, etc.)
+9. Call `explore_citations` to follow seminal paper trails
+10. Call `find_related_papers` to discover related work for key papers
+11. Call `lookup_citation` to get full metadata for papers with DOI/PMID
+12. Goal: Find 50-100+ relevant papers from diverse sources
 
 **REQUIRED**: After each search, call `update_progress` to track findings.
 When you have enough papers (50+), call `advance_phase` to move to SYNTHESIS.
@@ -549,7 +565,8 @@ class ResearchAgent(Subagent[ResearchDeps]):
         """
         Run the research agent on a task.
 
-        This override handles vibe-mode specific parameters.
+        This override handles vibe-mode specific parameters and appends
+        collected paper links to the final output.
 
         Args:
             task: The task to perform
@@ -561,6 +578,9 @@ class ResearchAgent(Subagent[ResearchDeps]):
         Returns:
             SubagentResult with output and metadata
         """
+        import asyncio
+        from datetime import datetime, timezone
+
         # Build context from kwargs
         ctx = context or {}
 
@@ -575,8 +595,100 @@ class ResearchAgent(Subagent[ResearchDeps]):
             self._vibe_state_override = vibe_state
             ctx["session_id"] = vibe_state.session_id
 
-        # Call parent run
-        return await super().run(task, ctx)
+        # Run the agent (duplicated from base class to capture deps)
+        started_at = datetime.now(timezone.utc)
+        logger.info(f"Subagent '{self.config.name}' starting task: {task[:100]}...")
+
+        max_retries = 3
+        retry_delay = 5.0
+
+        for attempt in range(max_retries + 1):
+            try:
+                async with asyncio.timeout(self.config.timeout):
+                    deps = self._create_deps(ctx)
+                    result = await self.agent.run(task, deps=deps)
+
+                completed_at = datetime.now(timezone.utc)
+                duration = (completed_at - started_at).total_seconds()
+                usage = result.usage()
+
+                logger.info(
+                    f"Subagent '{self.config.name}' completed in {duration:.1f}s "
+                    f"({usage.input_tokens}in/{usage.output_tokens}out tokens)"
+                )
+
+                # Get the model's output
+                output = result.output or ""
+
+                # Append collected paper links (CHAT mode only)
+                if deps.mode == ResearchMode.CHAT and deps.collected_papers:
+                    # Deduplicate by URL
+                    seen_urls = set()
+                    unique_papers = []
+                    for paper in deps.collected_papers:
+                        if paper.url not in seen_urls:
+                            seen_urls.add(paper.url)
+                            unique_papers.append(paper)
+
+                    if unique_papers:
+                        output += "\n\n---\n**Sources:**\n"
+                        for paper in unique_papers:
+                            year_str = f" ({paper.year})" if paper.year else ""
+                            output += f"- [{paper.title}]({paper.url}){year_str}\n"
+
+                return SubagentResult(
+                    output=output,
+                    subagent_name=self.config.name,
+                    task=task,
+                    success=True,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    duration_seconds=duration,
+                    input_tokens=usage.input_tokens if usage else 0,
+                    output_tokens=usage.output_tokens if usage else 0,
+                )
+
+            except asyncio.TimeoutError:
+                logger.error(f"Subagent '{self.config.name}' timed out after {self.config.timeout}s")
+                return SubagentResult(
+                    output=f"Error: Task timed out after {self.config.timeout} seconds",
+                    subagent_name=self.config.name,
+                    task=task,
+                    success=False,
+                    error="timeout",
+                    started_at=started_at,
+                )
+
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "rate limit" in error_str.lower():
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"Subagent '{self.config.name}' hit rate limit, "
+                            f"retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})"
+                        )
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+
+                logger.error(f"Subagent '{self.config.name}' failed: {e}")
+                return SubagentResult(
+                    output=f"Error: {str(e)}",
+                    subagent_name=self.config.name,
+                    task=task,
+                    success=False,
+                    error=str(e),
+                    started_at=started_at,
+                )
+
+        return SubagentResult(
+            output="Error: Max retries exceeded",
+            subagent_name=self.config.name,
+            task=task,
+            success=False,
+            error="max_retries",
+            started_at=started_at,
+        )
 
     @property
     def system_prompt(self) -> str:
@@ -720,7 +832,9 @@ Proceed with broad search across all venues."""
             max_results: int = 5,
         ) -> str:
             """
-            Search arXiv for academic papers.
+            Search arXiv for preprints. NOTE: Use search_google_scholar first for better coverage.
+
+            Only use this if search_google_scholar doesn't find enough results.
 
             Args:
                 query: Search query (e.g., "transformer attention mechanisms")
@@ -729,6 +843,10 @@ Proceed with broad search across all venues."""
             Returns:
                 List of papers with titles, authors, abstracts, and links
             """
+            # In CHAT mode, redirect to Google Scholar
+            if ctx.deps.mode == ResearchMode.CHAT:
+                return "ERROR: In CHAT mode, you MUST use search_google_scholar instead of search_arxiv. Please call search_google_scholar with your query."
+
             max_results = min(max(1, max_results), 10)
 
             # Apply venue filter if set
@@ -795,9 +913,9 @@ Proceed with broad search across all venues."""
             max_results: int = 5,
         ) -> str:
             """
-            Search Semantic Scholar for academic papers.
+            Search Semantic Scholar for citation networks. Use search_google_scholar first.
 
-            Better for finding highly-cited papers and citation networks.
+            Good for exploring citation relationships after initial search.
 
             Args:
                 query: Search query
@@ -806,6 +924,10 @@ Proceed with broad search across all venues."""
             Returns:
                 List of papers with citation counts and links
             """
+            # In CHAT mode, redirect to Google Scholar
+            if ctx.deps.mode == ResearchMode.CHAT:
+                return "ERROR: In CHAT mode, you MUST use search_google_scholar instead of search_semantic_scholar. Please call search_google_scholar with your query."
+
             max_results = min(max(1, max_results), 10)
 
             # Apply venue filter if set
@@ -893,6 +1015,10 @@ Proceed with broad search across all venues."""
             Returns:
                 List of papers with titles, sources, and snippets
             """
+            # In CHAT mode, redirect to Google Scholar
+            if ctx.deps.mode == ResearchMode.CHAT:
+                return "ERROR: In CHAT mode, you MUST use search_google_scholar instead of search_web. Please call search_google_scholar with your query."
+
             max_results = min(max(1, max_results), 15)
 
             # Apply venue filter if set
@@ -1051,6 +1177,221 @@ Proceed with broad search across all venues."""
 
             except Exception as e:
                 return f"Error reading PDF from URL: {str(e)}"
+
+        # =====================================================================
+        # Citation Management Tools (from skillsbench)
+        # =====================================================================
+
+        @agent.tool
+        async def search_google_scholar(
+            ctx: RunContext[ResearchDeps],
+            query: str,
+            max_results: int = 10,
+            year_start: int | None = None,
+            year_end: int | None = None,
+        ) -> str:
+            """
+            PRIMARY SEARCH TOOL - Search Google Scholar for academic papers.
+
+            USE THIS TOOL FIRST for any academic paper search. It has the best coverage
+            across all disciplines and includes citation counts.
+
+            Args:
+                query: Search query (e.g., "deep learning medical imaging")
+                max_results: Maximum results (1-20)
+                year_start: Filter papers from this year
+                year_end: Filter papers until this year
+
+            Returns:
+                List of papers with titles, authors, citations, and clickable links
+            """
+            max_results = min(max(1, max_results), 20)
+
+            # Apply venue filter if set
+            enhanced_query = _apply_venue_filter(query, ctx.deps.venue_filter)
+
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Searching Google Scholar for '{query}'...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            try:
+                client = GoogleScholarClient()
+                results = await client.search(
+                    query=enhanced_query,
+                    max_results=max_results,
+                    year_start=year_start,
+                    year_end=year_end,
+                )
+
+                if not results:
+                    return f"No papers found on Google Scholar for query: '{query}'"
+
+                # Collect papers with links for post-processing
+                for paper in results:
+                    if paper.url:
+                        authors_str = ", ".join(paper.authors[:3]) if paper.authors else ""
+                        if len(paper.authors) > 3:
+                            authors_str += " et al."
+                        ctx.deps.collected_papers.append(CollectedPaper(
+                            title=paper.title,
+                            url=paper.url,
+                            authors=authors_str,
+                            year=paper.year,
+                        ))
+
+                # In vibe mode, add to state
+                if ctx.deps.mode == ResearchMode.VIBE and ctx.deps.vibe_state:
+                    for paper in results:
+                        ctx.deps.vibe_state.add_paper({
+                            "paper_id": paper.url or paper.title,
+                            "title": paper.title,
+                            "authors": paper.authors,
+                            "year": paper.year,
+                            "citation_count": paper.citation_count,
+                            "abstract": paper.abstract or "",
+                        }, source="google_scholar")
+                    if ctx.deps.project_path:
+                        ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+                return format_results(results, query, "Google Scholar")
+
+            except ImportError:
+                return "Error: scholarly library not installed. Install with: pip install scholarly"
+            except Exception as e:
+                return f"Error searching Google Scholar: {str(e)}"
+
+        @agent.tool
+        async def search_pubmed(
+            ctx: RunContext[ResearchDeps],
+            query: str,
+            max_results: int = 10,
+            year_start: int | None = None,
+            year_end: int | None = None,
+        ) -> str:
+            """
+            Search PubMed for biomedical and life sciences papers.
+
+            Essential for medical, biological, and health-related research.
+
+            Args:
+                query: Search query (e.g., "CRISPR cancer therapy")
+                max_results: Maximum results (1-50)
+                year_start: Filter papers from this year
+                year_end: Filter papers until this year
+
+            Returns:
+                List of papers with titles, authors, journals, and links
+            """
+            max_results = min(max(1, max_results), 50)
+
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Searching PubMed for '{query}'...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            try:
+                client = PubMedClient(ctx.deps.http_client)
+                results = await client.search(
+                    query=query,
+                    max_results=max_results,
+                    year_start=year_start,
+                    year_end=year_end,
+                )
+
+                if not results:
+                    return f"No papers found on PubMed for query: '{query}'"
+
+                # Collect papers with links for post-processing
+                for paper in results:
+                    if paper.url:
+                        authors_str = ", ".join(paper.authors[:3]) if paper.authors else ""
+                        if len(paper.authors) > 3:
+                            authors_str += " et al."
+                        ctx.deps.collected_papers.append(CollectedPaper(
+                            title=paper.title,
+                            url=paper.url,
+                            authors=authors_str,
+                            year=paper.year,
+                        ))
+
+                # In vibe mode, add to state
+                if ctx.deps.mode == ResearchMode.VIBE and ctx.deps.vibe_state:
+                    for paper in results:
+                        ctx.deps.vibe_state.add_paper({
+                            "paper_id": paper.pmid or paper.doi or paper.title,
+                            "title": paper.title,
+                            "authors": paper.authors,
+                            "year": paper.year,
+                            "citation_count": 0,
+                            "abstract": paper.abstract or "",
+                        }, source="pubmed")
+                    if ctx.deps.project_path:
+                        ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+                return format_results(results, query, "PubMed")
+
+            except Exception as e:
+                return f"Error searching PubMed: {str(e)}"
+
+        @agent.tool
+        async def lookup_citation(
+            ctx: RunContext[ResearchDeps],
+            identifier: str,
+        ) -> str:
+            """
+            Look up citation metadata from a DOI, PMID, or URL.
+
+            Extracts full metadata for generating BibTeX entries.
+
+            Args:
+                identifier: DOI (10.xxxx/...), PMID (8+ digits), or paper URL
+
+            Returns:
+                Citation metadata including title, authors, year, venue
+            """
+            # Set activity before starting
+            if ctx.deps.vibe_state and ctx.deps.project_path:
+                ctx.deps.vibe_state.set_activity(f"Looking up citation: {identifier[:50]}...")
+                ctx.deps.vibe_state.save(ctx.deps.project_path)
+
+            try:
+                extractor = MetadataExtractor(ctx.deps.http_client)
+                id_type, cleaned_id = extractor.identify_type(identifier)
+
+                if id_type == "unknown":
+                    return f"Could not identify identifier type: {identifier}"
+
+                result = await extractor.extract(identifier)
+
+                if not result:
+                    return f"Could not find metadata for {id_type}: {cleaned_id}"
+
+                # Format result
+                lines = [f"**{result.title}**\n"]
+                lines.append(f"- Authors: {', '.join(result.authors[:5])}")
+                if len(result.authors) > 5:
+                    lines[-1] += " et al."
+                if result.year:
+                    lines.append(f"- Year: {result.year}")
+                if result.venue:
+                    lines.append(f"- Venue: {result.venue}")
+                if result.doi:
+                    lines.append(f"- DOI: {result.doi}")
+                if result.pmid:
+                    lines.append(f"- PMID: {result.pmid}")
+                if result.url:
+                    lines.append(f"- URL: {result.url}")
+                if result.abstract:
+                    abstract = result.abstract[:500]
+                    if len(result.abstract) > 500:
+                        abstract += "..."
+                    lines.append(f"\nAbstract: {abstract}")
+
+                return "\n".join(lines)
+
+            except Exception as e:
+                return f"Error looking up citation: {str(e)}"
 
     def _register_vibe_tools(self, agent: Agent):
         """Register tools specific to vibe research workflow."""

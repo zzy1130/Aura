@@ -136,25 +136,31 @@ Rules:
 2. Maintain chronological order of events
 3. Be concise but complete - don't lose important context
 4. Format as bullet points for clarity
-5. Include any unresolved issues or pending tasks
-6. Note any user preferences or patterns observed
+5. Note any user preferences or patterns observed
+
+CRITICAL: The summary is for CONTEXT ONLY, not a task list!
+- Mark all actions as COMPLETED/DONE - they are history, not pending tasks
+- Do NOT create a list that looks like pending work
+- The AI should NOT try to continue or repeat these actions
 
 Output format:
 ## Conversation Summary
 
-### Context
+### Project Context
 [Brief description of the project/task]
 
-### Key Actions
-- [Action 1]
-- [Action 2]
+### Completed Actions (DO NOT REPEAT)
+- [DONE] Action 1
+- [DONE] Action 2
 ...
 
 ### Current State
-[What was accomplished, any pending items]
+[What was accomplished - all tasks from this summary are COMPLETED]
 
-### Important Details
-[File names, specific LaTeX packages, error patterns, etc.]
+### Reference Information
+[File names, specific LaTeX packages, user preferences, etc.]
+
+IMPORTANT: Everything in this summary is HISTORICAL. The assistant must NOT try to re-execute any of these actions.
 """
 
 
@@ -364,7 +370,7 @@ Create a concise summary following your instructions."""
         ack_response = ModelResponse(
             parts=[
                 TextPart(
-                    content="I understand. I have the context from our previous conversation and will continue from where we left off.",
+                    content="I understand the historical context. I will NOT re-execute any actions from the summary - those are completed. I will wait for the user's new instructions.",
                 )
             ],
             timestamp=now,

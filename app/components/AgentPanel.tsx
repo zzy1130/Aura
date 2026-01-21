@@ -186,13 +186,31 @@ function ToolCallDisplay({
 function TextPartDisplay({ content }: { content: string }) {
   if (!content.trim()) return null;
 
+  // Convert plain URLs to markdown links (but not already-linked URLs)
+  const processedContent = content.replace(
+    /(?<!\[.*?\]\()(?<!\()(https?:\/\/[^\s\)]+)/g,
+    '[$1]($1)'
+  );
+
   return (
-    <div className="typo-body prose prose-sm max-w-none prose-headings:text-primary prose-p:text-primary prose-strong:text-primary prose-code:text-green1 prose-code:bg-green3/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-fill-secondary prose-pre:border prose-pre:border-black/6 prose-ul:text-primary prose-ol:text-primary prose-li:text-primary prose-table:w-full prose-th:bg-fill-secondary prose-th:border prose-th:border-black/12 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-td:border prose-td:border-black/12 prose-td:px-3 prose-td:py-2 my-1">
+    <div className="typo-body prose prose-sm max-w-none prose-headings:text-primary prose-p:text-primary prose-strong:text-primary prose-code:text-green1 prose-code:bg-green3/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-fill-secondary prose-pre:border prose-pre:border-black/6 prose-ul:text-primary prose-ol:text-primary prose-li:text-primary prose-table:w-full prose-th:bg-fill-secondary prose-th:border prose-th:border-black/12 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-td:border prose-td:border-black/12 prose-td:px-3 prose-td:py-2 prose-a:text-green1 prose-a:underline prose-a:underline-offset-2 hover:prose-a:text-green2 my-1">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
+        components={{
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-green1 underline underline-offset-2 hover:text-green2 cursor-pointer"
+            >
+              {children}
+            </a>
+          ),
+        }}
       >
-        {content}
+        {processedContent}
       </ReactMarkdown>
     </div>
   );

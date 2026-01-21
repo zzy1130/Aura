@@ -24,6 +24,7 @@ import uuid
 from pydantic_ai.agent import ModelRequestNode, CallToolsNode, UserPromptNode
 from pydantic_ai.run import End
 from pydantic_ai.messages import ToolCallPart, TextPart, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai import UsageLimits
 
 from agent.pydantic_agent import aura_agent, AuraDeps
 from agent.compression import compress_if_needed, get_compressor
@@ -953,7 +954,11 @@ async def _stream_standard(
     pending_tool_calls: list[tuple[str, str]] = []  # (tool_name, tool_call_id)
 
     # Use model override if provided, otherwise use default
-    iter_kwargs = {"deps": deps, "message_history": message_history}
+    iter_kwargs = {
+        "deps": deps,
+        "message_history": message_history,
+        "usage_limits": UsageLimits(request_limit=200),
+    }
     if model_override:
         iter_kwargs["model"] = model_override
 
@@ -1045,7 +1050,11 @@ async def _stream_with_hitl(
     agent_error = None
 
     # Prepare iter kwargs with optional model override
-    iter_kwargs = {"deps": deps, "message_history": message_history}
+    iter_kwargs = {
+        "deps": deps,
+        "message_history": message_history,
+        "usage_limits": UsageLimits(request_limit=200),
+    }
     if model_override:
         iter_kwargs["model"] = model_override
 

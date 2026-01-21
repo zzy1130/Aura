@@ -39,39 +39,88 @@ export default function PDFViewer({
   // Store scroll position to restore after recompilation
   const savedScrollRef = useRef<{ page: number; scrollTop: number } | null>(null);
   const prevPdfUrlRef = useRef<string | null>(null);
+  const wasCompilingRef = useRef<boolean>(false);
+  const pendingScrollPageRef = useRef<number | null>(null);
+  const [scrollTrigger, setScrollTrigger] = useState(0); // Trigger to re-run scroll effect
 
-  // Save scroll position when PDF URL is about to change (recompilation)
+  // Save scroll position when compilation starts (before PDF disappears)
   useEffect(() => {
-    if (pdfUrl !== prevPdfUrlRef.current) {
-      // PDF is changing - save current scroll state
-      if (prevPdfUrlRef.current && containerRef.current) {
+    if (isCompiling && !wasCompilingRef.current) {
+      // Compilation just started - save current scroll state
+      if (containerRef.current) {
         savedScrollRef.current = {
           page: currentVisiblePage,
           scrollTop: containerRef.current.scrollTop,
         };
+        console.log('[PDFViewer] Saved scroll position:', savedScrollRef.current);
       }
-      prevPdfUrlRef.current = pdfUrl;
     }
-  }, [pdfUrl, currentVisiblePage]);
+    wasCompilingRef.current = isCompiling;
+  }, [isCompiling, currentVisiblePage]);
+
+  // Track PDF URL changes
+  useEffect(() => {
+    prevPdfUrlRef.current = pdfUrl;
+  }, [pdfUrl]);
+
+  // Effect to scroll to pending page when refs are ready
+  useEffect(() => {
+    if (pendingScrollPageRef.current && numPages > 0 && containerRef.current) {
+      const targetPage = pendingScrollPageRef.current;
+      const container = containerRef.current;
+      let scrolled = false;
+
+      const doScroll = (source: string) => {
+        if (scrolled) return;
+
+        const pageEl = pageRefs.current.get(targetPage);
+        console.log(`[PDFViewer] ${source}: trying to scroll to page ${targetPage}, element:`, pageEl ? 'found' : 'not found');
+
+        if (pageEl) {
+          pageEl.scrollIntoView({ behavior: 'auto', block: 'start' });
+          scrolled = true;
+          pendingScrollPageRef.current = null;
+          console.log(`[PDFViewer] ${source}: scrolled to page ${targetPage}`);
+        }
+      };
+
+      // Use MutationObserver to detect when pages are rendered
+      const observer = new MutationObserver(() => {
+        doScroll('MutationObserver');
+        if (scrolled) observer.disconnect();
+      });
+
+      observer.observe(container, { childList: true, subtree: true });
+
+      // Multiple attempts with longer delays
+      setTimeout(() => doScroll('timeout-300'), 300);
+      setTimeout(() => doScroll('timeout-600'), 600);
+      setTimeout(() => doScroll('timeout-1200'), 1200);
+      setTimeout(() => doScroll('timeout-2500'), 2500);
+      setTimeout(() => doScroll('timeout-4000'), 4000);
+
+      // Cleanup
+      return () => {
+        observer.disconnect();
+      };
+    }
+  }, [numPages, scrollTrigger]);
 
   // Handle document load
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
     setIsLoading(false);
 
-    // Restore scroll position after a short delay (to let pages render)
+    // Restore scroll position after pages render
     if (savedScrollRef.current) {
-      const savedState = savedScrollRef.current;
-      // Use requestAnimationFrame to wait for render
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (containerRef.current) {
-            containerRef.current.scrollTop = savedState.scrollTop;
-          }
-          setCurrentVisiblePage(Math.min(savedState.page, numPages));
-          savedScrollRef.current = null;
-        });
-      });
+      const savedPage = Math.min(savedScrollRef.current.page, numPages);
+      savedScrollRef.current = null;
+      setCurrentVisiblePage(savedPage);
+      // Set pending scroll - the effect will handle it when refs are ready
+      pendingScrollPageRef.current = savedPage;
+      // Increment scrollTrigger to force the effect to re-run even if numPages is unchanged
+      setScrollTrigger(prev => prev + 1);
+      console.log('[PDFViewer] Set pending scroll to page:', savedPage);
     } else {
       setCurrentVisiblePage(1);
     }

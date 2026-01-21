@@ -124,6 +124,11 @@ const auraTheme: editor.IStandaloneThemeData = {
   },
 };
 
+// Normalize whitespace for matching (collapse multiple spaces/newlines)
+function normalizeWhitespace(str: string): string {
+  return str.replace(/\s+/g, ' ').trim();
+}
+
 // Find exact character position where a string appears in content
 function findStringLocation(content: string, searchStr: string): {
   startLine: number;
@@ -131,9 +136,43 @@ function findStringLocation(content: string, searchStr: string): {
   startColumn: number;
   endColumn: number;
 } | null {
-  if (!searchStr || !content.includes(searchStr)) return null;
+  if (!searchStr || !content) return null;
 
-  const index = content.indexOf(searchStr);
+  // Try exact match first
+  let index = content.indexOf(searchStr);
+
+  // If not found, try with normalized whitespace
+  if (index === -1) {
+    const normalizedContent = normalizeWhitespace(content);
+    const normalizedSearch = normalizeWhitespace(searchStr);
+
+    const normalizedIndex = normalizedContent.indexOf(normalizedSearch);
+    if (normalizedIndex === -1) return null;
+
+    // Find the approximate position in original content
+    // by counting normalized characters
+    let originalIndex = 0;
+    let normalizedCount = 0;
+    const targetNormalizedIndex = normalizedIndex;
+
+    while (originalIndex < content.length && normalizedCount < targetNormalizedIndex) {
+      const char = content[originalIndex];
+      if (/\s/.test(char)) {
+        // Skip consecutive whitespace (they become single space in normalized)
+        while (originalIndex < content.length && /\s/.test(content[originalIndex])) {
+          originalIndex++;
+        }
+        normalizedCount++; // One space in normalized version
+      } else {
+        originalIndex++;
+        normalizedCount++;
+      }
+    }
+    index = originalIndex;
+  }
+
+  if (index === -1) return null;
+
   const beforeMatch = content.substring(0, index);
   const linesBeforeMatch = beforeMatch.split('\n');
   const startLine = linesBeforeMatch.length;
@@ -142,17 +181,34 @@ function findStringLocation(content: string, searchStr: string): {
   // Monaco columns are 1-indexed
   const startColumn = (linesBeforeMatch[linesBeforeMatch.length - 1]?.length || 0) + 1;
 
-  // Calculate end position
-  const matchLines = searchStr.split('\n');
+  // For the end position, we need to find where the match ends in original content
+  // If we used normalized matching, find the end by matching normalized length
+  let matchEndIndex = index;
+  const normalizedSearchLen = normalizeWhitespace(searchStr).length;
+  let normalizedMatchLen = 0;
+
+  while (matchEndIndex < content.length && normalizedMatchLen < normalizedSearchLen) {
+    const char = content[matchEndIndex];
+    if (/\s/.test(char)) {
+      while (matchEndIndex < content.length && /\s/.test(content[matchEndIndex])) {
+        matchEndIndex++;
+      }
+      normalizedMatchLen++;
+    } else {
+      matchEndIndex++;
+      normalizedMatchLen++;
+    }
+  }
+
+  const matchedText = content.substring(index, matchEndIndex);
+  const matchLines = matchedText.split('\n');
   const endLine = startLine + matchLines.length - 1;
 
   // End column is where the match ends on the last line of the match
   let endColumn: number;
   if (matchLines.length === 1) {
-    // Single line match: end column = start column + match length
-    endColumn = startColumn + searchStr.length;
+    endColumn = startColumn + matchedText.length;
   } else {
-    // Multi-line match: end column is the length of the last line of the match + 1
     endColumn = (matchLines[matchLines.length - 1]?.length || 0) + 1;
   }
 
@@ -514,10 +570,32 @@ export default function Editor({
     }
 
     // Check if the pending edit is for this file
-    const editFilename = pendingEdit.filepath.split('/').pop();
-    const currentFilename = filePath.split('/').pop();
-    console.log('[Editor] Checking file match:', editFilename, 'vs', currentFilename);
-    if (editFilename !== currentFilename && pendingEdit.filepath !== filePath) {
+    // Handle both relative and absolute paths
+    const editPath = pendingEdit.filepath;
+    const currentPath = filePath;
+
+    // Check multiple matching strategies:
+    // 1. Exact match
+    // 2. Filename match
+    // 3. Current path ends with edit path (relative path within project)
+    const editFilename = editPath.split('/').pop();
+    const currentFilename = currentPath.split('/').pop();
+    const pathMatches = (
+      editPath === currentPath ||
+      editFilename === currentFilename ||
+      currentPath.endsWith('/' + editPath) ||
+      currentPath.endsWith(editPath)
+    );
+
+    console.log('[Editor] Checking file match:', {
+      editPath,
+      currentPath,
+      editFilename,
+      currentFilename,
+      pathMatches
+    });
+
+    if (!pathMatches) {
       console.log('[Editor] File mismatch, clearing');
       setEditLocation(null);
       return;
@@ -528,8 +606,15 @@ export default function Editor({
     console.log('[Editor] Found location:', location);
     if (!location) {
       console.log('[Editor] Could not find old_string in content');
-      console.log('[Editor] old_string:', pendingEdit.old_string?.substring(0, 100));
+      console.log('[Editor] old_string length:', pendingEdit.old_string?.length);
+      console.log('[Editor] old_string first 200 chars:', pendingEdit.old_string?.substring(0, 200));
       console.log('[Editor] content length:', content?.length);
+      // Try to find partial match for debugging
+      const firstLine = pendingEdit.old_string?.split('\n')[0];
+      if (firstLine) {
+        const partialMatch = content.indexOf(firstLine);
+        console.log('[Editor] First line of old_string found at index:', partialMatch);
+      }
       setEditLocation(null);
       return;
     }
@@ -620,7 +705,9 @@ export default function Editor({
   // Check if the pending edit applies to current file
   const isEditForCurrentFile = pendingEdit && filePath && (
     pendingEdit.filepath === filePath ||
-    pendingEdit.filepath.split('/').pop() === filePath.split('/').pop()
+    pendingEdit.filepath.split('/').pop() === filePath.split('/').pop() ||
+    filePath.endsWith('/' + pendingEdit.filepath) ||
+    filePath.endsWith(pendingEdit.filepath)
   );
 
   return (
