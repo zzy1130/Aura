@@ -1948,7 +1948,7 @@ async def verify_references(request: VerifyReferencesRequest):
         # Initialize clients
         http_client = httpx.AsyncClient()
         anthropic = AsyncAnthropic(
-            auth_token="vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308ec8336",
+            auth_token=os.getenv("COLORIST_API_KEY", ""),
             base_url="https://colorist-gateway-staging.arco.ai",
             http_client=http_client,
         )

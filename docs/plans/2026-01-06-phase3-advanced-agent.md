@@ -118,7 +118,7 @@ def colorist_provider() -> AnthropicProvider:
     """
     api_key = os.getenv(
         "COLORIST_API_KEY",
-        "vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308ec8336"
+        ""  # Set via environment variable
     )
     base_url = os.getenv(
         "COLORIST_GATEWAY_URL",

@@ -17,8 +17,8 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
-# Default configuration
-DEFAULT_API_KEY = "vk_06fc67ee1bbf1d3083ca3ec21ef5b7606005a7b5492d4c361773c13308ec8336"
+# Default configuration - API key must be set via COLORIST_API_KEY environment variable
+DEFAULT_API_KEY = ""  # Set via COLORIST_API_KEY env var
 DEFAULT_GATEWAY_URL = "https://colorist-gateway-staging.arco.ai"
 DEFAULT_MODEL = "claude-4-5-sonnet-by-all"
 
