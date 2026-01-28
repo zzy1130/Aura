@@ -1,8 +1,8 @@
-# Aura
+# YouResearch
 
 **Local-First LaTeX IDE with Autonomous AI Research Agent**
 
-Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor with an embedded AI agent capable of autonomous literature research, paper synthesis, and hypothesis generation. Think "Overleaf + Claude Code" as a native app.
+YouResearch is a macOS desktop application that combines an Overleaf-style LaTeX editor with an embedded AI agent capable of autonomous literature research, paper synthesis, and hypothesis generation. Think "Overleaf + Claude Code" as a native app.
 
 ---
 
@@ -39,7 +39,7 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 - **Writing Intelligence**: Automated document analysis, citation management, and LaTeX generation
 - **22 Built-in Tools**: File operations, LaTeX compilation, research, planning, writing
 - **Subagent System**: Specialized agents for research, compilation, planning, and writing
-- **Human-in-the-Loop**: Approval system for sensitive operations
+- **Human-in-the-Loop (HITL)**: Approval system for sensitive operations
 - **Streaming Responses**: Real-time SSE streaming with tool call visibility
 
 ### Writing Intelligence
@@ -56,8 +56,9 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
   - LLM-suggested domain based on your query
   - Dynamically generated venue suggestions (conferences/journals)
   - Custom domain and venue input support
-- **arXiv Search**: Find papers by topic, author, or ID
+- **Google Scholar Search**: Priority search for academic papers
 - **Semantic Scholar**: Citation-aware search with impact metrics
+- **arXiv Search**: Find papers by topic, author, or ID
 - **PDF Reading**: Full-text extraction from arXiv and URLs
 - **Citation Graph Traversal**: Explore papers that cite or are cited by a paper
 - **Theme Identification**: Cluster papers by methodological approach
@@ -93,7 +94,7 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 │  │   └── Delegation (handoff to subagents)                         │
 │  │                                                                   │
 │  ├── Subagents                                                       │
-│  │   ├── Research Agent (arXiv, S2, PDF, vibe research)            │
+│  │   ├── Research Agent (Google Scholar, S2, arXiv, PDF, vibe)     │
 │  │   ├── Compiler Agent (LaTeX error fixing)                       │
 │  │   ├── Planner Agent (task decomposition)                        │
 │  │   └── Writing Agent (document analysis, consistency checks)     │
@@ -122,11 +123,11 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 - All dependencies pre-packaged
 
 **Installation Steps:**
-1. Download `Aura-x.x.x-arm64.dmg` from Releases
-2. Open the DMG and drag Aura to Applications
+1. Download `YouResearch-x.x.x-arm64.dmg` from Releases
+2. Open the DMG and drag YouResearch to Applications
 3. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) if not already installed
-4. Launch Aura from Applications
-5. On first compile, Aura automatically builds the LaTeX Docker image
+4. Launch YouResearch from Applications
+5. On first compile, YouResearch automatically builds the LaTeX Docker image
 
 > **Note:** The app is not code-signed. On first launch, right-click → Open, or go to System Preferences → Security & Privacy → "Open Anyway"
 
@@ -144,14 +145,14 @@ Aura is a macOS desktop application that combines an Overleaf-style LaTeX editor
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/zzy1130/Aura.git
-   cd Aura
+   git clone https://github.com/ArcoCodes/YouResearch.git
+   cd YouResearch
    ```
 
 2. **Build the Docker LaTeX image** (required for compilation)
    ```bash
    cd sandbox
-   docker build -t aura-texlive .
+   docker build -t youresearch-texlive .
    cd ..
    ```
 
@@ -161,7 +162,7 @@ That's it! The start script handles dependency installation automatically.
 
 ## Quick Start
 
-Aura provides a unified start script that handles everything:
+YouResearch provides a unified start script that handles everything:
 
 ```bash
 # Make the script executable (first time only)
@@ -189,6 +190,14 @@ This starts:
 - Web frontend on `http://localhost:3001`
 
 Open http://localhost:3001 in your browser.
+
+### Landing Page
+
+```bash
+./scripts/start.sh --landing
+```
+
+This starts the servers and opens the YouResearch landing page.
 
 ### Other Options
 
@@ -257,7 +266,7 @@ The build process:
 3. Packages everything into Electron app
 4. Creates DMG installer
 
-**Output:** `app/dist/Aura-<version>-arm64.dmg` (~230MB)
+**Output:** `app/dist/YouResearch-<version>-arm64.dmg` (~230MB)
 
 **What's included in the DMG:**
 - Electron app with bundled Next.js frontend
@@ -340,14 +349,14 @@ When you trigger a research query (e.g., `/research` or asking the agent to find
 This ensures research results are targeted to your specific academic context.
 
 **Example prompts:**
-- "Search arXiv for papers on efficient attention mechanisms"
+- "Search Google Scholar for papers on efficient attention mechanisms"
 - "Read the paper 2301.07041 and summarize the key findings"
 - "Find highly-cited papers on vision transformers from Semantic Scholar"
 - "Fix the compilation error in main.tex"
 - "Write an introduction paragraph about transformer architectures"
 
 The agent can:
-- Search arXiv and Semantic Scholar
+- Search Google Scholar, Semantic Scholar, and arXiv
 - Read full paper PDFs
 - Edit your LaTeX files
 - Compile and fix errors
@@ -386,7 +395,7 @@ The agent enforces minimum requirements before advancing:
 After completion, Vibe Research generates:
 - **LaTeX Report** (`report/vibe_research_<session_id>.tex`)
 - **BibTeX File** (`report/vibe_research_<session_id>.bib`)
-- **JSON State** (`.aura/vibe_research_<session_id>.json`)
+- **JSON State** (`.youresearch/vibe_research_<session_id>.json`)
 
 The report includes:
 - Executive summary
@@ -535,7 +544,7 @@ The Writing Agent scans your document for:
 ## Project Structure
 
 ```
-Aura/
+YouResearch/
 ├── app/                          # Electron + Next.js frontend
 │   ├── components/               # React components
 │   │   ├── AgentPanel.tsx        # Chat/Vibe toggle and interface
@@ -547,6 +556,7 @@ Aura/
 │   ├── lib/
 │   │   └── api.ts                # API client
 │   ├── app/                      # Next.js app router
+│   │   └── landing/              # Landing page with animations
 │   └── electron/                 # Electron main process
 │
 ├── backend/                      # FastAPI Python backend
@@ -564,7 +574,7 @@ Aura/
 │   │   │   └── colorist.py       # Colorist gateway provider
 │   │   ├── subagents/
 │   │   │   ├── base.py           # Subagent base class
-│   │   │   ├── research.py       # arXiv/S2/PDF + vibe mode
+│   │   │   ├── research.py       # Google Scholar/S2/arXiv + vibe mode
 │   │   │   ├── compiler.py       # LaTeX error fixing
 │   │   │   ├── planner.py        # Task planning
 │   │   │   └── writing.py        # Document analysis + consistency
@@ -582,8 +592,6 @@ Aura/
 │   └── Dockerfile                # TexLive image
 │
 ├── docs/plans/                   # Design documents
-│   ├── 2026-01-06-aura-design.md
-│   └── 2026-01-13-vibe-research-implementation.md
 │
 └── projects/                     # User LaTeX projects (gitignored)
 ```
@@ -656,7 +664,7 @@ class MySubagent(Subagent[MyDeps]):
 
 ### API Access
 
-Aura uses the Colorist gateway for Claude API access. The default configuration works out of the box for internal users.
+YouResearch uses the Colorist gateway for Claude API access. The default configuration works out of the box for internal users.
 
 **For external users**, you'll need to configure your own API access by setting environment variables:
 
@@ -680,8 +688,8 @@ export COLORIST_GATEWAY_URL="https://your-gateway-url"
 ### Project Storage
 
 By default, LaTeX projects are stored in:
-- `~/aura-projects/` - User projects
-- `<project>/.aura/` - Project metadata and vibe research state
+- `~/youresearch-projects/` - User projects
+- `<project>/.youresearch/` - Project metadata and vibe research state
 
 ---
 
@@ -697,7 +705,7 @@ lsof -ti:3001 | xargs kill -9  # Kill frontend
 
 ### Docker Not Running
 
-If LaTeX compilation fails, Aura will display a friendly Docker installation guide:
+If LaTeX compilation fails, YouResearch will display a friendly Docker installation guide:
 
 **Docker Not Installed:**
 - Step-by-step installation instructions
@@ -710,7 +718,7 @@ If LaTeX compilation fails, Aura will display a friendly Docker installation gui
 
 You can also manually ensure Docker is set up:
 1. Ensure Docker Desktop is running (whale icon in menu bar)
-2. Build the LaTeX image: `cd sandbox && docker build -t aura-texlive .`
+2. Build the LaTeX image: `cd sandbox && docker build -t youresearch-texlive .`
 
 ### Backend Won't Start
 
@@ -752,5 +760,6 @@ MIT
 - [Magentic-One](https://www.microsoft.com/en-us/research/articles/magentic-one-a-generalist-multi-agent-system-for-solving-complex-tasks/) - Inspiration for dual-ledger state tracking
 - [Auto-Deep-Research](https://github.com/HKUDS/Auto-Deep-Research) - Deep research workflow patterns
 - [Pydantic AI](https://ai.pydantic.dev/) - Agent framework
-- [arXiv API](https://arxiv.org/help/api) - Paper search and retrieval
+- [Google Scholar](https://scholar.google.com/) - Academic paper search
 - [Semantic Scholar API](https://api.semanticscholar.org/) - Citation graph traversal
+- [arXiv API](https://arxiv.org/help/api) - Paper search and retrieval
