@@ -674,10 +674,30 @@ async def chat_stream(request: ChatRequest):
             "api_key": request.provider.api_key,
         }
 
+    # Handle /research command - route through main agent with delegate_to_subagent
+    # Check for both raw command and transformed message from frontend
+    message = request.message.strip()
+    research_query = None
+
+    if message.lower().startswith("/research"):
+        research_query = message[9:].strip()
+    elif message.lower().startswith("search for academic papers about:"):
+        research_query = message[33:].strip()
+    elif message.lower().startswith("search for academic papers about"):
+        research_query = message[32:].strip()
+
+    # Transform /research into a delegate_to_subagent call through main agent
+    if research_query is not None:
+        # Route through main agent so it goes through proper streaming with HITL
+        # Instruct agent to pass through results without summarizing
+        message = f'''Use the research subagent to search for: {research_query or "academic papers"}
+
+IMPORTANT: After getting the research results, output the COMPLETE subagent result including ALL paper links. Do not summarize or omit the links section.'''
+
     async def event_generator():
         try:
             async for sse_data in stream_agent_sse(
-                message=request.message,
+                message=message,  # Use the (possibly transformed) message
                 project_path=request.project_path,
                 message_history=request.history,
                 session_id=session_id,
@@ -693,6 +713,126 @@ async def chat_stream(request: ChatRequest):
                     }
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({"type": "error", "message": str(e)}),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+async def _handle_research_command(query: str, project_path: str, session_id: str):
+    """
+    Handle /research command with HITL for domain/venue preferences.
+    Uses the research agent to search and synthesize results.
+    """
+    import asyncio
+    from agent.subagents.research import ResearchAgent, ResearchMode
+    from agent.venue_hitl import get_research_preference_manager
+
+    event_queue: asyncio.Queue = asyncio.Queue()
+
+    async def event_generator():
+        try:
+            # Set up HITL callbacks for domain/venue preferences
+            pref_manager = get_research_preference_manager()
+
+            async def on_domain_preference_request(request):
+                await event_queue.put({
+                    "event": "domain_preference_request",
+                    "data": json.dumps({
+                        "type": "domain_preference_request",
+                        "request_id": request.request_id,
+                        "topic": request.topic,
+                        "suggested_domain": request.suggested_domain,
+                    }),
+                })
+
+            async def on_venue_preference_request(request):
+                await event_queue.put({
+                    "event": "venue_preference_request",
+                    "data": json.dumps({
+                        "type": "venue_preference_request",
+                        "request_id": request.request_id,
+                        "topic": request.topic,
+                        "domain": request.domain,
+                        "suggested_venues": request.suggested_venues,
+                    }),
+                })
+
+            pref_manager.set_domain_event_callback(on_domain_preference_request)
+            pref_manager.set_venue_event_callback(on_venue_preference_request)
+
+            # Request research preferences through HITL
+            # This emits events and waits for user responses
+            async def get_preferences():
+                return await pref_manager.request_research_preferences(
+                    topic=query,
+                    session_id=session_id,
+                )
+
+            # Start preference request in background
+            pref_task = asyncio.create_task(get_preferences())
+
+            # Yield events while waiting for preferences
+            while not pref_task.done():
+                try:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                    yield event
+                except asyncio.TimeoutError:
+                    continue
+
+            # Get the preferences result
+            prefs = await pref_task
+
+            # Create research agent in CHAT mode
+            agent = ResearchAgent()
+            agent.mode = ResearchMode.CHAT
+
+            # Run the search with preferences
+            result = await agent.run(
+                task=query or "academic papers",
+                context={
+                    "mode": "chat",
+                    "project_path": project_path,
+                    "domain": prefs.domain,
+                    "venue_filter": prefs.venues,
+                    "venue_preferences_asked": True,
+                },
+            )
+
+            # Stream the output as text deltas to match SSE format
+            output = result.output or ""
+            if result.success:
+                # Send output in chunks to simulate streaming
+                chunk_size = 100
+                for i in range(0, len(output), chunk_size):
+                    chunk = output[i:i + chunk_size]
+                    yield {
+                        "event": "text_delta",
+                        "data": json.dumps({"type": "text_delta", "content": chunk}),
+                    }
+
+                # Send done event
+                yield {
+                    "event": "done",
+                    "data": json.dumps({
+                        "type": "done",
+                        "output": output,
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    }),
+                }
+            else:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({
+                        "type": "error",
+                        "message": result.error or "Research failed",
+                    }),
+                }
+
+        except Exception as e:
+            logger.error(f"Research command error: {e}")
             yield {
                 "event": "error",
                 "data": json.dumps({"type": "error", "message": str(e)}),
@@ -1818,6 +1958,7 @@ async def verify_references(request: VerifyReferencesRequest):
                 project_path=request.project_path,
                 http_client=http_client,
                 anthropic_client=anthropic,
+                bib_file=request.bib_file,
             )
 
             # Get approved citations
@@ -1871,6 +2012,58 @@ async def get_verifier_state(project_path: str):
     return {
         "approved_citations": memory.get_approved_citations(),
     }
+
+
+@app.get("/api/verify-references/pairs")
+async def get_tex_bib_pairs(project_path: str):
+    """
+    Find all .tex and .bib file pairs in the project.
+    Returns pairs with matching filenames (e.g., main.tex + main.bib).
+    """
+    from pathlib import Path
+
+    project = Path(project_path)
+    if not project.exists():
+        return {"pairs": [], "error": "Project path does not exist"}
+
+    # Find all .tex and .bib files recursively
+    tex_files = list(project.glob("**/*.tex"))
+    bib_files = list(project.glob("**/*.bib"))
+
+    # Create a map of bib files by their stem (filename without extension)
+    bib_map = {}
+    for bib in bib_files:
+        stem = bib.stem
+        if stem not in bib_map:
+            bib_map[stem] = []
+        bib_map[stem].append(bib)
+
+    # Find pairs with matching names
+    pairs = []
+    seen_bibs = set()
+
+    for tex in tex_files:
+        stem = tex.stem
+        if stem in bib_map:
+            for bib in bib_map[stem]:
+                if str(bib) not in seen_bibs:
+                    pairs.append({
+                        "tex_file": str(tex.relative_to(project)),
+                        "bib_file": str(bib.relative_to(project)),
+                        "display_name": f"{stem} ({bib.relative_to(project).parent or '.'})",
+                    })
+                    seen_bibs.add(str(bib))
+
+    # Also add any bib files without matching tex files
+    for bib in bib_files:
+        if str(bib) not in seen_bibs:
+            pairs.append({
+                "tex_file": None,
+                "bib_file": str(bib.relative_to(project)),
+                "display_name": f"{bib.stem} ({bib.relative_to(project).parent or '.'})",
+            })
+
+    return {"pairs": pairs, "total_tex": len(tex_files), "total_bib": len(bib_files)}
 
 
 @app.post("/api/verify-references/approve")

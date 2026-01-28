@@ -332,43 +332,58 @@ async def search_semantic_scholar_api(
 # System Prompts
 # =============================================================================
 
-RESEARCH_SYSTEM_PROMPT_CHAT = """You are a specialized academic research assistant.
+RESEARCH_SYSTEM_PROMPT_CHAT = """You are a specialized academic research assistant that helps users find relevant academic papers.
 
-## MANDATORY FIRST ACTION
+## Research Preferences (Already Collected via HITL)
 
-Your FIRST tool call MUST be `search_google_scholar`. This is not optional.
-Do NOT use search_arxiv or search_semantic_scholar as your first search.
+The user has already provided their preferences through the preference modal:
+- **Domain**: Check the context for the selected research domain
+- **Venues**: Check the context for any venue restrictions
+
+## YOUR WORKFLOW
+
+### Step 1: Search Based on Preferences
+Use the provided domain and venue preferences to search:
+- `search_google_scholar` for broad academic coverage
+
+**IMPORTANT: LIMIT YOUR SEARCHES**
+- Make only 1-2 search queries total
+- Use a well-crafted query that combines keywords (e.g., "vision language action models robotics 2024")
+- Do NOT make many separate searches - Google Scholar will block excessive requests
+
+Refine your search query using the domain context. For example:
+- If domain is "Machine Learning" and query is "control theory", search for "machine learning control theory"
+
+### Step 2: Synthesize and Summarize
+Don't just list papers. Provide a **synthesis**:
+- Group papers by theme or approach
+- Explain key contributions and how they relate
+- Highlight seminal vs recent work
+- Note any research gaps or open problems
 
 ## OUTPUT FORMAT
 
-For each paper, use this format with the URL on a separate line:
+**Summary**: Brief overview of the research landscape.
 
-**Paper Title**
-Authors: Author1, Author2 et al. (Year)
-Description of the paper's contribution.
-Link: https://actual-url-here
+**Key Themes**:
+1. **Theme Name**: Description and representative papers
+2. **Theme Name**: Description and representative papers
 
-Example:
-**Attention Is All You Need**
-Authors: Vaswani et al. (2017)
-Introduced the Transformer architecture using self-attention.
-Link: https://arxiv.org/abs/1706.03762
+**Recommended Papers**:
+For each paper:
+- **Title**
+- Authors (Year)
+- Why it's relevant to the query
+- Link: URL
+
+**Research Gaps**: What questions remain open?
 
 ## CRITICAL REQUIREMENTS
-
-1. **INCLUDE THE LINK LINE** - Every paper MUST have a "Link: URL" line from the search results.
-2. **COPY URLS FROM TOOL RESULTS** - Use the exact URLs returned by search tools.
-3. **NO PAPER WITHOUT A LINK** - If no URL in search results, don't mention the paper.
-
-## Your Workflow
-
-1. **SEARCH**: Call `search_google_scholar` first (MANDATORY)
-   - `search_pubmed` for biomedical topics only
-
-2. **FORMAT**: Copy paper info with URL on separate line
-
-## Scope Limits
-- 1-2 search queries, 5-8 papers max, complete quickly
+1. **LIMIT SEARCHES TO 1-2** - Excessive searches will be blocked
+2. **USE PROVIDED PREFERENCES** - Domain and venue filters have already been collected
+3. **SYNTHESIZE, DON'T JUST LIST** - Provide analysis and connections
+4. **INCLUDE LINKS** - Every paper needs a "Link: URL" line from search results
+5. **COPY EXACT URLS** - Use URLs returned by search tools, never make up URLs
 """
 
 RESEARCH_SYSTEM_PROMPT_VIBE = """You are an autonomous research agent conducting deep literature exploration.
@@ -579,6 +594,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
             SubagentResult with output and metadata
         """
         import asyncio
+        import re
         from datetime import datetime, timezone
 
         # Build context from kwargs
@@ -589,16 +605,19 @@ class ResearchAgent(Subagent[ResearchDeps]):
 
         if mode is not None:
             ctx["mode"] = "vibe" if mode == ResearchMode.VIBE else "chat"
-            self.mode = mode  # Update mode for system prompt
+            # If mode changed, invalidate cached agent so it gets recreated with correct tools
+            if mode != self.mode:
+                self._agent = None
+            self.mode = mode
 
         if vibe_state is not None:
             self._vibe_state_override = vibe_state
             ctx["session_id"] = vibe_state.session_id
 
-        # Run the agent (duplicated from base class to capture deps)
         started_at = datetime.now(timezone.utc)
         logger.info(f"Subagent '{self.config.name}' starting task: {task[:100]}...")
 
+        # Both CHAT and VIBE modes use the agent with tools
         max_retries = 3
         retry_delay = 5.0
 
@@ -620,9 +639,8 @@ class ResearchAgent(Subagent[ResearchDeps]):
                 # Get the model's output
                 output = result.output or ""
 
-                # Append collected paper links (CHAT mode only)
-                if deps.mode == ResearchMode.CHAT and deps.collected_papers:
-                    # Deduplicate by URL
+                # Append collected paper links
+                if deps.collected_papers:
                     seen_urls = set()
                     unique_papers = []
                     for paper in deps.collected_papers:
@@ -689,6 +707,23 @@ class ResearchAgent(Subagent[ResearchDeps]):
             error="max_retries",
             started_at=started_at,
         )
+
+    def _extract_search_query(self, task: str) -> str:
+        """Extract a search query from the task description."""
+        import re
+
+        # Remove common prefixes
+        task = re.sub(r'^(Search for|Find|Look for|Get)\s+(academic\s+)?(papers?|articles?)\s+(about|on|regarding|related to)\s+', '', task, flags=re.IGNORECASE)
+
+        # Take first sentence or first 100 chars
+        task = task.split('.')[0].strip()
+        if len(task) > 100:
+            task = task[:100]
+
+        # Remove venue filter requests
+        task = re.sub(r'\s*\(.*venue.*\).*', '', task, flags=re.IGNORECASE)
+
+        return task.strip() or "academic papers"
 
     @property
     def system_prompt(self) -> str:
@@ -777,13 +812,139 @@ class ResearchAgent(Subagent[ResearchDeps]):
                 retries=2,
             )
 
-        # === CORE TOOLS (both modes) ===
-        self._register_core_tools(agent)
+            # Add dynamic system prompt that injects research preferences
+            @agent.system_prompt
+            def inject_research_preferences(ctx: RunContext[ResearchDeps]) -> str:
+                """Inject research preferences (domain, venues) into the context."""
+                parts = []
+                if ctx.deps.domain:
+                    parts.append(f"**Selected Domain**: {ctx.deps.domain}")
+                if ctx.deps.venue_filter:
+                    venues_str = ", ".join(ctx.deps.venue_filter)
+                    parts.append(f"**Selected Venues**: {venues_str}")
+                if parts:
+                    return "\n## User's Research Preferences\n" + "\n".join(parts) + "\n\nUse these preferences to refine your search and prioritize relevant papers."
+                return ""
 
-        # === VIBE TOOLS (primarily for vibe mode, but available in both) ===
-        self._register_vibe_tools(agent)
+        # === CHAT TOOLS (Google Scholar ONLY - for quick searches) ===
+        if self.mode == ResearchMode.CHAT:
+            self._register_chat_tools(agent)
+            logger.info(f"CHAT mode: registered tools = {list(agent._function_toolset.tools.keys())}")
+        else:
+            # === ALL TOOLS (VIBE mode - comprehensive research) ===
+            self._register_core_tools(agent)
+            self._register_vibe_tools(agent)
+            logger.info(f"VIBE mode: registered tools = {list(agent._function_toolset.tools.keys())}")
 
         return agent
+
+    def _register_chat_tools(self, agent: Agent):
+        """Register minimal tools for CHAT mode (Google Scholar ONLY)."""
+
+        @agent.tool
+        async def search_google_scholar(
+            ctx: RunContext[ResearchDeps],
+            query: str,
+            max_results: int = 10,
+            year_start: int | None = None,
+            year_end: int | None = None,
+        ) -> str:
+            """
+            Search Google Scholar for academic papers.
+
+            Args:
+                query: Search query (e.g., "deep learning medical imaging")
+                max_results: Maximum results (1-20)
+                year_start: Filter papers from this year
+                year_end: Filter papers until this year
+
+            Returns:
+                List of papers with titles, authors, and clickable links
+            """
+            max_results = min(max(1, max_results), 20)
+
+            try:
+                client = GoogleScholarClient(ctx.deps.http_client)
+                results = await client.search(
+                    query=query,
+                    max_results=max_results,
+                    year_start=year_start,
+                    year_end=year_end,
+                )
+
+                if not results:
+                    return f"No papers found on Google Scholar for query: '{query}'"
+
+                # Collect papers with links for Sources section
+                for paper in results:
+                    if paper.url:
+                        authors_str = ", ".join(paper.authors[:3]) if paper.authors else ""
+                        if len(paper.authors) > 3:
+                            authors_str += " et al."
+                        ctx.deps.collected_papers.append(CollectedPaper(
+                            title=paper.title,
+                            url=paper.url,
+                            authors=authors_str,
+                            year=paper.year,
+                        ))
+
+                return format_results(results, query, "Google Scholar")
+
+            except Exception as e:
+                error_msg = str(e)
+                # If CAPTCHA or rate limited, try Semantic Scholar as fallback
+                if "CAPTCHA" in error_msg or "rate" in error_msg.lower():
+                    logger.warning(f"Google Scholar blocked, falling back to Semantic Scholar: {error_msg}")
+                    try:
+                        s2_client = SemanticScholarClient(ctx.deps.http_client)
+                        s2_results = await s2_client.search(query=query, limit=max_results)
+
+                        if not s2_results:
+                            return f"Google Scholar is blocked (CAPTCHA). Semantic Scholar also found no results for: '{query}'"
+
+                        # Collect papers with links
+                        for paper in s2_results:
+                            if paper.get("url"):
+                                authors = paper.get("authors", [])
+                                authors_str = ", ".join(a.get("name", "") for a in authors[:3])
+                                if len(authors) > 3:
+                                    authors_str += " et al."
+                                ctx.deps.collected_papers.append(CollectedPaper(
+                                    title=paper.get("title", ""),
+                                    url=paper.get("url", ""),
+                                    authors=authors_str,
+                                    year=paper.get("year"),
+                                ))
+
+                        # Format S2 results
+                        lines = [f"(Google Scholar blocked - using Semantic Scholar) Found {len(s2_results)} papers for '{query}':\n"]
+                        for i, paper in enumerate(s2_results, 1):
+                            title = paper.get("title", "Unknown")
+                            authors = paper.get("authors", [])
+                            authors_str = ", ".join(a.get("name", "") for a in authors[:3])
+                            if len(authors) > 3:
+                                authors_str += " et al."
+                            year = paper.get("year", "")
+                            url = paper.get("url", "")
+                            citations = paper.get("citationCount", 0)
+
+                            lines.append(f"{i}. **{title}**")
+                            if authors_str:
+                                lines.append(f"   Authors: {authors_str}")
+                            if year:
+                                lines.append(f"   Year: {year}")
+                            if citations:
+                                lines.append(f"   Citations: {citations}")
+                            if url:
+                                lines.append(f"   Link: {url}")
+                            lines.append("")
+
+                        return "\n".join(lines)
+
+                    except Exception as s2_error:
+                        return f"Google Scholar blocked (CAPTCHA) and Semantic Scholar also failed: {s2_error}"
+
+                return f"Error searching Google Scholar: {error_msg}"
 
     def _register_core_tools(self, agent: Agent):
         """Register core research tools (existing tools)."""
@@ -843,10 +1004,6 @@ Proceed with broad search across all venues."""
             Returns:
                 List of papers with titles, authors, abstracts, and links
             """
-            # In CHAT mode, redirect to Google Scholar
-            if ctx.deps.mode == ResearchMode.CHAT:
-                return "ERROR: In CHAT mode, you MUST use search_google_scholar instead of search_arxiv. Please call search_google_scholar with your query."
-
             max_results = min(max(1, max_results), 10)
 
             # Apply venue filter if set
@@ -924,10 +1081,6 @@ Proceed with broad search across all venues."""
             Returns:
                 List of papers with citation counts and links
             """
-            # In CHAT mode, redirect to Google Scholar
-            if ctx.deps.mode == ResearchMode.CHAT:
-                return "ERROR: In CHAT mode, you MUST use search_google_scholar instead of search_semantic_scholar. Please call search_google_scholar with your query."
-
             max_results = min(max(1, max_results), 10)
 
             # Apply venue filter if set
@@ -1015,10 +1168,6 @@ Proceed with broad search across all venues."""
             Returns:
                 List of papers with titles, sources, and snippets
             """
-            # In CHAT mode, redirect to Google Scholar
-            if ctx.deps.mode == ResearchMode.CHAT:
-                return "ERROR: In CHAT mode, you MUST use search_google_scholar instead of search_web. Please call search_google_scholar with your query."
-
             max_results = min(max(1, max_results), 15)
 
             # Apply venue filter if set
@@ -1216,7 +1365,7 @@ Proceed with broad search across all venues."""
                 ctx.deps.vibe_state.save(ctx.deps.project_path)
 
             try:
-                client = GoogleScholarClient()
+                client = GoogleScholarClient(ctx.deps.http_client)
                 results = await client.search(
                     query=enhanced_query,
                     max_results=max_results,

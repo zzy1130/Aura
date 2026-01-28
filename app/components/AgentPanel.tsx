@@ -26,6 +26,10 @@ import {
   Check,
   FileCode,
   Trash2,
+  ExternalLink,
+  GraduationCap,
+  BookMarked,
+  FileText,
 } from 'lucide-react';
 import { PendingEdit, SendToAgentContext } from './Editor';
 import PlanDisplay, { Plan, PlanStep } from './PlanDisplay';
@@ -182,6 +186,216 @@ function ToolCallDisplay({
   );
 }
 
+// Academic paper link detection and styling
+interface AcademicSource {
+  name: string;
+  icon: React.ReactNode;
+  color: string;
+  bgColor: string;
+}
+
+function getAcademicSource(url: string): AcademicSource | null {
+  const urlLower = url.toLowerCase();
+
+  if (urlLower.includes('arxiv.org')) {
+    return {
+      name: 'arXiv',
+      icon: <FileText className="w-3.5 h-3.5" />,
+      color: 'text-red-600',
+      bgColor: 'bg-red-50 border-red-200 hover:bg-red-100',
+    };
+  }
+  if (urlLower.includes('ieeexplore.ieee.org') || urlLower.includes('ieee.org')) {
+    return {
+      name: 'IEEE',
+      icon: <BookMarked className="w-3.5 h-3.5" />,
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50 border-blue-200 hover:bg-blue-100',
+    };
+  }
+  if (urlLower.includes('springer.com') || urlLower.includes('link.springer')) {
+    return {
+      name: 'Springer',
+      icon: <BookMarked className="w-3.5 h-3.5" />,
+      color: 'text-blue-700',
+      bgColor: 'bg-sky-50 border-sky-200 hover:bg-sky-100',
+    };
+  }
+  if (urlLower.includes('acm.org') || urlLower.includes('dl.acm.org')) {
+    return {
+      name: 'ACM',
+      icon: <GraduationCap className="w-3.5 h-3.5" />,
+      color: 'text-green-700',
+      bgColor: 'bg-green-50 border-green-200 hover:bg-green-100',
+    };
+  }
+  if (urlLower.includes('scholar.google')) {
+    return {
+      name: 'Scholar',
+      icon: <GraduationCap className="w-3.5 h-3.5" />,
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50 border-blue-200 hover:bg-blue-100',
+    };
+  }
+  if (urlLower.includes('semanticscholar.org')) {
+    return {
+      name: 'S2',
+      icon: <GraduationCap className="w-3.5 h-3.5" />,
+      color: 'text-yellow-700',
+      bgColor: 'bg-yellow-50 border-yellow-200 hover:bg-yellow-100',
+    };
+  }
+  if (urlLower.includes('pubmed') || urlLower.includes('ncbi.nlm.nih.gov')) {
+    return {
+      name: 'PubMed',
+      icon: <BookMarked className="w-3.5 h-3.5" />,
+      color: 'text-teal-600',
+      bgColor: 'bg-teal-50 border-teal-200 hover:bg-teal-100',
+    };
+  }
+  if (urlLower.includes('nature.com')) {
+    return {
+      name: 'Nature',
+      icon: <BookMarked className="w-3.5 h-3.5" />,
+      color: 'text-red-700',
+      bgColor: 'bg-red-50 border-red-200 hover:bg-red-100',
+    };
+  }
+  if (urlLower.includes('sciencedirect.com') || urlLower.includes('elsevier.com')) {
+    return {
+      name: 'Elsevier',
+      icon: <BookMarked className="w-3.5 h-3.5" />,
+      color: 'text-orange-600',
+      bgColor: 'bg-orange-50 border-orange-200 hover:bg-orange-100',
+    };
+  }
+  if (urlLower.includes('nowpublishers.com')) {
+    return {
+      name: 'Now Pub',
+      icon: <BookMarked className="w-3.5 h-3.5" />,
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-50 border-purple-200 hover:bg-purple-100',
+    };
+  }
+  if (urlLower.includes('wiley.com') || urlLower.includes('onlinelibrary.wiley')) {
+    return {
+      name: 'Wiley',
+      icon: <BookMarked className="w-3.5 h-3.5" />,
+      color: 'text-indigo-600',
+      bgColor: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
+    };
+  }
+  if (urlLower.includes('openreview.net')) {
+    return {
+      name: 'OpenReview',
+      icon: <FileText className="w-3.5 h-3.5" />,
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-50 border-purple-200 hover:bg-purple-100',
+    };
+  }
+  if (urlLower.includes('proceedings.neurips.cc') || urlLower.includes('neurips.cc')) {
+    return {
+      name: 'NeurIPS',
+      icon: <GraduationCap className="w-3.5 h-3.5" />,
+      color: 'text-violet-600',
+      bgColor: 'bg-violet-50 border-violet-200 hover:bg-violet-100',
+    };
+  }
+  if (urlLower.includes('proceedings.mlr.press') || urlLower.includes('mlr.press')) {
+    return {
+      name: 'PMLR',
+      icon: <GraduationCap className="w-3.5 h-3.5" />,
+      color: 'text-pink-600',
+      bgColor: 'bg-pink-50 border-pink-200 hover:bg-pink-100',
+    };
+  }
+
+  return null;
+}
+
+function extractPaperId(url: string): string {
+  // Extract meaningful ID from URL, keep it short
+  if (url.includes('arxiv.org')) {
+    const match = url.match(/(\d{4}\.\d{4,5})/);
+    return match ? match[1] : '';
+  }
+  if (url.includes('doi.org')) {
+    const match = url.match(/doi\.org\/(.+)$/);
+    if (match) {
+      const doi = match[1];
+      return doi.length > 15 ? doi.substring(0, 12) + '...' : doi;
+    }
+    return '';
+  }
+  // For other URLs, extract last path segment and truncate
+  const parts = url.split('/').filter(p => p && p !== 'abstract' && p !== 'document' && p !== 'pdf');
+  const lastPart = parts[parts.length - 1] || '';
+  return lastPart.length > 12 ? lastPart.substring(0, 10) + '...' : lastPart;
+}
+
+// Paper link component with nice styling - opens in system browser
+function PaperLinkDisplay({ href, children }: { href: string; children: React.ReactNode }) {
+  const source = getAcademicSource(href);
+  const childText = typeof children === 'string' ? children : '';
+  const isUrlAsText = childText.startsWith('http');
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    // Open in system default browser via Electron
+    if (typeof window !== 'undefined' && window.aura?.openExternal) {
+      window.aura.openExternal(href);
+    } else {
+      // Fallback for non-Electron (web browser)
+      window.open(href, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  if (source) {
+    const paperId = extractPaperId(href);
+    return (
+      <button
+        onClick={handleClick}
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${source.bgColor} ${source.color}`}
+        title={href}
+      >
+        {source.icon}
+        <span>{source.name}</span>
+        {paperId && <span className="opacity-60 max-w-[80px] truncate">· {paperId}</span>}
+        <ExternalLink className="w-3 h-3 opacity-50 flex-shrink-0" />
+      </button>
+    );
+  }
+
+  // Non-academic links - if the text is just a URL, truncate it nicely
+  if (isUrlAsText && href.length > 50) {
+    try {
+      const domain = new URL(href).hostname.replace('www.', '');
+      return (
+        <button
+          onClick={handleClick}
+          className="inline-flex items-center gap-1 text-green1 hover:text-green2 underline underline-offset-2 cursor-pointer"
+          title={href}
+        >
+          <span>{domain}</span>
+          <ExternalLink className="w-3 h-3" />
+        </button>
+      );
+    } catch {
+      // Invalid URL, fall through to regular link
+    }
+  }
+
+  // Regular link
+  return (
+    <button
+      onClick={handleClick}
+      className="text-green1 underline underline-offset-2 hover:text-green2 cursor-pointer"
+    >
+      {children}
+    </button>
+  );
+}
+
 // Text part display with LaTeX support
 function TextPartDisplay({ content }: { content: string }) {
   if (!content.trim()) return null;
@@ -198,16 +412,10 @@ function TextPartDisplay({ content }: { content: string }) {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-green1 underline underline-offset-2 hover:text-green2 cursor-pointer"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            if (!href) return <span>{children}</span>;
+            return <PaperLinkDisplay href={href}>{children}</PaperLinkDisplay>;
+          },
         }}
       >
         {processedContent}
@@ -312,6 +520,7 @@ export default function AgentPanel({
     suggestedVenues: string[];
   }>({ isOpen: false, requestId: '', topic: '', domain: '', suggestedVenues: [] });
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const pendingMessageRef = useRef<string | null>(null);
@@ -616,13 +825,15 @@ export default function AgentPanel({
 
   // Auto-scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
   }, [messages]);
 
   // Auto-scroll to pending message when it changes
   useEffect(() => {
-    if (pendingMessage) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (pendingMessage && messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
     }
   }, [pendingMessage]);
 
@@ -1383,7 +1594,7 @@ export default function AgentPanel({
           </div>
 
           {/* Chat Messages */}
-          <div className="flex-1 overflow-auto p-3 space-y-3">
+          <div ref={messagesContainerRef} className="flex-1 overflow-auto p-3">
         {messages.length === 0 && !currentPlan ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center px-6">
@@ -1397,7 +1608,7 @@ export default function AgentPanel({
             </div>
           </div>
         ) : (
-          <>
+          <div className="min-h-full flex flex-col justify-end space-y-3">
             {messages.map((msg) => (
               <MessageDisplay
                 key={msg.id}
@@ -1432,7 +1643,7 @@ export default function AgentPanel({
               />
             )}
             <div ref={messagesEndRef} />
-          </>
+          </div>
         )}
       </div>
 

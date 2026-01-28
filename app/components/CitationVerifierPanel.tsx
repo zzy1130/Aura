@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ExternalLink,
   Check,
+  FileText,
 } from 'lucide-react';
 import { api, VerificationResult } from '../lib/api';
 
@@ -25,6 +26,12 @@ interface VerifierStats {
   errors: number;
 }
 
+interface BibPair {
+  tex_file: string | null;
+  bib_file: string;
+  display_name: string;
+}
+
 export default function CitationVerifierPanel({
   projectPath,
   onClose,
@@ -36,22 +43,40 @@ export default function CitationVerifierPanel({
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Load initial state
+  // File selection state
+  const [pairs, setPairs] = useState<BibPair[]>([]);
+  const [selectedBib, setSelectedBib] = useState<string | null>(null);
+  const [isLoadingPairs, setIsLoadingPairs] = useState(true);
+
+  // Load initial state and file pairs
   useEffect(() => {
-    const loadState = async () => {
+    const loadInitialData = async () => {
       try {
+        // Load pairs
+        setIsLoadingPairs(true);
+        const pairsData = await api.getTexBibPairs(projectPath);
+        setPairs(pairsData.pairs);
+
+        // Auto-select if only one bib file
+        if (pairsData.pairs.length === 1) {
+          setSelectedBib(pairsData.pairs[0].bib_file);
+        }
+
+        // Load approved state
         const state = await api.getVerifierState(projectPath);
         setApproved(new Set(state.approved_citations));
       } catch (e) {
-        console.error('Failed to load verifier state:', e);
+        console.error('Failed to load initial data:', e);
+      } finally {
+        setIsLoadingPairs(false);
       }
     };
-    loadState();
+    loadInitialData();
   }, [projectPath]);
 
   // Run verification
   const runVerification = useCallback(async () => {
-    if (isRunning) return;
+    if (isRunning || !selectedBib) return;
 
     setIsRunning(true);
     setResults(new Map());
@@ -60,10 +85,10 @@ export default function CitationVerifierPanel({
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await fetch(api.getVerifyReferencesUrl(projectPath), {
+      const response = await fetch(api.getVerifyReferencesUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_path: projectPath }),
+        body: JSON.stringify({ project_path: projectPath, bib_file: selectedBib }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -117,15 +142,17 @@ export default function CitationVerifierPanel({
       setIsRunning(false);
       abortControllerRef.current = null;
     }
-  }, [projectPath]);
+  }, [projectPath, selectedBib]);
 
-  // Auto-run on mount
+  // Auto-run when a bib file is selected (only if single file)
   useEffect(() => {
-    runVerification();
+    if (selectedBib && pairs.length === 1) {
+      runVerification();
+    }
     return () => {
       abortControllerRef.current?.abort();
     };
-  }, []);
+  }, [selectedBib, pairs.length]);
 
   // Approve a citation
   const handleApprove = async (citeKey: string) => {
@@ -175,7 +202,7 @@ export default function CitationVerifierPanel({
           <div className="flex items-center gap-2">
             <button
               onClick={runVerification}
-              disabled={isRunning}
+              disabled={isRunning || !selectedBib}
               className="btn-ghost typo-small flex items-center gap-1.5"
             >
               <RefreshCw size={14} className={isRunning ? 'animate-spin' : ''} />
@@ -191,24 +218,108 @@ export default function CitationVerifierPanel({
         </div>
       </div>
 
-      {/* Stats bar */}
-      <div className="px-4 py-2 bg-white border-b border-black/6 flex items-center gap-4">
-        <span className="typo-small flex items-center gap-1.5 text-success">
-          <CheckCircle size={14} />
-          {stats.verified} verified
-        </span>
-        <span className="typo-small flex items-center gap-1.5 text-orange1">
-          <AlertTriangle size={14} />
-          {stats.warnings} warnings
-        </span>
-        <span className="typo-small flex items-center gap-1.5 text-error">
-          <XCircle size={14} />
-          {stats.errors} errors
-        </span>
-      </div>
+      {/* File selection */}
+      {isLoadingPairs ? (
+        <div className="px-4 py-3 bg-white border-b border-black/6">
+          <div className="flex items-center gap-2 text-secondary">
+            <Loader2 size={14} className="animate-spin" />
+            <span className="typo-small">Loading bibliography files...</span>
+          </div>
+        </div>
+      ) : pairs.length === 0 ? (
+        <div className="px-4 py-3 bg-white border-b border-black/6">
+          <div className="flex items-center gap-2 text-error">
+            <XCircle size={14} />
+            <span className="typo-small">No .bib files found in project</span>
+          </div>
+        </div>
+      ) : pairs.length > 1 || !selectedBib ? (
+        <div className="px-4 py-3 bg-white border-b border-black/6">
+          <label className="typo-small text-secondary block mb-2">
+            Select bibliography file to verify:
+          </label>
+          <div className="space-y-1">
+            {pairs.map((pair) => (
+              <button
+                key={pair.bib_file}
+                onClick={() => setSelectedBib(pair.bib_file)}
+                className={`w-full text-left px-3 py-2 rounded-yw-md flex items-center gap-2 transition-colors ${
+                  selectedBib === pair.bib_file
+                    ? 'bg-green1/10 border border-green1/30'
+                    : 'bg-fill-tertiary hover:bg-fill-quaternary border border-transparent'
+                }`}
+              >
+                <FileText size={14} className={selectedBib === pair.bib_file ? 'text-green1' : 'text-tertiary'} />
+                <div className="flex-1 min-w-0">
+                  <div className="typo-small font-mono truncate">{pair.bib_file}</div>
+                  {pair.tex_file && (
+                    <div className="typo-ex-small text-tertiary truncate">
+                      Paired with: {pair.tex_file}
+                    </div>
+                  )}
+                </div>
+                {selectedBib === pair.bib_file && (
+                  <Check size={14} className="text-green1 flex-shrink-0" />
+                )}
+              </button>
+            ))}
+          </div>
+          {selectedBib && (
+            <button
+              onClick={runVerification}
+              disabled={isRunning}
+              className="mt-3 w-full btn-primary typo-small flex items-center justify-center gap-2"
+            >
+              {isRunning ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Verifying...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} />
+                  Verify Selected File
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="px-4 py-2 bg-white border-b border-black/6">
+          <div className="typo-small text-tertiary flex items-center gap-2">
+            <FileText size={14} />
+            <span className="font-mono">{selectedBib}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Stats bar - only show when we have results */}
+      {results.size > 0 && (
+        <div className="px-4 py-2 bg-white border-b border-black/6 flex items-center gap-4">
+          <span className="typo-small flex items-center gap-1.5 text-success">
+            <CheckCircle size={14} />
+            {stats.verified} verified
+          </span>
+          <span className="typo-small flex items-center gap-1.5 text-orange1">
+            <AlertTriangle size={14} />
+            {stats.warnings} warnings
+          </span>
+          <span className="typo-small flex items-center gap-1.5 text-error">
+            <XCircle size={14} />
+            {stats.errors} errors
+          </span>
+        </div>
+      )}
 
       {/* Results list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {!selectedBib && pairs.length > 0 && (
+          <div className="text-center py-8 text-secondary">
+            <FileText size={24} className="mx-auto mb-2 text-tertiary" />
+            <p className="typo-small">Select a bibliography file to verify</p>
+          </div>
+        )}
+
         {sortedResults.length === 0 && isRunning && (
           <div className="text-center py-8 text-secondary">
             <Loader2 size={24} className="animate-spin mx-auto mb-2" />

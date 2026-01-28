@@ -323,6 +323,13 @@ function setupIpcHandlers(): void {
     shell.showItemInFolder(filePath);
   });
 
+  // Open URL in default system browser
+  ipcMain.handle('open-external', async (_event, url: string) => {
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      await shell.openExternal(url);
+    }
+  });
+
   // Settings storage (persistent across app restarts)
   const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 

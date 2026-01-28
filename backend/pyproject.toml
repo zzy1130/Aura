@@ -24,6 +24,16 @@ dependencies = [
 
     # Research tools
     "arxiv>=2.1.0",
+    "PyMuPDF>=1.24.0",
+    "ddgs>=7.0.0",
+
+    # Citation management (Google Scholar)
+    "requests>=2.31.0",
+    "scholarly>=1.7.0",
+    "beautifulsoup4>=4.12.0",
+
+    # LaTeX parsing
+    "pylatexenc>=2.10",
 
     # Docker
     "docker>=7.0.0",

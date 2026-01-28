@@ -429,14 +429,26 @@ class ReferenceVerifier:
         project_path: str,
         http_client: httpx.AsyncClient,
         anthropic_client: AsyncAnthropic,
+        bib_file: Optional[str] = None,
     ):
         self.project_path = Path(project_path)
         self.http_client = http_client
         self.anthropic_client = anthropic_client
+        self.bib_file = bib_file  # Specific bib file to use
 
     def _find_bib_file(self) -> Optional[Path]:
         """Find the .bib file in the project."""
-        bib_files = list(self.project_path.glob("*.bib"))
+        # If a specific bib file was provided, use it
+        if self.bib_file:
+            bib_path = Path(self.bib_file)
+            if bib_path.is_absolute():
+                return bib_path if bib_path.exists() else None
+            else:
+                full_path = self.project_path / bib_path
+                return full_path if full_path.exists() else None
+
+        # Otherwise, search for .bib files recursively
+        bib_files = list(self.project_path.glob("**/*.bib"))
         if bib_files:
             return bib_files[0]
         return None

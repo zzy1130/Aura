@@ -266,6 +266,36 @@ class GitSyncService:
             return result.stdout.strip()
         return None
 
+    async def get_remote_branch(self) -> str:
+        """
+        Get the remote's default branch name.
+
+        Tries to detect the remote's HEAD, falls back to checking common names.
+        Returns 'master' as fallback if detection fails.
+        """
+        # First try to get the remote's HEAD reference
+        result = await self._run_git("symbolic-ref", "refs/remotes/origin/HEAD", check=False)
+        if result.returncode == 0:
+            # Returns something like "refs/remotes/origin/main"
+            ref = result.stdout.strip()
+            if ref:
+                return ref.split("/")[-1]
+
+        # If that fails, check which remote branches exist
+        result = await self._run_git("branch", "-r", check=False)
+        if result.returncode == 0:
+            branches = result.stdout.strip().split("\n")
+            for branch in branches:
+                branch = branch.strip()
+                # Check for origin/main first (newer convention)
+                if branch == "origin/main" or branch.endswith("origin/main"):
+                    return "main"
+                if branch == "origin/master" or branch.endswith("origin/master"):
+                    return "master"
+
+        # Default fallback
+        return "master"
+
     async def get_status(self, fetch: bool = True) -> SyncInfo:
         """
         Get comprehensive sync status.
@@ -437,9 +467,24 @@ class GitSyncService:
                 message=f"Failed to connect to Overleaf: {result.stderr}",
             )
 
-        # Set up tracking branch
+        # Set up tracking branch (detect remote branch after fetch)
+        remote_branch = await self.get_remote_branch()
+        local_branch = "main" if remote_branch == "main" else "master"
+
+        # Get current local branch
+        current_result = await self._run_git("branch", "--show-current", check=False)
+        current_branch = current_result.stdout.strip() if current_result.returncode == 0 else ""
+
+        # If no commits yet or branch doesn't match, rename/create the right branch
+        if current_branch and current_branch != local_branch:
+            await self._run_git("branch", "-m", current_branch, local_branch, check=False)
+        elif not current_branch:
+            # No commits yet - the branch will be created on first commit
+            pass
+
+        # Set upstream tracking
         await self._run_git(
-            "branch", "--set-upstream-to=origin/master", "master", check=False
+            "branch", f"--set-upstream-to=origin/{remote_branch}", local_branch, check=False
         )
 
         # Ensure gitignore is set up early to exclude auxiliary files
@@ -492,16 +537,19 @@ class GitSyncService:
         # Ensure local/auxiliary files are ignored (shouldn't sync to Overleaf)
         self._ensure_gitignore()
 
+        # Get the remote branch name
+        remote_branch = await self.get_remote_branch()
+
         # Check if this is the first sync (no last_sync in config)
         config = self._load_config()
         is_first_sync = not config.get("last_sync")
 
         if is_first_sync:
             # First sync: reset to Overleaf content completely
-            logger.info("First sync - resetting to Overleaf content")
-            await self._run_git("fetch", "origin", "master", check=False, timeout=60)
-            # Reset to origin/master, discarding local content
-            result = await self._run_git("reset", "--hard", "origin/master", check=False)
+            logger.info(f"First sync - resetting to Overleaf content (branch: {remote_branch})")
+            await self._run_git("fetch", "origin", remote_branch, check=False, timeout=60)
+            # Reset to origin/remote_branch, discarding local content
+            result = await self._run_git("reset", "--hard", f"origin/{remote_branch}", check=False)
             if result.returncode != 0:
                 return SyncResult(
                     success=False,
@@ -519,9 +567,9 @@ class GitSyncService:
                 await self._run_git("add", "-A", check=False)
                 await self._run_git("commit", "-m", "Auto-commit before pull", check=False)
 
-            # Pull from origin (fetch remote master, merge into local branch)
-            await self._run_git("fetch", "origin", "master", check=False, timeout=60)
-            result = await self._run_git("merge", "origin/master", "--allow-unrelated-histories", check=False)
+            # Pull from origin (fetch remote branch, merge into local branch)
+            await self._run_git("fetch", "origin", remote_branch, check=False, timeout=60)
+            result = await self._run_git("merge", f"origin/{remote_branch}", "--allow-unrelated-histories", check=False)
 
             # Check for conflicts
             if result.returncode != 0:
@@ -610,11 +658,15 @@ class GitSyncService:
             await self._run_git("add", filepath, check=False)
             message = commit_message or f"Aura sync {filepath}: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             result = await self._run_git("commit", "-m", message, check=False)
-            if result.returncode != 0 and "nothing to commit" not in result.stdout:
+            # Ignore commit failures due to nothing to commit
+            combined_output = result.stdout + result.stderr
+            if result.returncode != 0 and "nothing to commit" not in combined_output and "no changes added" not in combined_output:
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                logger.error(f"Commit failed for {filepath}: {error_msg}")
                 return SyncResult(
                     success=False,
                     operation="push",
-                    message=f"Commit failed: {result.stderr}",
+                    message=f"Commit failed: {error_msg}",
                 )
         elif status.uncommitted_files:
             # Stage all changes
@@ -623,16 +675,21 @@ class GitSyncService:
             # Commit
             message = commit_message or f"Aura sync: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             result = await self._run_git("commit", "-m", message, check=False)
-            if result.returncode != 0 and "nothing to commit" not in result.stdout:
+            # Ignore commit failures due to nothing to commit
+            combined_output = result.stdout + result.stderr
+            if result.returncode != 0 and "nothing to commit" not in combined_output and "no changes added" not in combined_output:
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                logger.error(f"Commit failed: {error_msg}")
                 return SyncResult(
                     success=False,
                     operation="push",
-                    message=f"Commit failed: {result.stderr}",
+                    message=f"Commit failed: {error_msg}",
                 )
 
-        # Push to origin (use detected branch, push to remote master)
+        # Push to origin (use local branch, push to remote branch)
         local_branch = status.branch or "master"
-        result = await self._run_git("push", "origin", f"{local_branch}:master", check=False)
+        remote_branch = await self.get_remote_branch()
+        result = await self._run_git("push", "origin", f"{local_branch}:{remote_branch}", check=False)
 
         if result.returncode != 0:
             if "rejected" in result.stderr.lower():

@@ -1494,7 +1494,7 @@ async def delegate_to_subagent(
     Delegate a task to a specialized subagent.
 
     Subagents are focused agents with specific expertise:
-    - "research": Search arXiv and Semantic Scholar for academic papers
+    - "research": Search Google Scholar for academic papers (returns papers with clickable links)
     - "compiler": Fix LaTeX compilation errors with deep knowledge of common issues
 
     Use delegation when:
@@ -1505,7 +1505,7 @@ async def delegate_to_subagent(
 
     Args:
         subagent: Name of the subagent ("research" or "compiler")
-        task: Detailed description of what you want the subagent to do
+        task: Detailed description of what you want the subagent to do (DO NOT mention specific databases like arXiv)
 
     Returns:
         Result from the subagent's work

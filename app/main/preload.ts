@@ -23,6 +23,9 @@ export interface AuraAPI {
   // File operations
   revealInFinder: (path: string) => Promise<void>;
 
+  // External links - open in default browser
+  openExternal: (url: string) => Promise<void>;
+
   // Settings (persistent storage)
   getSettings: () => Promise<Record<string, unknown> | null>;
   saveSettings: (settings: Record<string, unknown>) => Promise<boolean>;
@@ -46,6 +49,9 @@ const auraAPI: AuraAPI = {
 
   // File operations
   revealInFinder: (path: string) => ipcRenderer.invoke('reveal-in-finder', path),
+
+  // External links - open in default browser
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
 
   // Settings (persistent storage)
   getSettings: () => ipcRenderer.invoke('get-settings'),

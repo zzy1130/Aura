@@ -330,6 +330,10 @@ class CrossRefClient:
 class GoogleScholarClient:
     """Client for Google Scholar using direct HTTP requests."""
 
+    # Rate limiting: track last request time
+    _last_request_time: float = 0
+    _min_request_interval: float = 2.0  # Minimum 2 seconds between requests
+
     def __init__(self, http_client: httpx.AsyncClient):
         self.http_client = http_client
         self.headers = {
@@ -357,10 +361,21 @@ class GoogleScholarClient:
         Returns:
             List of CitationMetadata objects
         """
+        import asyncio
+        import time
+
         try:
             from bs4 import BeautifulSoup
         except ImportError:
             raise ImportError("beautifulsoup4 required. Install with: pip install beautifulsoup4")
+
+        # Rate limiting: wait if needed
+        current_time = time.time()
+        time_since_last = current_time - GoogleScholarClient._last_request_time
+        if time_since_last < GoogleScholarClient._min_request_interval:
+            wait_time = GoogleScholarClient._min_request_interval - time_since_last
+            await asyncio.sleep(wait_time)
+        GoogleScholarClient._last_request_time = time.time()
 
         # Build URL with year filters
         url = f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}&hl=en"
@@ -383,7 +398,26 @@ class GoogleScholarClient:
             soup = BeautifulSoup(response.text, "html.parser")
             results = []
 
-            for article in soup.select(".gs_ri")[:max_results]:
+            # Check for CAPTCHA or rate limiting
+            articles = soup.select(".gs_ri")
+            if not articles:
+                # Log the page content for debugging
+                import logging
+                logger = logging.getLogger(__name__)
+
+                # Check for common blocking patterns
+                if "unusual traffic" in response.text.lower() or "captcha" in response.text.lower():
+                    logger.warning("Google Scholar CAPTCHA detected - try again later")
+                    raise RuntimeError("Google Scholar is showing a CAPTCHA. Try again in a few minutes.")
+                elif "did not match any articles" in response.text.lower():
+                    logger.info(f"No results found for query: {query}")
+                    return []
+                else:
+                    logger.warning(f"No articles found in Google Scholar response. Page length: {len(response.text)}")
+                    # Log first 500 chars for debugging
+                    logger.debug(f"Response preview: {response.text[:500]}")
+
+            for article in articles[:max_results]:
                 metadata = self._parse_article(article)
                 if metadata:
                     results.append(metadata)
@@ -407,9 +441,20 @@ class GoogleScholarClient:
             # Remove [PDF] [HTML] etc prefixes
             title = re.sub(r"^\[.*?\]\s*", "", title).strip()
 
-            # Get link
+            # Get link - ensure it's an absolute URL
             link_elem = title_elem.select_one("a")
-            url = link_elem.get("href") if link_elem else None
+            url = None
+            if link_elem:
+                href = link_elem.get("href")
+                if href:
+                    # Skip Google Scholar redirect links, get actual paper links
+                    if href.startswith("/scholar"):
+                        # This is a relative Google Scholar link, skip it
+                        url = None
+                    elif href.startswith("http"):
+                        url = href
+                    elif href.startswith("//"):
+                        url = "https:" + href
 
             # Authors/Year line: "A Vaswani, N Shazeer... - NIPS, 2017 - site.com"
             info_elem = article.select_one(".gs_a")

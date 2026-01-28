@@ -1468,6 +1468,29 @@ class ApiClient {
   }
 
   /**
+   * Get tex/bib file pairs in project
+   */
+  async getTexBibPairs(projectPath: string): Promise<{
+    pairs: Array<{ tex_file: string | null; bib_file: string; display_name: string }>;
+    total_tex: number;
+    total_bib: number;
+  }> {
+    await this.ensureInitialized();
+
+    const url = `${this.baseUrl}/api/verify-references/pairs?project_path=${encodeURIComponent(projectPath)}`;
+    console.log('[API] getTexBibPairs:', url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
    * Approve a citation manually
    */
   async approveCitation(projectPath: string, citeKey: string): Promise<{ success: boolean }> {
@@ -1522,7 +1545,7 @@ class ApiClient {
   /**
    * Get base URL for SSE streaming
    */
-  getVerifyReferencesUrl(_projectPath: string): string {
+  getVerifyReferencesUrl(): string {
     return `${this.baseUrl}/api/verify-references`;
   }
 
