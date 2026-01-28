@@ -9,6 +9,9 @@ import os
 from functools import cache
 from typing import Any
 
+from dotenv import load_dotenv
+load_dotenv()  # Ensure .env is loaded
+
 import httpx
 from anthropic import AsyncAnthropic
 from pydantic_ai.models import Model

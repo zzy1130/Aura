@@ -562,6 +562,61 @@ export default function Home() {
   }, [project.path, fetchFileList]);
 
   // =============================================================================
+  // File Creation Handlers
+  // =============================================================================
+
+  const handleCreateFile = useCallback(async (filename: string) => {
+    if (!project.path) return;
+
+    try {
+      // Create empty file with appropriate template based on extension
+      let content = '';
+      if (filename.endsWith('.tex')) {
+        content = '% ' + filename + '\n\n';
+      } else if (filename.endsWith('.bib')) {
+        content = '% Bibliography file\n\n';
+      }
+
+      await api.writeFile(project.path, filename, content);
+      await fetchFileList(project.path);
+      // Select the new file
+      handleFileSelect(filename);
+    } catch (err) {
+      console.error('Failed to create file:', err);
+      setError(`Failed to create file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [project.path, fetchFileList, handleFileSelect]);
+
+  const handleCreateFolder = useCallback(async (foldername: string) => {
+    if (!project.path) return;
+
+    try {
+      // Create a .gitkeep file inside the folder to create the directory
+      await api.writeFile(project.path, `${foldername}/.gitkeep`, '');
+      await fetchFileList(project.path);
+    } catch (err) {
+      console.error('Failed to create folder:', err);
+      setError(`Failed to create folder: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [project.path, fetchFileList]);
+
+  const handleUploadFiles = useCallback(async (files: FileList) => {
+    if (!project.path) return;
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const content = await file.text();
+        await api.writeFile(project.path, file.name, content);
+      }
+      await fetchFileList(project.path);
+    } catch (err) {
+      console.error('Failed to upload files:', err);
+      setError(`Failed to upload: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }, [project.path, fetchFileList]);
+
+  // =============================================================================
   // Sync Handlers
   // =============================================================================
 
@@ -1072,6 +1127,9 @@ export default function Home() {
               currentFile={project.currentFile}
               onFileSelect={handleFileSelect}
               onRefresh={handleRefreshFiles}
+              onCreateFile={handleCreateFile}
+              onCreateFolder={handleCreateFolder}
+              onUploadFiles={handleUploadFiles}
               contextMenuHandlers={fileContextMenuHandlers}
               clipboardHasContent={!!fileClipboard}
             />

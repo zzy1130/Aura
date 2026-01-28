@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Folder,
   FolderOpen,
@@ -11,6 +11,9 @@ import {
   ChevronDown,
   Plus,
   RefreshCw,
+  FilePlus,
+  FolderPlus,
+  Upload,
 } from 'lucide-react';
 import ContextMenu, { createFileContextMenuItems } from './ContextMenu';
 
@@ -35,6 +38,9 @@ interface FileTreeProps {
   currentFile: string | null;
   onFileSelect: (filePath: string) => void;
   onRefresh?: () => void;
+  onCreateFile?: (filename: string) => Promise<void>;
+  onCreateFolder?: (foldername: string) => Promise<void>;
+  onUploadFiles?: (files: FileList) => Promise<void>;
   contextMenuHandlers?: FileContextMenuHandlers;
   clipboardHasContent?: boolean;
 }
@@ -190,11 +196,22 @@ export default function FileTree({
   currentFile,
   onFileSelect,
   onRefresh,
+  onCreateFile,
+  onCreateFolder,
+  onUploadFiles,
   contextMenuHandlers,
   clipboardHasContent,
 }: FileTreeProps) {
   const [tree, setTree] = useState<FileNode[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showNewFileInput, setShowNewFileInput] = useState(false);
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [newItemName, setNewItemName] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const newItemInputRef = useRef<HTMLInputElement>(null);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -216,6 +233,115 @@ export default function FileTree({
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
   }, []);
+
+  // Handle new file creation
+  const handleNewFile = useCallback(() => {
+    setShowAddMenu(false);
+    setShowNewFileInput(true);
+    setNewItemName('');
+    setTimeout(() => newItemInputRef.current?.focus(), 50);
+  }, []);
+
+  // Handle new folder creation
+  const handleNewFolder = useCallback(() => {
+    setShowAddMenu(false);
+    setShowNewFolderInput(true);
+    setNewItemName('');
+    setTimeout(() => newItemInputRef.current?.focus(), 50);
+  }, []);
+
+  // Handle upload click
+  const handleUploadClick = useCallback(() => {
+    setShowAddMenu(false);
+    fileInputRef.current?.click();
+  }, []);
+
+  // Handle file input change (upload)
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0 && onUploadFiles) {
+      await onUploadFiles(files);
+    }
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [onUploadFiles]);
+
+  // Handle new item submit
+  const handleNewItemSubmit = useCallback(async () => {
+    if (!newItemName.trim()) {
+      setShowNewFileInput(false);
+      setShowNewFolderInput(false);
+      return;
+    }
+
+    try {
+      if (showNewFileInput && onCreateFile) {
+        await onCreateFile(newItemName.trim());
+      } else if (showNewFolderInput && onCreateFolder) {
+        await onCreateFolder(newItemName.trim());
+      }
+    } catch (error) {
+      console.error('Failed to create item:', error);
+    }
+
+    setShowNewFileInput(false);
+    setShowNewFolderInput(false);
+    setNewItemName('');
+  }, [newItemName, showNewFileInput, showNewFolderInput, onCreateFile, onCreateFolder]);
+
+  // Handle key press in new item input
+  const handleNewItemKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleNewItemSubmit();
+    } else if (e.key === 'Escape') {
+      setShowNewFileInput(false);
+      setShowNewFolderInput(false);
+      setNewItemName('');
+    }
+  }, [handleNewItemSubmit]);
+
+  // Handle drag over
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (projectPath) {
+      setIsDragOver(true);
+    }
+  }, [projectPath]);
+
+  // Handle drag leave
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  // Handle drop
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    if (!projectPath || !onUploadFiles) return;
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      await onUploadFiles(files);
+    }
+  }, [projectPath, onUploadFiles]);
+
+  // Close add menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (showAddMenu && addButtonRef.current && !addButtonRef.current.contains(e.target as Node)) {
+        setShowAddMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showAddMenu]);
 
   // Build tree from file list
   const buildTree = useCallback((filePaths: string[]): FileNode[] => {
@@ -310,19 +436,66 @@ export default function FileTree({
   }, [files, projectPath, buildTree]);
 
   return (
-    <div className="h-full flex flex-col">
+    <div
+      className={`h-full flex flex-col ${isDragOver ? 'bg-green3/30' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Hidden file input for uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
+
       {/* Header */}
       <div className="panel-header">
         <span className="typo-small-strong text-secondary uppercase tracking-wider">
           Files
         </span>
         <div className="flex gap-1">
-          <button
-            className="btn-icon w-6 h-6"
-            title="New File"
-          >
-            <Plus size={14} className="text-secondary" />
-          </button>
+          <div className="relative">
+            <button
+              ref={addButtonRef}
+              className="btn-icon w-6 h-6"
+              title="Add"
+              onClick={() => projectPath && setShowAddMenu(!showAddMenu)}
+              disabled={!projectPath}
+            >
+              <Plus size={14} className={projectPath ? "text-secondary" : "text-tertiary"} />
+            </button>
+
+            {/* Add Menu Dropdown */}
+            {showAddMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-black/10 py-1 z-50 min-w-[140px]">
+                <button
+                  className="w-full px-3 py-1.5 text-left typo-small hover:bg-black/5 flex items-center gap-2"
+                  onClick={handleNewFile}
+                >
+                  <FilePlus size={14} className="text-secondary" />
+                  New File
+                </button>
+                <button
+                  className="w-full px-3 py-1.5 text-left typo-small hover:bg-black/5 flex items-center gap-2"
+                  onClick={handleNewFolder}
+                >
+                  <FolderPlus size={14} className="text-secondary" />
+                  New Folder
+                </button>
+                <div className="border-t border-black/5 my-1" />
+                <button
+                  className="w-full px-3 py-1.5 text-left typo-small hover:bg-black/5 flex items-center gap-2"
+                  onClick={handleUploadClick}
+                >
+                  <Upload size={14} className="text-secondary" />
+                  Upload Files
+                </button>
+              </div>
+            )}
+          </div>
           <button
             className="btn-icon w-6 h-6"
             title="Refresh"
@@ -332,6 +505,29 @@ export default function FileTree({
           </button>
         </div>
       </div>
+
+      {/* New File/Folder Input */}
+      {(showNewFileInput || showNewFolderInput) && (
+        <div className="px-2 py-1 border-b border-black/5">
+          <div className="flex items-center gap-2">
+            {showNewFileInput ? (
+              <FilePlus size={14} className="text-green2" />
+            ) : (
+              <FolderPlus size={14} className="text-green2" />
+            )}
+            <input
+              ref={newItemInputRef}
+              type="text"
+              className="flex-1 px-2 py-1 text-sm border border-green2 rounded focus:outline-none focus:ring-1 focus:ring-green2"
+              placeholder={showNewFileInput ? "filename.tex" : "folder name"}
+              value={newItemName}
+              onChange={(e) => setNewItemName(e.target.value)}
+              onKeyDown={handleNewItemKeyDown}
+              onBlur={handleNewItemSubmit}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Tree */}
       <div className="flex-1 overflow-auto py-2">
@@ -349,7 +545,7 @@ export default function FileTree({
             ))
           ) : (
             <div className="p-4 text-center typo-small text-tertiary">
-              No files found
+              {isDragOver ? 'Drop files here' : 'No files found'}
             </div>
           )
         ) : (

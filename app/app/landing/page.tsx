@@ -13,7 +13,6 @@ import {
   RiCodeSSlashLine,
   RiBookOpenLine,
   RiLightbulbLine,
-  RiDatabase2Line,
   RiShieldCheckLine,
   RiArrowRightLine,
   RiCheckLine,
@@ -51,7 +50,6 @@ export default function LandingPage() {
   const [animationPhase, setAnimationPhase] = useState(0); // 0: typing, 1: processing, 2: complete
   const [papersFound, setPapersFound] = useState(0);
   const [processingTime, setProcessingTime] = useState(0);
-  const [processingStatus, setProcessingStatus] = useState('Initializing...');
   const fullText = 'Find papers about world models in surgical robotics';
 
   // AI Agent section animation states
