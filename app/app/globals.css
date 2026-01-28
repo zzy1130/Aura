@@ -100,6 +100,18 @@ body {
     line-height: 1.4;
   }
 
+  .typo-ex-large {
+    font-size: 20px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  .typo-ex-large-strong {
+    font-size: 20px;
+    font-weight: 560;
+    line-height: 1.5;
+  }
+
   .typo-large {
     font-size: 16px;
     font-weight: 400;
@@ -621,6 +633,17 @@ body {
 .badge-error {
   background-color: rgba(212, 39, 39, 0.1);
   color: #d42727;
+}
+
+/* ============================================================================
+   Landing Page - Ensure content visibility
+   ============================================================================ */
+
+/* Animated elements should be visible even if JS fails */
+.feature-card,
+.workflow-step,
+.writing-tool {
+  /* These will be animated by GSAP, but should be visible by default */
 }
 
 /* ============================================================================

@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Aura Development Startup Script
+# YouResearch Development Startup Script
 #
 # Starts both backend and frontend for development.
-# Usage: ./scripts/start.sh [--backend-only | --frontend-only | --test]
+# Usage: ./scripts/start.sh [--backend-only | --frontend-only | --test | --landing]
 #
 
 set -e
@@ -298,8 +298,9 @@ check_dependencies() {
             (cd "$BACKEND_DIR" && uv sync --quiet)
         fi
     else
-        if ! python3 -c "import fastapi" 2>/dev/null; then
-            log_warn "FastAPI not installed. Installing backend dependencies..."
+        # Check for multiple key dependencies to ensure requirements are up to date
+        if ! python3 -c "import fastapi; import bs4; import scholarly" 2>/dev/null; then
+            log_warn "Missing dependencies. Installing backend dependencies..."
             pip3 install -r "$BACKEND_DIR/requirements.txt"
         fi
     fi
@@ -534,7 +535,7 @@ print_banner() {
     echo ""
     echo -e "${BLUE}  ╔═══════════════════════════════════════╗${NC}"
     echo -e "${BLUE}  ║                                       ║${NC}"
-    echo -e "${BLUE}  ║   ${GREEN}A U R A${BLUE}   Development Server     ║${NC}"
+    echo -e "${BLUE}  ║   ${GREEN}Y O U W R I T E${BLUE}   Dev Server      ║${NC}"
     echo -e "${BLUE}  ║                                       ║${NC}"
     echo -e "${BLUE}  ║   Local-first LaTeX IDE with AI       ║${NC}"
     echo -e "${BLUE}  ║                                       ║${NC}"
@@ -549,6 +550,7 @@ print_usage() {
     echo "  --backend-only    Start only the backend server"
     echo "  --frontend-only   Start only the frontend server (web)"
     echo "  --electron        Start full Electron desktop app"
+    echo "  --landing         Open landing page in browser after starting"
     echo "  --test            Run API tests after starting backend"
     echo "  --test-only       Run API tests only (assumes backend is running)"
     echo "  --build-docker    Build the Docker LaTeX image"
@@ -557,17 +559,19 @@ print_usage() {
     echo ""
     echo "Examples:"
     echo "  $0                    # Start backend + web frontend"
+    echo "  $0 --landing          # Start and open landing page"
     echo "  $0 --electron         # Start backend + Electron desktop app"
     echo "  $0 --backend-only     # Start only backend (for testing)"
     echo "  $0 --check-env        # Check all dependencies including LaTeX"
     echo "  $0 --build-docker     # Build Docker image for LaTeX compilation"
     echo ""
     echo "LaTeX Compilation:"
-    echo "  Aura supports two LaTeX compilation methods:"
-    echo "    1. Local TeX (MacTeX/TeX Live) - faster, no Docker required"
-    echo "    2. Docker - isolated, reproducible"
+    echo "  YouResearch supports multiple LaTeX compilation methods:"
+    echo "    1. Tectonic (bundled) - fastest, no setup required"
+    echo "    2. Local TeX (MacTeX/TeX Live) - fast, no Docker required"
+    echo "    3. Docker - isolated, reproducible"
     echo ""
-    echo "  If neither is available, install MacTeX from https://tug.org/mactex/"
+    echo "  If none available, Tectonic will be downloaded automatically."
     echo ""
 }
 
@@ -581,6 +585,7 @@ main() {
     local use_electron=false
     local build_docker=false
     local check_env_only=false
+    local open_landing=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -595,6 +600,10 @@ main() {
                 ;;
             --electron)
                 use_electron=true
+                shift
+                ;;
+            --landing)
+                open_landing=true
                 shift
                 ;;
             --test)
@@ -679,7 +688,15 @@ main() {
             log_success "Electron: Desktop app launched"
         else
             log_success "Frontend: http://127.0.0.1:$FRONTEND_PORT"
+            log_info "  Landing: http://127.0.0.1:$FRONTEND_PORT/landing"
         fi
+    fi
+
+    # Open landing page if requested
+    if [ "$open_landing" = true ] && [ "$backend_only" = false ] && [ "$use_electron" = false ]; then
+        log_info "Opening landing page in browser..."
+        sleep 1
+        open "http://127.0.0.1:$FRONTEND_PORT/landing"
     fi
 
     # Show LaTeX status

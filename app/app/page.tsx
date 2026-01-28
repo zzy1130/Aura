@@ -577,8 +577,8 @@ export default function Home() {
         await handleSave();
       }
 
-      // Sync only the current file (if selected)
-      const result = await api.syncProject(project.path, undefined, project.currentFile || undefined);
+      // Sync all changes (not just current file)
+      const result = await api.syncProject(project.path);
 
       if (result.success) {
         // Refresh file list after sync

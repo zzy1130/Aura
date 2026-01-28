@@ -8,11 +8,13 @@ module.exports = {
     extend: {
       colors: {
         // YouWare Brand Colors
+        'brand': '#55644A',
         green1: '#2e4226',
         green2: '#55644a',
         green3: '#e0e7d0',
         orange1: '#a55500',
         orange2: '#ffd15d',
+        orange3: '#f8dfaa',
 
         // Semantic Colors
         success: '#50a14f',
