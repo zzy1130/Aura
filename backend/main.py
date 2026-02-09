@@ -3313,8 +3313,9 @@ async def run_vibe_iteration(session_id: str, request: VibeResearchRunRequest) -
     Returns:
         Updated status and the action taken
     """
-    from agent.vibe_state import VibeResearchState, ResearchPhase
+    from agent.vibe_state import VibeResearchState, ResearchPhase, generate_vibe_task
     from agent.subagents.research import ResearchAgent, ResearchMode
+    from agent.compression import compress_if_needed
 
     state = VibeResearchState.load(request.project_path, session_id)
     if not state:
@@ -3345,21 +3346,22 @@ async def run_vibe_iteration(session_id: str, request: VibeResearchRunRequest) -
         # Create agent in VIBE mode (uses longer timeout)
         agent = ResearchAgent(mode=ResearchMode.VIBE, provider_config=provider_config)
 
-        # Determine task based on phase
-        phase_tasks = {
-            ResearchPhase.SCOPING: f"Clarify the scope for research on: {state.topic}",
-            ResearchPhase.DISCOVERY: f"Search for papers on: {state.topic}",
-            ResearchPhase.SYNTHESIS: "Analyze papers and identify themes",
-            ResearchPhase.IDEATION: "Identify gaps and generate hypotheses",
-            ResearchPhase.EVALUATION: "Score and rank hypotheses",
-        }
-        task = phase_tasks.get(state.current_phase, f"Continue research on: {state.topic}")
+        # Generate dynamic task based on current state
+        task = generate_vibe_task(state)
+
+        # Load message history for cross-iteration memory
+        message_history = state.get_pydantic_messages()
+
+        # Compress if message history is large
+        if message_history:
+            message_history, _ = await compress_if_needed(message_history)
 
         result = await agent.run(
             task=task,
             project_path=request.project_path,
             mode=ResearchMode.VIBE,
             vibe_state=state,
+            message_history=message_history,
         )
 
         # Check if stopped
@@ -3372,8 +3374,13 @@ async def run_vibe_iteration(session_id: str, request: VibeResearchRunRequest) -
                 "phase": state.current_phase.value,
             }
 
-        # Reload state (agent may have modified it)
+        # Reload state (agent may have modified it via tools)
         state = VibeResearchState.load(request.project_path, session_id)
+
+        # Save message history from result back into state
+        if result.all_messages:
+            state.set_messages(result.all_messages)
+            state.save(request.project_path)
 
         return {
             "session_id": state.session_id,
@@ -3402,8 +3409,9 @@ async def stream_vibe_research(session_id: str, request: VibeResearchRunRequest)
     Runs the research agent continuously until completion or error,
     streaming progress updates.
     """
-    from agent.vibe_state import VibeResearchState, ResearchPhase
+    from agent.vibe_state import VibeResearchState, ResearchPhase, generate_vibe_task
     from agent.subagents.research import ResearchAgent, ResearchMode
+    from agent.compression import compress_if_needed
 
     state = VibeResearchState.load(request.project_path, session_id)
     if not state:
@@ -3425,6 +3433,9 @@ async def stream_vibe_research(session_id: str, request: VibeResearchRunRequest)
             # Create agent in VIBE mode (uses longer timeout)
             agent = ResearchAgent(mode=ResearchMode.VIBE, provider_config=provider_config)
 
+            # Load message history once before the loop
+            message_history = state.get_pydantic_messages()
+
             while not state.is_complete:
                 # Yield current status
                 yield {
@@ -3438,26 +3449,33 @@ async def stream_vibe_research(session_id: str, request: VibeResearchRunRequest)
                     }),
                 }
 
-                # Determine task
-                phase_tasks = {
-                    ResearchPhase.SCOPING: f"Clarify the scope for research on: {state.topic}",
-                    ResearchPhase.DISCOVERY: f"Search for papers on: {state.topic}",
-                    ResearchPhase.SYNTHESIS: "Analyze papers and identify themes",
-                    ResearchPhase.IDEATION: "Identify gaps and generate hypotheses",
-                    ResearchPhase.EVALUATION: "Score and rank hypotheses",
-                }
-                task = phase_tasks.get(state.current_phase, f"Continue research on: {state.topic}")
+                # Generate dynamic task based on current state
+                task = generate_vibe_task(state)
 
-                # Run iteration
+                # Compress message history if large
+                if message_history:
+                    message_history, _ = await compress_if_needed(message_history)
+
+                # Run iteration with message history
                 result = await agent.run(
                     task=task,
                     project_path=request.project_path,
                     mode=ResearchMode.VIBE,
                     vibe_state=state,
+                    message_history=message_history,
                 )
 
-                # Reload state
+                # Update message history from result for next iteration
+                if result.all_messages:
+                    message_history = result.all_messages
+
+                # Reload state (agent modifies it via tools)
                 state = VibeResearchState.load(request.project_path, session_id)
+
+                # Save updated message history into state
+                if message_history:
+                    state.set_messages(message_history)
+                    state.save(request.project_path)
 
                 # Yield action
                 yield {

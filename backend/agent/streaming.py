@@ -28,6 +28,7 @@ from pydantic_ai import UsageLimits
 
 from agent.pydantic_agent import aura_agent, AuraDeps
 from agent.compression import compress_if_needed, get_compressor
+from agent.message_serialization import serialize_messages, deserialize_messages
 
 logger = logging.getLogger(__name__)
 
@@ -91,121 +92,15 @@ class ChatSession:
 
         Converts ModelRequest/ModelResponse to JSON-serializable format.
         """
-        serialized = []
-        for msg in pydantic_messages:
-            if isinstance(msg, ModelRequest):
-                parts_data = []
-                for part in msg.parts:
-                    if isinstance(part, UserPromptPart):
-                        parts_data.append({
-                            "type": "user_prompt",
-                            "content": part.content,
-                            "timestamp": part.timestamp.isoformat() if part.timestamp else None,
-                        })
-                    elif hasattr(part, "to_dict"):
-                        parts_data.append(part.to_dict())
-                    else:
-                        # Tool return parts etc
-                        parts_data.append({
-                            "type": part.__class__.__name__,
-                            "data": str(part),
-                        })
-                serialized.append({
-                    "type": "ModelRequest",
-                    "parts": parts_data,
-                })
-            elif isinstance(msg, ModelResponse):
-                parts_data = []
-                for part in msg.parts:
-                    if isinstance(part, TextPart):
-                        parts_data.append({
-                            "type": "text",
-                            "content": part.content,
-                        })
-                    elif isinstance(part, ToolCallPart):
-                        try:
-                            args = part.args_as_dict()
-                        except Exception as e:
-                            logger.error(f"Failed to serialize tool call args: {e}")
-                            args = {"_parse_error": str(e)}
-                        parts_data.append({
-                            "type": "tool_call",
-                            "tool_name": part.tool_name,
-                            "tool_call_id": part.tool_call_id,
-                            "args": args,
-                        })
-                    elif hasattr(part, "to_dict"):
-                        parts_data.append(part.to_dict())
-                    else:
-                        parts_data.append({
-                            "type": part.__class__.__name__,
-                            "data": str(part),
-                        })
-                serialized.append({
-                    "type": "ModelResponse",
-                    "parts": parts_data,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                    "model_name": getattr(msg, "model_name", None),
-                })
-            else:
-                # Fallback for unknown types
-                serialized.append({
-                    "type": msg.__class__.__name__,
-                    "data": str(msg),
-                })
-
-        self.messages = serialized
-        self.message_count = len(serialized)
+        self.messages = serialize_messages(pydantic_messages)
+        self.message_count = len(self.messages)
         self.updated_at = datetime.now().isoformat()
 
     def get_pydantic_messages(self) -> list:
         """
         Reconstruct PydanticAI messages from stored dicts.
         """
-        from datetime import timezone
-
-        reconstructed = []
-        for msg in self.messages:
-            msg_type = msg.get("type", "")
-
-            if msg_type == "ModelRequest":
-                parts = []
-                for part_data in msg.get("parts", []):
-                    part_type = part_data.get("type", "")
-                    if part_type == "user_prompt":
-                        ts = part_data.get("timestamp")
-                        timestamp = datetime.fromisoformat(ts) if ts else datetime.now(timezone.utc)
-                        parts.append(UserPromptPart(
-                            content=part_data.get("content", ""),
-                            timestamp=timestamp,
-                        ))
-                    # Skip other part types for now (tool return parts etc.)
-
-                if parts:
-                    reconstructed.append(ModelRequest(parts=parts))
-
-            elif msg_type == "ModelResponse":
-                parts = []
-                for part_data in msg.get("parts", []):
-                    part_type = part_data.get("type", "")
-                    if part_type == "text":
-                        parts.append(TextPart(content=part_data.get("content", "")))
-                    # Skip tool calls for now - they're already executed
-
-                if parts:
-                    ts = msg.get("timestamp")
-                    timestamp = datetime.fromisoformat(ts) if ts else datetime.now(timezone.utc)
-                    reconstructed.append(ModelResponse(
-                        parts=parts,
-                        timestamp=timestamp,
-                        model_name=msg.get("model_name", "history"),
-                    ))
-
-        # Ensure proper alternation
-        if reconstructed and isinstance(reconstructed[-1], ModelResponse):
-            reconstructed = reconstructed[:-1]
-
-        return reconstructed
+        return deserialize_messages(self.messages)
 
     def save(self) -> None:
         """Save session to disk at {project_path}/.aura/chat_session_{id}.json"""

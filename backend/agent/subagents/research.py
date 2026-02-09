@@ -545,8 +545,8 @@ class ResearchAgent(Subagent[ResearchDeps]):
             config = SubagentConfig(
                 name="research",
                 description="Deep autonomous research with hypothesis generation",
-                max_iterations=50,  # More iterations for vibe mode
-                timeout=600.0,      # 10 minutes for deep research
+                max_iterations=200,  # Increased for cross-iteration memory
+                timeout=1800.0,      # 30 minutes for deep research
                 use_haiku=False,    # Use stronger model
             )
         else:
@@ -565,7 +565,8 @@ class ResearchAgent(Subagent[ResearchDeps]):
     def _get_model(self):
         """Get the appropriate model for this subagent.
 
-        Uses provider_config if provided, otherwise falls back to default haiku model.
+        Uses provider_config if provided, otherwise resolves via ProviderManager
+        (which respects the user's active provider and API key settings).
         """
         from agent.providers import get_model
 
@@ -577,8 +578,15 @@ class ResearchAgent(Subagent[ResearchDeps]):
                 api_key=self._provider_config.get("api_key"),
             )
 
-        # Fallback to default haiku model
-        return get_haiku_model()
+        # Use ProviderManager to resolve model (respects active provider + API key)
+        try:
+            from agent.providers import get_provider_manager
+            manager = get_provider_manager()
+            provider = manager.get_active()
+            return provider.get_model()
+        except Exception:
+            # Last resort fallback
+            return get_haiku_model()
 
     async def run(
         self,
@@ -588,6 +596,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
         project_path: str | None = None,
         mode: ResearchMode | None = None,
         vibe_state: Optional["VibeResearchState"] = None,
+        message_history: list | None = None,
     ) -> "SubagentResult":
         """
         Run the research agent on a task.
@@ -601,6 +610,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
             project_path: Path to the project (for vibe mode)
             mode: Override the mode (CHAT or VIBE)
             vibe_state: VibeResearchState for vibe mode
+            message_history: Optional PydanticAI message history for cross-iteration memory
 
         Returns:
             SubagentResult with output and metadata
@@ -637,7 +647,13 @@ class ResearchAgent(Subagent[ResearchDeps]):
             try:
                 async with asyncio.timeout(self.config.timeout):
                     deps = self._create_deps(ctx)
-                    result = await self.agent.run(task, deps=deps)
+
+                    # Pass message_history for cross-iteration memory (vibe mode)
+                    run_kwargs = {"deps": deps}
+                    if message_history:
+                        run_kwargs["message_history"] = message_history
+
+                    result = await self.agent.run(task, **run_kwargs)
 
                 completed_at = datetime.now(timezone.utc)
                 duration = (completed_at - started_at).total_seconds()
@@ -676,6 +692,7 @@ class ResearchAgent(Subagent[ResearchDeps]):
                     duration_seconds=duration,
                     input_tokens=usage.input_tokens if usage else 0,
                     output_tokens=usage.output_tokens if usage else 0,
+                    all_messages=result.all_messages(),
                 )
 
             except asyncio.TimeoutError:

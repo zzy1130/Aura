@@ -21,6 +21,8 @@ logger = get_logger("agent")
 
 if TYPE_CHECKING:
     from agent.hitl import HITLManager, ApprovalStatus
+    from agent.hitl_store import HITLStore
+    from agent.hitl_ws import HITLWebSocketManager
     from agent.planning import PlanManager, Plan
 
 from services.latex_parser import (
@@ -44,8 +46,12 @@ class AuraDeps:
     project_path: str
     project_name: str = ""
 
-    # HITL support (optional)
+    # HITL support - blocking mode (legacy, for backward compatibility)
     hitl_manager: Optional["HITLManager"] = None
+
+    # HITL support - async mode (new non-blocking)
+    hitl_store: Optional["HITLStore"] = None
+    hitl_ws: Optional["HITLWebSocketManager"] = None
 
     # Planning support (optional)
     plan_manager: Optional["PlanManager"] = None
@@ -53,6 +59,9 @@ class AuraDeps:
 
     # Provider info (for prompt adjustments)
     provider_name: str = "openrouter"
+
+    # HITL mode: "blocking" (legacy) or "async" (new non-blocking)
+    hitl_mode: str = "blocking"
 
     def __post_init__(self):
         if not self.project_name and self.project_path:

@@ -9,6 +9,7 @@ This state is injected into the agent's system prompt and updated via tools.
 """
 
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -101,6 +102,13 @@ class VibeResearchState:
     updated_at: str = ""  # Last state update timestamp
     stall_count: int = 0
     action_history: list[str] = field(default_factory=list)
+
+    # === MESSAGE HISTORY (for cross-iteration memory) ===
+    # Stored separately in vibe_research_{session_id}_messages.json
+    _messages_serialized: list[dict] = field(default_factory=list, repr=False)
+
+    # === SEARCH HISTORY (for deduplication) ===
+    search_queries: list[str] = field(default_factory=list)
 
     # === OUTPUT ===
     report: str = ""
@@ -296,6 +304,24 @@ class VibeResearchState:
         self.current_activity = ""
         self.updated_at = datetime.now().isoformat()
 
+    def set_messages(self, pydantic_messages: list) -> None:
+        """Serialize and store PydanticAI messages for cross-iteration memory."""
+        from agent.message_serialization import serialize_messages
+        self._messages_serialized = serialize_messages(pydantic_messages)
+
+    def get_pydantic_messages(self) -> list:
+        """Reconstruct PydanticAI messages from stored serialized data."""
+        from agent.message_serialization import deserialize_messages
+        return deserialize_messages(self._messages_serialized)
+
+    def add_search_query(self, query: str) -> None:
+        """Track a search query for deduplication."""
+        if query not in self.search_queries:
+            self.search_queries.append(query)
+            # Keep only last 100
+            if len(self.search_queries) > 100:
+                self.search_queries = self.search_queries[-100:]
+
     def advance_phase(self, next_phase: ResearchPhase) -> bool:
         """Advance to next phase."""
         valid_transitions = {
@@ -325,8 +351,28 @@ class VibeResearchState:
     def to_context(self) -> str:
         """Format state as context for injection into system prompt."""
         papers_summary = f"{len(self.papers)} found, {len(self.papers_read)} read in detail"
+
+        # Paper list (up to 30) with read status
+        paper_lines = []
+        for p in self.papers[:30]:
+            pid = p.get("paper_id", "?")
+            title = p.get("title", "Unknown")[:80]
+            source = p.get("source", "")
+            read_mark = "[READ]" if pid in self.papers_read else "[unread]"
+            year = p.get("published", p.get("year", ""))
+            paper_lines.append(f"  - {read_mark} {pid}: {title} ({source}, {year})")
+        if len(self.papers) > 30:
+            paper_lines.append(f"  ... and {len(self.papers) - 30} more papers")
+        papers_list = "\n".join(paper_lines) if paper_lines else "  (none yet)"
+
+        # Search history
+        search_history = ""
+        if self.search_queries:
+            queries_str = "\n".join(f"  - {q}" for q in self.search_queries[-20:])
+            search_history = f"\n### Search Queries Used ({len(self.search_queries)} total)\n{queries_str}\n"
+
         themes_list = "\n".join(
-            f"  - {t['name']}: {t['description'][:100]}"
+            f"  - {t['name']}: {t['description'][:100]} (papers: {', '.join(t.get('paper_ids', [])[:5])})"
             for t in self.themes[:5]
         ) or "  (none yet)"
         gaps_list = "\n".join(
@@ -337,6 +383,44 @@ class VibeResearchState:
             f"  - {h['title']} (scores: N={h.get('novelty_score', '?')}/F={h.get('feasibility_score', '?')}/I={h.get('impact_score', '?')})"
             for h in self.get_ranked_hypotheses()[:5]
         ) or "  (none yet)"
+
+        # Phase-specific guidance
+        phase_guidance = ""
+        if self.current_phase == ResearchPhase.DISCOVERY:
+            unread_count = len(self.papers) - len(self.papers_read)
+            phase_guidance = f"""
+### Phase Guidance (DISCOVERY)
+- Papers found so far: {len(self.papers)}
+- Try different query variations, author searches, and citation exploration
+- Goal: Find 50-100+ papers before moving to SYNTHESIS
+- Avoid repeating queries already listed above
+"""
+        elif self.current_phase == ResearchPhase.SYNTHESIS:
+            unread_ids = [p.get("paper_id", "") for p in self.papers if p.get("paper_id", "") not in self.papers_read][:20]
+            phase_guidance = f"""
+### Phase Guidance (SYNTHESIS)
+- Papers read: {len(self.papers_read)} / {len(self.papers)}
+- Unread paper IDs to prioritize: {', '.join(unread_ids[:10])}
+- Must read at least 15 papers and record 5+ themes before advancing
+- Themes identified so far: {len(self.themes)}
+"""
+        elif self.current_phase == ResearchPhase.IDEATION:
+            phase_guidance = f"""
+### Phase Guidance (IDEATION)
+- Themes identified: {len(self.themes)}
+- Gaps found: {len(self.gaps)}
+- Hypotheses generated: {len(self.hypotheses)} / {self.target_hypotheses} target
+- Focus on combinations not yet tried and underexplored areas
+"""
+        elif self.current_phase == ResearchPhase.EVALUATION:
+            unscored = [h for h in self.hypotheses if h.get("novelty_score", 0) == 0]
+            unscored_ids = [h.get("hypothesis_id", "") for h in unscored]
+            phase_guidance = f"""
+### Phase Guidance (EVALUATION)
+- Hypotheses to score: {', '.join(unscored_ids)}
+- Scored: {len(self.hypotheses) - len(unscored)} / {len(self.hypotheses)}
+- After scoring all, call generate_report
+"""
 
         return f"""
 ## Current Research State
@@ -352,7 +436,8 @@ class VibeResearchState:
 
 ### Papers
 {papers_summary}
-
+{papers_list}
+{search_history}
 ### Themes Identified
 {themes_list}
 
@@ -364,10 +449,11 @@ class VibeResearchState:
 
 ### Last Action
 {self.last_action or "(none)"}
+{phase_guidance}
 """
 
     def to_dict(self) -> dict:
-        """Serialize to dictionary."""
+        """Serialize to dictionary (messages stored separately)."""
         return {
             "session_id": self.session_id,
             "created_at": self.created_at,
@@ -386,6 +472,7 @@ class VibeResearchState:
             "updated_at": self.updated_at,
             "stall_count": self.stall_count,
             "action_history": self.action_history,
+            "search_queries": self.search_queries,
             "is_complete": self.is_complete,
             "report": self.report,
             "max_papers": self.max_papers,
@@ -417,6 +504,7 @@ class VibeResearchState:
             updated_at=data.get("updated_at", ""),
             stall_count=data.get("stall_count", 0),
             action_history=data.get("action_history", []),
+            search_queries=data.get("search_queries", []),
             is_complete=data.get("is_complete", False),
             report=data.get("report", ""),
             max_papers=data.get("max_papers", 100),
@@ -430,23 +518,50 @@ class VibeResearchState:
         return state
 
     def save(self, project_path: str) -> None:
-        """Save state to project's .aura directory."""
+        """Save state to project's .aura directory.
+
+        Messages are stored in a separate file to avoid bloating the state file.
+        """
+        logger = logging.getLogger(__name__)
         aura_dir = Path(project_path) / ".aura"
         aura_dir.mkdir(exist_ok=True)
 
+        # Save main state
         state_file = aura_dir / f"vibe_research_{self.session_id}.json"
         state_file.write_text(json.dumps(self.to_dict(), indent=2))
 
+        # Save messages separately (can be 10MB+)
+        if self._messages_serialized:
+            messages_file = aura_dir / f"vibe_research_{self.session_id}_messages.json"
+            messages_file.write_text(json.dumps(self._messages_serialized))
+            logger.debug(
+                f"Saved {len(self._messages_serialized)} messages "
+                f"to {messages_file.name}"
+            )
+
     @classmethod
     def load(cls, project_path: str, session_id: str) -> Optional["VibeResearchState"]:
-        """Load state from project's .aura directory."""
+        """Load state from project's .aura directory.
+
+        Also loads messages from the separate messages file if present.
+        """
         state_file = Path(project_path) / ".aura" / f"vibe_research_{session_id}.json"
         if not state_file.exists():
             return None
 
         try:
             data = json.loads(state_file.read_text())
-            return cls.from_dict(data)
+            state = cls.from_dict(data)
+
+            # Load messages from separate file (backward compatible - may not exist)
+            messages_file = Path(project_path) / ".aura" / f"vibe_research_{session_id}_messages.json"
+            if messages_file.exists():
+                try:
+                    state._messages_serialized = json.loads(messages_file.read_text())
+                except Exception:
+                    pass  # Gracefully ignore corrupt messages file
+
+            return state
         except Exception:
             return None
 
@@ -458,6 +573,9 @@ class VibeResearchState:
 
         if aura_dir.exists():
             for f in aura_dir.glob("vibe_research_*.json"):
+                # Skip messages files
+                if f.stem.endswith("_messages"):
+                    continue
                 try:
                     session_id = f.stem.replace("vibe_research_", "")
                     state = cls.load(project_path, session_id)
@@ -475,3 +593,90 @@ class VibeResearchState:
                     pass
 
         return sorted(sessions, key=lambda x: x.get("created_at", ""), reverse=True)
+
+
+def generate_vibe_task(state: VibeResearchState) -> str:
+    """
+    Generate a detailed, dynamic task description for the current vibe research phase.
+
+    Instead of static one-liners like "Search for papers on X", this generates
+    context-rich instructions that tell the agent exactly what to do next.
+    """
+    topic = state.topic
+
+    if state.current_phase == ResearchPhase.SCOPING:
+        return (
+            f"Clarify the scope for research on: {topic}\n\n"
+            f"Call `define_scope` with clarified parameters (domain focus, "
+            f"constraints, desired output), then call `advance_phase` to "
+            f"move to DISCOVERY."
+        )
+
+    elif state.current_phase == ResearchPhase.DISCOVERY:
+        used_queries = state.search_queries[-10:] if state.search_queries else []
+        queries_str = ", ".join(f'"{q}"' for q in used_queries) if used_queries else "none yet"
+        sources_used = set()
+        for p in state.papers:
+            src = p.get("source", "")
+            if src:
+                sources_used.add(src)
+        all_sources = {"google_scholar", "arxiv", "semantic_scholar", "pubmed", "web"}
+        unused_sources = all_sources - sources_used
+
+        return (
+            f"Continue DISCOVERY for: {topic}\n\n"
+            f"Papers found so far: {len(state.papers)}\n"
+            f"Queries already used: {queries_str}\n"
+            f"Sources used: {', '.join(sources_used) if sources_used else 'none'}\n"
+            f"Sources NOT yet tried: {', '.join(unused_sources) if unused_sources else 'all used'}\n\n"
+            f"Try NEW query variations — rephrase, use synonyms, narrow/broaden. "
+            f"Also try: search_by_author for key researchers, search_top_cited for "
+            f"seminal papers, explore_citations for citation trails.\n"
+            f"Goal: reach 50+ papers, then call `advance_phase` to SYNTHESIS."
+        )
+
+    elif state.current_phase == ResearchPhase.SYNTHESIS:
+        unread = [
+            p.get("paper_id", "")
+            for p in state.papers
+            if p.get("paper_id", "") and p.get("paper_id", "") not in state.papers_read
+        ]
+        return (
+            f"Continue SYNTHESIS for: {topic}\n\n"
+            f"Papers read: {len(state.papers_read)} / {len(state.papers)}\n"
+            f"Themes recorded: {len(state.themes)}\n"
+            f"Unread paper IDs (read these next): {', '.join(unread[:15])}\n\n"
+            f"Call `read_arxiv_paper` for each unread paper. After reading "
+            f"several papers that share an approach, call `record_theme`.\n"
+            f"MINIMUM before advancing: 15 papers read, 5 themes recorded."
+        )
+
+    elif state.current_phase == ResearchPhase.IDEATION:
+        theme_names = [t.get("name", "") for t in state.themes]
+        return (
+            f"Continue IDEATION for: {topic}\n\n"
+            f"Themes: {', '.join(theme_names)}\n"
+            f"Gaps found: {len(state.gaps)}\n"
+            f"Hypotheses generated: {len(state.hypotheses)} / {state.target_hypotheses}\n\n"
+            f"For each theme, identify what's missing. Call `record_gap` for "
+            f"underexplored areas, then `generate_hypothesis` to propose solutions.\n"
+            f"Consider: untried combinations, missing applications, challengeable assumptions.\n"
+            f"When you have {state.target_hypotheses}+ hypotheses, call `advance_phase`."
+        )
+
+    elif state.current_phase == ResearchPhase.EVALUATION:
+        unscored = [
+            h.get("hypothesis_id", "")
+            for h in state.hypotheses
+            if h.get("novelty_score", 0) == 0
+        ]
+        return (
+            f"Continue EVALUATION for: {topic}\n\n"
+            f"Hypotheses to score: {', '.join(unscored)}\n"
+            f"Scored: {len(state.hypotheses) - len(unscored)} / {len(state.hypotheses)}\n\n"
+            f"Call `score_hypothesis` for each unscored hypothesis with "
+            f"novelty, feasibility, impact (1-10).\n"
+            f"After all are scored, call `generate_report` to synthesize findings."
+        )
+
+    return f"Continue research on: {topic}"

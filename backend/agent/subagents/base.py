@@ -95,6 +95,9 @@ class SubagentResult:
     input_tokens: int = 0
     output_tokens: int = 0
 
+    # Full message history (for cross-iteration memory in vibe mode)
+    all_messages: list | None = None
+
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
         return {
