@@ -1,0 +1,1435 @@
+# Phase 3: Advanced Agent Features (PydanticAI Migration)
+
+## Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 3A | ✅ Complete | PydanticAI migration with Colorist provider |
+| 3B | ✅ Complete | Message compression |
+| 3C | ✅ Complete | HITL (Human-in-the-loop) |
+| 3D | ✅ Complete | Steering messages |
+| 3E | ✅ Complete | Multi-agent (subagents) |
+| 3F | ✅ Complete | Planning system |
+| 3.5 | ✅ Complete | PDF reader tool |
+
+---
+
+## Decision: Migrate to PydanticAI
+
+After evaluating options (raw Anthropic SDK, OpenCode, PydanticAI), we chose **PydanticAI** because:
+
+| Criteria | Raw SDK | OpenCode | PydanticAI |
+|----------|---------|----------|------------|
+| Language | Python ✅ | TypeScript ❌ | Python ✅ |
+| Embeddable | Yes ✅ | No (standalone app) ❌ | Yes ✅ |
+| History processors | Manual ⚠️ | Unknown | Built-in ✅ |
+| HITL | Manual ⚠️ | Has it ✅ | Built-in ✅ |
+| Streaming | Manual ✅ | Has it ✅ | Built-in ✅ |
+| Paintress compatible | Similar | No | Same pattern ✅ |
+| Keep existing work | Yes ✅ | Rewrite ❌ | Migration ✅ |
+
+---
+
+## Target Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  PydanticAI Agent (replaces raw SDK)                        │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  Agent class with:                                      ││
+│  │  - Colorist provider (custom)                           ││
+│  │  - History processors (built-in)                        ││
+│  │  - Tool registration (decorator-based)                  ││
+│  │  - Streaming via agent.iter()                           ││
+│  │  - Retries (built-in)                                   ││
+│  └─────────────────────────────────────────────────────────┘│
+│                         ↓                                    │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  AgentContext (enhanced)                                ││
+│  │  - Token tracking                                       ││
+│  │  - Steering queue                                       ││
+│  │  - HITL state                                           ││
+│  │  - Subagent routing                                     ││
+│  └─────────────────────────────────────────────────────────┘│
+│                         ↓                                    │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  Colorist Provider (custom pydantic_ai provider)        ││
+│  │  - Routes to Colorist gateway                           ││
+│  │  - auth_token authentication                            ││
+│  │  - Model: claude-4-5-sonnet-by-all                      ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Phase 3A: PydanticAI Migration (Foundation)
+
+### Step 1: Add PydanticAI Dependency
+
+```bash
+# pyproject.toml or requirements.txt
+pydantic-ai>=0.1.0
+```
+
+### Step 2: Create Colorist Provider
+
+**File: `backend/agent/providers/colorist.py`**
+
+```python
+"""
+Colorist Provider for PydanticAI
+
+Custom provider that routes through Colorist gateway.
+Based on paintress/models/colorist.py pattern.
+"""
+
+import os
+import httpx
+from typing import Any
+from anthropic import AsyncAnthropic
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.models import infer_model
+
+# Shared HTTP client for connection pooling
+_http_client: httpx.AsyncClient | None = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """Get or create shared HTTP client."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient()
+    return _http_client
+
+
+def colorist_provider() -> AnthropicProvider:
+    """
+    Create a PydanticAI provider for Colorist gateway.
+
+    Usage:
+        from pydantic_ai import Agent
+        from pydantic_ai.models import infer_model
+
+        agent = Agent(
+            model=infer_model("anthropic:claude-4-5-sonnet-by-all", colorist_provider),
+            ...
+        )
+    """
+    api_key = os.getenv(
+        "COLORIST_API_KEY",
+        ""  # Set via environment variable
+    )
+    base_url = os.getenv(
+        "COLORIST_GATEWAY_URL",
+        "https://colorist-gateway-staging.arco.ai"
+    )
+
+    client = AsyncAnthropic(
+        auth_token=api_key,
+        base_url=base_url,
+        http_client=get_http_client(),
+    )
+
+    return AnthropicProvider(anthropic_client=client)
+
+
+def get_colorist_model(model_name: str = "claude-4-5-sonnet-by-all"):
+    """
+    Get a PydanticAI model configured for Colorist.
+
+    Args:
+        model_name: Colorist model name (e.g., "claude-4-5-sonnet-by-all")
+
+    Returns:
+        Configured model for use with PydanticAI Agent
+    """
+    return infer_model(f"anthropic:{model_name}", colorist_provider)
+```
+
+### Step 3: Create PydanticAI Agent
+
+**File: `backend/agent/pydantic_agent.py`**
+
+```python
+"""
+PydanticAI-based Aura Agent
+
+Replaces the raw Anthropic SDK implementation with PydanticAI.
+"""
+
+from dataclasses import dataclass
+from typing import AsyncIterator, Any
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+
+from backend.agent.providers.colorist import get_colorist_model
+from backend.agent.context import AgentContext
+from backend.agent.prompts import get_system_prompt
+
+
+@dataclass
+class AuraDeps:
+    """Dependencies injected into agent tools."""
+    context: AgentContext
+    project_path: str
+
+
+# Create the main agent
+aura_agent = Agent(
+    model=get_colorist_model("claude-4-5-sonnet-by-all"),
+    deps_type=AuraDeps,
+    retries=3,
+    # History processors added in Phase 3A.2
+)
+
+
+# Tool registration using PydanticAI decorators
+@aura_agent.tool
+async def read_file(ctx: RunContext[AuraDeps], filepath: str) -> str:
+    """
+    Read a file from the LaTeX project.
+
+    Args:
+        filepath: Path relative to project root (e.g., "main.tex", "sections/intro.tex")
+
+    Returns:
+        File contents with line numbers
+    """
+    from pathlib import Path
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    if not full_path.exists():
+        return f"Error: File not found: {filepath}"
+
+    if not full_path.is_file():
+        return f"Error: Not a file: {filepath}"
+
+    try:
+        content = full_path.read_text()
+        lines = content.split('\n')
+        numbered = [f"{i+1:4}│ {line}" for i, line in enumerate(lines)]
+        return f"File: {filepath} ({len(lines)} lines)\n" + "\n".join(numbered)
+    except Exception as e:
+        return f"Error reading file: {e}"
+
+
+@aura_agent.tool
+async def edit_file(
+    ctx: RunContext[AuraDeps],
+    filepath: str,
+    old_string: str,
+    new_string: str,
+) -> str:
+    """
+    Edit a file by replacing text.
+
+    Args:
+        filepath: Path relative to project root
+        old_string: Exact text to find and replace
+        new_string: Text to replace with
+
+    Returns:
+        Success message or error
+    """
+    from pathlib import Path
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    if not full_path.exists():
+        return f"Error: File not found: {filepath}"
+
+    try:
+        content = full_path.read_text()
+
+        if old_string not in content:
+            return f"Error: Could not find the specified text in {filepath}"
+
+        count = content.count(old_string)
+        if count > 1:
+            return f"Error: Found {count} occurrences. Please provide more context for unique match."
+
+        new_content = content.replace(old_string, new_string, 1)
+        full_path.write_text(new_content)
+
+        return f"Successfully edited {filepath}"
+    except Exception as e:
+        return f"Error editing file: {e}"
+
+
+@aura_agent.tool
+async def write_file(
+    ctx: RunContext[AuraDeps],
+    filepath: str,
+    content: str,
+) -> str:
+    """
+    Write content to a file (creates or overwrites).
+
+    Args:
+        filepath: Path relative to project root
+        content: Content to write
+
+    Returns:
+        Success message or error
+    """
+    from pathlib import Path
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / filepath
+
+    try:
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content)
+        return f"Successfully wrote {filepath} ({len(content)} chars)"
+    except Exception as e:
+        return f"Error writing file: {e}"
+
+
+@aura_agent.tool
+async def compile_latex(
+    ctx: RunContext[AuraDeps],
+    main_file: str = "main.tex",
+) -> str:
+    """
+    Compile the LaTeX project.
+
+    Args:
+        main_file: Main .tex file to compile (default: main.tex)
+
+    Returns:
+        Compilation result with any errors
+    """
+    from backend.services.docker import get_docker_latex
+
+    docker = get_docker_latex()
+    project_path = ctx.deps.project_path
+
+    result = await docker.compile(project_path, main_file)
+
+    if result.success:
+        return f"Compilation successful! Output: {result.pdf_path}"
+    else:
+        return f"Compilation failed:\n{result.log[-2000:]}"
+
+
+@aura_agent.tool
+async def think(ctx: RunContext[AuraDeps], thought: str) -> str:
+    """
+    Think through a complex problem step-by-step.
+
+    Use this for internal reasoning before taking action. Good for:
+    - Planning multi-file edits
+    - Debugging compilation errors
+    - Considering mathematical proofs
+    - Weighing different approaches
+
+    Args:
+        thought: Your step-by-step reasoning process
+
+    Returns:
+        Acknowledgment to continue
+    """
+    # The thought is captured in the tool call for context
+    return "Thinking recorded. Continue with your analysis or take action."
+
+
+@aura_agent.tool
+async def list_files(ctx: RunContext[AuraDeps], directory: str = ".") -> str:
+    """
+    List files in a directory.
+
+    Args:
+        directory: Directory relative to project root (default: root)
+
+    Returns:
+        List of files and directories
+    """
+    from pathlib import Path
+
+    project_path = ctx.deps.project_path
+    full_path = Path(project_path) / directory
+
+    if not full_path.exists():
+        return f"Error: Directory not found: {directory}"
+
+    if not full_path.is_dir():
+        return f"Error: Not a directory: {directory}"
+
+    try:
+        items = []
+        for item in sorted(full_path.iterdir()):
+            if item.is_dir():
+                items.append(f"📁 {item.name}/")
+            else:
+                size = item.stat().st_size
+                items.append(f"📄 {item.name} ({size} bytes)")
+
+        return f"Contents of {directory}:\n" + "\n".join(items)
+    except Exception as e:
+        return f"Error listing directory: {e}"
+```
+
+### Step 4: Create Streaming Runner
+
+**File: `backend/agent/runner.py`**
+
+```python
+"""
+Agent Runner
+
+Handles running the PydanticAI agent with streaming.
+"""
+
+import logging
+from dataclasses import dataclass
+from typing import AsyncIterator, Any
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+
+from backend.agent.pydantic_agent import aura_agent, AuraDeps
+from backend.agent.context import AgentContext
+from backend.agent.prompts import get_system_prompt
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StreamEvent:
+    """Event emitted during agent execution."""
+    type: str  # "text", "tool_call", "tool_result", "thinking", "error", "done"
+    content: Any = None
+
+    def to_dict(self) -> dict:
+        return {"type": self.type, "content": self.content}
+
+
+async def run_agent_stream(
+    message: str,
+    project_path: str,
+    history: list[dict] | None = None,
+) -> AsyncIterator[StreamEvent]:
+    """
+    Run the agent with streaming output.
+
+    Args:
+        message: User message
+        project_path: Path to the LaTeX project
+        history: Optional conversation history
+
+    Yields:
+        StreamEvent objects
+    """
+    from pathlib import Path
+
+    # Create context and dependencies
+    context = AgentContext(
+        project_path=project_path,
+        project_name=Path(project_path).name,
+        history=history or [],
+    )
+
+    deps = AuraDeps(
+        context=context,
+        project_path=project_path,
+    )
+
+    # Get system prompt
+    system_prompt = get_system_prompt(
+        project_name=context.project_name,
+        project_path=project_path,
+    )
+
+    # Convert history to PydanticAI format if needed
+    message_history = _convert_history(history) if history else None
+
+    try:
+        # Run agent with streaming
+        async with aura_agent.iter(
+            message,
+            deps=deps,
+            message_history=message_history,
+            # system_prompt injected via agent configuration
+        ) as run:
+            async for event in run:
+                # Process different event types
+                if hasattr(event, 'part'):
+                    part = event.part
+
+                    if isinstance(part, TextPart):
+                        yield StreamEvent(type="text", content=part.content)
+
+                    elif isinstance(part, ToolCallPart):
+                        # Check if it's a thinking tool
+                        if part.tool_name == "think":
+                            yield StreamEvent(
+                                type="thinking",
+                                content=part.args.get("thought", ""),
+                            )
+                        else:
+                            yield StreamEvent(
+                                type="tool_call",
+                                content={
+                                    "id": part.tool_call_id,
+                                    "name": part.tool_name,
+                                    "args": part.args,
+                                },
+                            )
+
+                    elif isinstance(part, ToolReturnPart):
+                        yield StreamEvent(
+                            type="tool_result",
+                            content={
+                                "id": part.tool_call_id,
+                                "output": str(part.content)[:2000],
+                            },
+                        )
+
+        yield StreamEvent(type="done", content={"status": "success"})
+
+    except Exception as e:
+        logger.error(f"Agent error: {e}")
+        yield StreamEvent(type="error", content=str(e))
+
+
+def _convert_history(history: list[dict]) -> list:
+    """Convert Anthropic-format history to PydanticAI format."""
+    # PydanticAI uses similar format, may need adjustment
+    # For now, return as-is and adjust if needed
+    return history
+```
+
+### Step 5: Update FastAPI Endpoints
+
+**File: `backend/main.py` (updated chat endpoint)**
+
+```python
+from backend.agent.runner import run_agent_stream, StreamEvent
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """Stream agent responses via SSE."""
+
+    async def event_generator():
+        async for event in run_agent_stream(
+            message=request.message,
+            project_path=request.project_path,
+            history=request.history,
+        ):
+            yield {
+                "event": event.type,
+                "data": json.dumps(event.content) if event.content else "",
+            }
+
+    return EventSourceResponse(event_generator())
+```
+
+### Step 6: Add History Processors
+
+**File: `backend/agent/processors.py`**
+
+```python
+"""
+History Processors for PydanticAI
+
+These processors clean up and optimize message history before sending to LLM.
+"""
+
+from typing import Any
+from pydantic_ai.messages import ModelMessage
+
+
+def truncate_tool_results(
+    messages: list[ModelMessage],
+    max_chars: int = 4000,
+) -> list[ModelMessage]:
+    """
+    Truncate long tool results to prevent context overflow.
+
+    This is a PydanticAI history processor.
+    """
+    result = []
+    for msg in messages:
+        if hasattr(msg, 'parts'):
+            new_parts = []
+            for part in msg.parts:
+                if hasattr(part, 'content') and isinstance(part.content, str):
+                    if len(part.content) > max_chars:
+                        # Create truncated version
+                        truncated = part.content[:max_chars]
+                        truncated += f"\n... [truncated {len(part.content) - max_chars} chars]"
+                        # Recreate part with truncated content
+                        part = part.__class__(
+                            **{**part.__dict__, 'content': truncated}
+                        )
+                new_parts.append(part)
+            msg = msg.__class__(parts=new_parts)
+        result.append(msg)
+    return result
+
+
+def remove_empty_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Remove messages with no meaningful content."""
+    result = []
+    for msg in messages:
+        if hasattr(msg, 'parts') and msg.parts:
+            # Filter out empty text parts
+            non_empty = [
+                p for p in msg.parts
+                if not (hasattr(p, 'content') and not p.content.strip())
+            ]
+            if non_empty:
+                result.append(msg)
+        else:
+            result.append(msg)
+    return result
+
+
+# Combined processor pipeline
+def process_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Apply all history processors in sequence."""
+    messages = truncate_tool_results(messages)
+    messages = remove_empty_messages(messages)
+    return messages
+```
+
+### Step 7: Update Agent with Processors
+
+```python
+# In backend/agent/pydantic_agent.py
+
+from backend.agent.processors import process_history
+
+aura_agent = Agent(
+    model=get_colorist_model("claude-4-5-sonnet-by-all"),
+    deps_type=AuraDeps,
+    retries=3,
+    history_processors=[process_history],  # Add processors
+)
+```
+
+---
+
+## Phase 3A Files Summary
+
+```
+backend/agent/
+├── providers/
+│   ├── __init__.py
+│   └── colorist.py          # Colorist provider for PydanticAI
+├── pydantic_agent.py         # Main agent with tools
+├── runner.py                 # Streaming runner
+├── processors.py             # History processors
+├── context.py                # (existing, enhanced)
+└── prompts.py                # (existing)
+```
+
+### Migration Checklist
+
+- [x] Add `pydantic-ai` to dependencies
+- [x] Create `providers/colorist.py`
+- [x] Create `pydantic_agent.py` with tools
+- [x] Create `streaming.py` for streaming
+- [x] Create `processors.py`
+- [x] Update `main.py` endpoints
+- [x] Test end-to-end
+- [ ] Remove old `core.py` (or keep as fallback)
+
+---
+
+## Phase 3B: Message Compression ✅
+
+**Status: Complete**
+
+Implemented automatic message compression for long conversations.
+
+### Implementation Summary
+
+**File: `backend/agent/compression.py`**
+
+Components:
+- `CompressionConfig` - Configuration (max_tokens, threshold, keep_recent_turns)
+- `TokenCounter` - Character-based token estimation (chars/4)
+- `MessageCompressor` - Main compression logic with summarization
+- `get_compactor_agent()` - Haiku model agent for summarization
+
+Key features:
+- Auto-compresses when token count exceeds 65% of 200K max
+- Preserves 4 most recent conversation turns
+- Uses Claude Haiku for fast, cheap summarization
+- Structured summary with Context, Key Actions, Current State, Important Details
+
+### Integration
+
+Updated `backend/agent/streaming.py`:
+- Added `CompressionEvent` stream event type
+- Both `stream_agent_response()` and `run_agent()` support auto-compression
+- Compression happens before agent.iter() call (not as history processor due to async requirement)
+
+### API Endpoints
+
+- `POST /api/compression/stats` - Get compression statistics for a history
+- `POST /api/compression/compress` - Manually trigger compression
+
+### Test Results
+
+```
+Before compression:
+  Messages: 24
+  Estimated tokens: 8750
+
+After compression:
+  Messages: 6
+  Estimated tokens: 1811
+  Tokens saved: 6939
+```
+
+---
+
+## Phase 3C: HITL (Human-in-the-Loop) ✅
+
+**Status: Complete**
+
+Implemented human-in-the-loop approval workflow for dangerous tool operations.
+
+### Implementation Summary
+
+**File: `backend/agent/hitl.py`**
+
+Components:
+- `HITLConfig` - Configuration (approval_required, preview_only, timeout)
+- `ApprovalStatus` - Enum (PENDING, APPROVED, REJECTED, MODIFIED, TIMEOUT)
+- `ApprovalRequest` - Data class for pending requests
+- `HITLManager` - Async manager with event-based waiting
+
+Key features:
+- Configurable list of tools requiring approval (default: write_file, edit_file)
+- Async waiting with timeout (default: 5 minutes)
+- Support for modified args (user can edit before approving)
+- Event callback for streaming integration
+
+### Tool Integration
+
+Updated `backend/agent/pydantic_agent.py`:
+- Added `hitl_manager` to `AuraDeps`
+- Added `_check_hitl()` helper function
+- Modified `edit_file` and `write_file` to check HITL before execution
+
+### Streaming Integration
+
+Updated `backend/agent/streaming.py`:
+- Added `ApprovalRequiredEvent` and `ApprovalResolvedEvent` event types
+- Added `enable_hitl` parameter to `stream_agent_response()`
+- Added `_stream_with_hitl()` for concurrent event handling via asyncio.Queue
+
+### API Endpoints
+
+- `GET /api/hitl/pending` - List pending approval requests
+- `GET /api/hitl/request/{id}` - Get specific request
+- `POST /api/hitl/approve` - Approve request (with optional modified args)
+- `POST /api/hitl/reject` - Reject request with reason
+- `GET /api/hitl/config` - Get current HITL configuration
+
+### Test Results
+
+```
+Default config:
+  Approval required for: {'edit_file', 'write_file'}
+  Preview only for: {'compile_latex'}
+  Timeout: 300.0s
+
+needs_approval('write_file'): True
+needs_approval('read_file'): False
+```
+
+---
+
+## Phase 3D: Steering Messages
+
+**File: `backend/agent/steering.py`**
+
+```python
+"""
+Steering Messages
+
+Allow users to send instructions while agent is running.
+"""
+
+import asyncio
+from dataclasses import dataclass, field
+from collections import deque
+from typing import Optional
+
+
+@dataclass
+class SteeringMessage:
+    """A steering message from user."""
+    content: str
+    priority: int = 0
+
+
+class SteeringManager:
+    """Manages steering messages queue."""
+
+    def __init__(self):
+        self._queue: deque[SteeringMessage] = deque()
+        self._lock = asyncio.Lock()
+
+    async def add(self, content: str, priority: int = 0):
+        """Add a steering message."""
+        async with self._lock:
+            msg = SteeringMessage(content=content, priority=priority)
+            self._queue.append(msg)
+            # Sort by priority (higher first)
+            self._queue = deque(
+                sorted(self._queue, key=lambda m: -m.priority)
+            )
+
+    async def get_pending(self) -> list[SteeringMessage]:
+        """Get and clear all pending messages."""
+        async with self._lock:
+            messages = list(self._queue)
+            self._queue.clear()
+            return messages
+
+    async def has_pending(self) -> bool:
+        """Check if there are pending messages."""
+        return len(self._queue) > 0
+
+
+# Integration: Check steering at each iteration
+async def check_steering(
+    steering_manager: SteeringManager,
+    context: AgentContext,
+):
+    """Check for steering messages and inject into context."""
+    messages = await steering_manager.get_pending()
+
+    if messages:
+        # Combine into single steering instruction
+        steering = "\n\n".join([
+            f"[USER INTERRUPT - Priority {m.priority}]: {m.content}"
+            for m in messages
+        ])
+
+        # Add as user message
+        context.add_user_message(steering)
+
+        return True
+
+    return False
+```
+
+### Phase 3D Implementation Summary ✅
+
+**Status: Complete**
+
+Implemented steering messages to allow users to guide the agent mid-conversation.
+
+**File: `backend/agent/steering.py`**
+
+Components:
+- `SteeringConfig` - Configuration (max_queue_size, default_priority, combine_messages)
+- `SteeringMessage` - Data class with content, priority, session_id
+- `SteeringManager` - Async manager with priority queue
+- `check_and_inject_steering()` - Helper to prepend steering to user messages
+- `get_steering_manager()` - Singleton accessor
+
+Key features:
+- Priority-based ordering (higher priority = processed first)
+- Session isolation support for multi-user scenarios
+- Configurable message template for injection format
+- Thread-safe async operations with locks
+
+### Integration
+
+Updated `backend/agent/streaming.py`:
+- Added `SteeringEvent` stream event type
+- Added `enable_steering` and `session_id` parameters to `stream_agent_response()`
+- Added `enable_steering` and `session_id` parameters to `stream_agent_sse()`
+- Added `enable_steering` and `session_id` parameters to `run_agent()`
+- Steering checked at start of each request, injected before agent processes
+
+### API Endpoints
+
+- `POST /api/steering/add` - Add steering message with priority and optional session_id
+- `GET /api/steering/pending` - Peek at pending steering messages
+- `DELETE /api/steering/clear` - Clear pending steering messages
+- `GET /api/steering/config` - Get steering configuration
+
+### Test Results
+
+```
+Queue size: 3 messages
+Priority ordering: [1, 0, 0] (high priority first)
+Session isolation: Global messages visible to all, session-specific only to that session
+Message formatting: [USER STEERING - Priority N]: content
+✅ All steering tests passed!
+```
+
+---
+
+## Phase 3E: Multi-Agent (Subagents)
+
+**File: `backend/agent/subagents/base.py`**
+
+```python
+"""
+Subagent Base
+
+Base class for specialized subagents.
+"""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import AsyncIterator
+from pydantic_ai import Agent
+
+from backend.agent.providers.colorist import get_colorist_model
+
+
+@dataclass
+class SubagentConfig:
+    """Configuration for a subagent."""
+    name: str
+    model: str = "claude-4-5-sonnet-by-all"
+    system_prompt: str = ""
+    max_iterations: int = 10
+
+
+class Subagent(ABC):
+    """Base class for specialized subagents."""
+
+    def __init__(self, config: SubagentConfig):
+        self.config = config
+        self.agent = self._create_agent()
+
+    @abstractmethod
+    def _create_agent(self) -> Agent:
+        """Create the PydanticAI agent with appropriate tools."""
+        pass
+
+    @abstractmethod
+    async def run(self, task: str, context: dict) -> str:
+        """Run the subagent on a task."""
+        pass
+```
+
+**File: `backend/agent/subagents/research.py`**
+
+```python
+"""
+Research Subagent
+
+Specialized for academic research tasks.
+"""
+
+from pydantic_ai import Agent, RunContext
+from backend.agent.subagents.base import Subagent, SubagentConfig
+from backend.agent.providers.colorist import get_colorist_model
+
+
+RESEARCH_PROMPT = """You are a research assistant specialized in academic literature.
+
+Your capabilities:
+- Search arXiv for relevant papers
+- Search Semantic Scholar for citations
+- Summarize paper abstracts
+- Extract key findings
+
+Rules:
+- NEVER make up citations - only cite real papers
+- Always include paper titles, authors, and years
+- Focus on relevance to the user's topic
+"""
+
+
+class ResearchAgent(Subagent):
+    """Agent for research and literature tasks."""
+
+    def __init__(self):
+        config = SubagentConfig(
+            name="research",
+            system_prompt=RESEARCH_PROMPT,
+        )
+        super().__init__(config)
+
+    def _create_agent(self) -> Agent:
+        agent = Agent(
+            model=get_colorist_model(self.config.model),
+            system_prompt=self.config.system_prompt,
+        )
+
+        # Register research-specific tools
+        @agent.tool
+        async def search_arxiv(ctx: RunContext, query: str, max_results: int = 5) -> str:
+            """Search arXiv for papers."""
+            # TODO: Implement arXiv API
+            return f"arXiv search for: {query}"
+
+        @agent.tool
+        async def search_semantic_scholar(ctx: RunContext, query: str) -> str:
+            """Search Semantic Scholar."""
+            # TODO: Implement Semantic Scholar API
+            return f"Semantic Scholar search for: {query}"
+
+        return agent
+
+    async def run(self, task: str, context: dict) -> str:
+        """Run research task."""
+        result = await self.agent.run(task)
+        return result.data
+```
+
+**File: `backend/agent/subagents/compiler.py`**
+
+```python
+"""
+Compiler Subagent
+
+Specialized for fixing LaTeX compilation errors.
+"""
+
+from pydantic_ai import Agent, RunContext
+from backend.agent.subagents.base import Subagent, SubagentConfig
+from backend.agent.providers.colorist import get_colorist_model
+
+
+COMPILER_PROMPT = """You are a LaTeX compilation expert.
+
+When given a compilation error:
+1. Analyze the error message carefully
+2. Identify the root cause (missing package, syntax error, etc.)
+3. Propose a specific fix
+4. Apply the fix
+5. Verify it compiles
+
+Common issues:
+- Missing \\usepackage declarations
+- Unmatched braces or environments
+- Invalid characters in math mode
+- Missing bibliography entries
+"""
+
+
+class CompilerAgent(Subagent):
+    """Agent for fixing compilation errors."""
+
+    def __init__(self, project_path: str):
+        config = SubagentConfig(
+            name="compiler",
+            system_prompt=COMPILER_PROMPT,
+        )
+        self.project_path = project_path
+        super().__init__(config)
+
+    def _create_agent(self) -> Agent:
+        agent = Agent(
+            model=get_colorist_model(self.config.model),
+            system_prompt=self.config.system_prompt,
+        )
+
+        project_path = self.project_path
+
+        @agent.tool
+        async def read_file(ctx: RunContext, filepath: str) -> str:
+            """Read a file."""
+            from pathlib import Path
+            full_path = Path(project_path) / filepath
+            if full_path.exists():
+                return full_path.read_text()
+            return f"File not found: {filepath}"
+
+        @agent.tool
+        async def edit_file(ctx: RunContext, filepath: str, old: str, new: str) -> str:
+            """Edit a file."""
+            from pathlib import Path
+            full_path = Path(project_path) / filepath
+            if not full_path.exists():
+                return f"File not found: {filepath}"
+            content = full_path.read_text()
+            if old not in content:
+                return "Text not found"
+            content = content.replace(old, new, 1)
+            full_path.write_text(content)
+            return "Edit successful"
+
+        @agent.tool
+        async def compile_and_check(ctx: RunContext, main_file: str = "main.tex") -> str:
+            """Compile and return result."""
+            from backend.services.docker import get_docker_latex
+            docker = get_docker_latex()
+            result = await docker.compile(project_path, main_file)
+            if result.success:
+                return "Compilation successful!"
+            return f"Error:\n{result.log[-2000:]}"
+
+        return agent
+
+    async def run(self, task: str, context: dict) -> str:
+        """Fix compilation error."""
+        result = await self.agent.run(task)
+        return result.data
+```
+
+**Handoff Tool (in main agent):**
+
+```python
+@aura_agent.tool
+async def delegate_to_subagent(
+    ctx: RunContext[AuraDeps],
+    subagent: str,
+    task: str,
+) -> str:
+    """
+    Delegate a task to a specialized subagent.
+
+    Args:
+        subagent: Name of subagent ("research", "compiler")
+        task: The task to delegate
+
+    Returns:
+        Result from the subagent
+    """
+    from backend.agent.subagents.research import ResearchAgent
+    from backend.agent.subagents.compiler import CompilerAgent
+
+    if subagent == "research":
+        agent = ResearchAgent()
+    elif subagent == "compiler":
+        agent = CompilerAgent(ctx.deps.project_path)
+    else:
+        return f"Unknown subagent: {subagent}"
+
+    try:
+        result = await agent.run(task, {})
+        return f"[{subagent.upper()} AGENT RESULT]:\n{result}"
+    except Exception as e:
+        return f"Subagent error: {e}"
+```
+
+### Phase 3E Implementation Summary ✅
+
+**Status: Complete**
+
+Implemented multi-agent system with specialized subagents for focused tasks.
+
+**Files Created:**
+
+- `backend/agent/subagents/__init__.py` - Module exports
+- `backend/agent/subagents/base.py` - Base classes and registry
+- `backend/agent/subagents/research.py` - Research agent (arXiv, Semantic Scholar)
+- `backend/agent/subagents/compiler.py` - Compiler agent (LaTeX error fixing)
+
+**Components:**
+
+- `SubagentConfig` - Configuration for subagents (name, timeout, model, etc.)
+- `SubagentResult` - Result from subagent execution with metadata
+- `Subagent` - Abstract base class for all subagents
+- `@register_subagent` - Decorator for auto-registration
+- `get_subagent(name)` - Get subagent by name
+- `list_subagents()` - List all registered subagents
+- `run_subagent(name, task)` - Convenience function
+
+**Subagents:**
+
+1. **ResearchAgent** (`"research"`)
+   - Tools: `search_arxiv`, `search_semantic_scholar`, `think`
+   - Uses Haiku model for cost efficiency
+   - Real API integration with arXiv and Semantic Scholar
+
+2. **CompilerAgent** (`"compiler"`)
+   - Tools: `read_file`, `edit_file`, `add_package`, `compile_and_check`, `list_files`, `think`
+   - Uses Sonnet model for better reasoning
+   - Deep knowledge of LaTeX error patterns
+
+**Main Agent Integration:**
+
+- Added `delegate_to_subagent` tool to `pydantic_agent.py`
+- Validates subagent name before delegation
+- Passes project context to subagents
+- Returns formatted results
+
+**API Endpoints:**
+
+- `GET /api/subagents` - List available subagents
+- `POST /api/subagents/run` - Run subagent directly (for testing)
+
+**Test Results:**
+
+```
+✅ All imports successful
+✅ Subagent registration working (2 subagents)
+✅ get_subagent() working
+✅ Invalid name handling (KeyError)
+✅ SubagentResult.to_dict() working
+✅ arXiv API working (real papers returned)
+✅ Subagents exported from agent module
+✅ delegate_to_subagent tool registered
+```
+
+---
+
+## Implementation Schedule
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 3A: PydanticAI Migration (3-4 days)                  │
+│  ─────────────────────────────────────────────────────────  │
+│  Day 1: Colorist provider + basic agent                     │
+│  Day 2: Tools migration + streaming runner                  │
+│  Day 3: History processors + testing                        │
+│  Day 4: FastAPI integration + end-to-end test               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 3B: Compression (2 days)                             │
+│  ─────────────────────────────────────────────────────────  │
+│  Day 5: Token counter + compressor                          │
+│  Day 6: Integration + testing                               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 3C: HITL (3 days)                                    │
+│  ─────────────────────────────────────────────────────────  │
+│  Day 7: HITLManager + approval flow                         │
+│  Day 8: API endpoints + SSE events                          │
+│  Day 9: Testing + edge cases                                │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 3D: Steering (2 days)                                │
+│  ─────────────────────────────────────────────────────────  │
+│  Day 10: SteeringManager + API                              │
+│  Day 11: Integration + testing                              │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 3E: Multi-Agent (4 days)                             │
+│  ─────────────────────────────────────────────────────────  │
+│  Day 12: Subagent base + research agent                     │
+│  Day 13: Compiler agent                                     │
+│  Day 14: Handoff tool + routing                             │
+│  Day 15: Testing + refinement                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Files to Create
+
+```
+backend/agent/
+├── providers/
+│   ├── __init__.py
+│   └── colorist.py           # Phase 3A ✅
+├── pydantic_agent.py         # Phase 3A ✅
+├── streaming.py              # Phase 3A ✅ (renamed from runner.py)
+├── processors.py             # Phase 3A ✅
+├── compression.py            # Phase 3B ✅
+├── hitl.py                   # Phase 3C ✅
+├── steering.py               # Phase 3D ✅
+├── planning.py               # Phase 3F ✅
+├── subagents/
+│   ├── __init__.py           # Phase 3E ✅
+│   ├── base.py               # Phase 3E ✅
+│   ├── research.py           # Phase 3E ✅ (updated for PDF in 3.5)
+│   ├── compiler.py           # Phase 3E ✅
+│   └── planner.py            # Phase 3F ✅
+├── tools/
+│   └── pdf_reader.py         # Phase 3.5 ✅
+├── context.py                # (existing, enhanced)
+└── prompts.py                # (existing)
+```
+
+---
+
+## Phase 3F: Planning System ✅
+
+**Status: Complete**
+
+Implemented structured planning system for complex multi-step tasks.
+
+### Implementation Summary
+
+**Files Created:**
+
+- `backend/agent/planning.py` - Core planning infrastructure
+- `backend/agent/subagents/planner.py` - PlannerAgent subagent
+
+**Components in `planning.py`:**
+
+- `PlanningConfig` - Configuration (auto_plan_threshold, trigger_keywords)
+- `PlanStatus` - Enum (DRAFT, APPROVED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED)
+- `StepStatus` - Enum (PENDING, IN_PROGRESS, COMPLETED, FAILED, SKIPPED)
+- `StepType` - Enum (ANALYSIS, EDIT, CREATE, DELETE, COMPILE, TEST, RESEARCH, VERIFY, OTHER)
+- `PlanStep` - Data class for plan steps with dependencies and status
+- `Plan` - Data class with steps, progress tracking, and markdown export
+- `PlanManager` - Async manager for plan lifecycle with history
+
+**Components in `planner.py`:**
+
+- `PlannerDeps` - Dependencies for planner agent
+- `PlannerAgent` - Specialized agent for task analysis and plan generation
+- Tools: `read_file`, `list_files`, `analyze_task_complexity`, `create_structured_plan`, `think`
+- `create_plan_for_task()` - Convenience function
+
+**Main Agent Integration:**
+
+Added 7 planning tools to `pydantic_agent.py`:
+- `plan_task` - Create a structured plan using PlannerAgent
+- `get_current_plan` - View current plan and progress
+- `start_plan_execution` - Begin executing plan
+- `complete_plan_step` - Mark step as done
+- `fail_plan_step` - Mark step as failed
+- `skip_plan_step` - Skip current step
+- `abandon_plan` - Cancel plan
+
+**System Prompt Updates:**
+
+Added CRITICAL planning requirements to `prompts.py`:
+- Plan REQUIRED for: 2+ file changes, new features, refactoring, multi-step tasks
+- Planning workflow steps documented
+- "DO NOT skip planning for complex tasks" enforcement
+
+**Streaming Events:**
+
+- `PlanCreatedEvent` - Plan was created
+- `PlanStepEvent` - Step status changed
+- `PlanCompletedEvent` - Plan finished
+
+**API Endpoints:**
+
+- `POST /api/planning/create` - Create plan for task
+- `GET /api/planning/current` - Get active plan
+- `POST /api/planning/start` - Start plan execution
+- `POST /api/planning/step/complete` - Complete current step
+- `POST /api/planning/step/fail` - Fail current step
+- `POST /api/planning/step/skip` - Skip current step
+- `POST /api/planning/cancel` - Cancel/abandon plan
+- `GET /api/planning/history` - Get plan history
+
+### Test Results
+
+```
+✅ PlanStep creation and serialization
+✅ Plan progress tracking (0/3 → 3/3 steps)
+✅ Plan markdown export
+✅ PlanManager singleton
+✅ Step completion and auto-advancement
+✅ Plan archiving to history
+✅ Planning events (PlanCreatedEvent)
+```
+
+---
+
+## Phase 3.5: PDF Reader Tool ✅
+
+**Status: Complete**
+
+Implemented PDF text extraction for academic papers using PyMuPDF.
+
+### Implementation Summary
+
+**File: `backend/agent/tools/pdf_reader.py`**
+
+Components:
+- `PDFPage` - Dataclass for single page with text and char count
+- `PDFDocument` - Dataclass for full document with pages, metadata
+- `extract_text_from_pdf()` - Extract text from local PDF file
+- `download_arxiv_pdf()` - Download PDF from arXiv with caching
+- `download_pdf_from_url()` - Download PDF from any URL with caching
+- `read_arxiv_paper()` - High-level API: download + extract from arXiv
+- `read_pdf_from_url()` - High-level API: download + extract from URL
+- `read_local_pdf()` - Extract from local file
+- `clear_pdf_cache()` - Clear temporary PDF cache
+
+Key features:
+- PyMuPDF (fitz) for efficient text extraction
+- Lazy module loading for graceful degradation
+- Temporary file caching to avoid re-downloading
+- Page structure preservation
+- Configurable page/character limits
+- Metadata extraction (title, page count)
+
+### ResearchAgent Integration
+
+Updated `backend/agent/subagents/research.py`:
+- Added `read_arxiv_paper` tool - read full text of arXiv papers by ID
+- Added `read_pdf_url` tool - read PDFs from any URL
+- Updated system prompt with PDF reading instructions
+
+### Test Results
+
+```
+1. Download arXiv paper 1706.03762 (Attention Is All You Need)
+   ✅ Downloaded to temp cache
+   ✅ File exists
+
+2. Extract text from PDF
+   ✅ Title extracted
+   ✅ 15 pages detected
+   ✅ 39,307 characters extracted
+
+3. High-level API
+   ✅ read_arxiv_paper works
+   ✅ arxiv_id and source_url populated
+
+4. ResearchAgent tools
+   ✅ 5 tools registered: search_arxiv, search_semantic_scholar, think, read_arxiv_paper, read_pdf_url
+
+5. End-to-end test
+   ✅ Agent searches arXiv, reads PDF, summarizes abstract
+```
+
+---
+
+## Success Criteria
+
+| Phase | Feature | Success Metric |
+|-------|---------|----------------|
+| 3A | PydanticAI Migration | Agent runs with same capabilities as raw SDK |
+| 3A | History Processors | Tool results truncated, empty messages removed |
+| 3B | Compression | Can handle 50+ turn conversations |
+| 3C | HITL | User can approve/reject file edits |
+| 3D | Steering | User can redirect mid-conversation |
+| 3E | Multi-Agent | Research delegated to subagent |
+| 3F | Planning | Complex tasks use structured plans |
+| 3.5 | PDF Reader | Agent can download and read arXiv papers |
+
+---
+
+## Risk Mitigation
+
+| Risk | Mitigation |
+|------|------------|
+| PydanticAI API changes | Pin version, follow changelog |
+| Colorist provider issues | Keep raw SDK as fallback |
+| HITL async complexity | Start simple, add features |
+| Subagent infinite loops | Max depth limit, timeouts |
+
+---
+
+## Dependencies
+
+```toml
+# pyproject.toml additions
+[project.dependencies]
+pydantic-ai = ">=0.1.0"
+# ... existing deps
+```
